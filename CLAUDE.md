@@ -685,6 +685,13 @@ and `rail/Enemies.ts` had, and for the same reason: the model runs under Node.
 - **⚠ Row spacing jitter may only ever add distance.** Scaling the whole spacing by
   `0.85 + rng() * 0.3` reads as more natural and put two rows 6.9 segments apart against an
   8.1-segment floor. A floor a random multiplier can dip below is not a floor.
+- **⚠ Walls are what make the jump a verb.** An ordinary row is three obstacles at most on a road
+  seven of them wide, so the placer was quietly guaranteeing that dodging always worked — a scripted
+  play-through covered 443 metres without leaving the ground once. `drawWall` lays `low` obstacles
+  edge to edge with a third of a width of overlap (a wall with a hair-width seam is a wall the
+  player finds once by accident and never again), built by construction rather than drawn and
+  tested, because what makes it a wall is having *no* ground line. `verify:obstacles` measures the
+  share of rows with no ground line from the placer's own output and holds it between 10% and 45%.
 - **The bands were cut by looking at the frame.** The first set (`blocking` to 520, `overhead` to
   1200) satisfied every constraint and drew a road lined with grey slabs three to six times the
   snail's height — the game read as an industrial estate. What actually binds is only that `blocking`
@@ -716,8 +723,8 @@ resource does not have one.
 
 `src/run/difficulty.ts` — a pure function of **distance, never of time**. A time-driven curve
 punishes the player for going slowly, which in this game means punishing them for having been hit on
-top of the speed they already lost. Three knobs (density, the unjumpable share, the overhead share),
-all rising, all saturating exponentially: a ramp would need a distance past which the road stops
+top of the speed they already lost. Four knobs (density, the unjumpable share, the overhead share, and how often
+a row is a wall), all rising, all saturating exponentially: a ramp would need a distance past which the road stops
 responding, and any such number is a promise an endless mode cannot keep.
 
 **What does not move is `REACTION_MS`.** The placer's row spacing is floored against it at
@@ -726,14 +733,17 @@ time. If the curve ever wants something the floor forbids, the curve is what cha
 `verify:obstacles` simulates 500 runs across six distance bands and prints the table:
 
 ```
-   distance  density  blocking  overhead   rows/90k   min gap   reaction budget
-         0m     0.53      0.21      0.14       10.5      37.2seg           1293ms
-       450m     0.68      0.25      0.18       13.2      29.3seg           1018ms
-       900m     0.78      0.29      0.20       15.7      24.5seg            851ms
-      1800m     0.87      0.32      0.22       19.2      19.8seg            689ms
-      3600m     0.91      0.34      0.24       21.8      17.5seg            607ms
-      7200m     0.92      0.34      0.24       22.2      17.1seg            594ms
+   distance  density  blocking  overhead  jump-only   rows/90k   min gap   reaction budget
+         0m     0.53      0.10      0.06       0.23       10.5      37.2seg           1293ms
+       450m     0.68      0.11      0.07       0.24       13.1      29.3seg           1018ms
+       900m     0.78      0.12      0.08       0.27       15.7      24.5seg            851ms
+      1800m     0.87      0.12      0.09       0.29       19.2      19.8seg            689ms
+      3600m     0.91      0.12      0.09       0.30       21.8      17.5seg            607ms
+      7200m     0.92      0.13      0.09       0.29       22.2      17.1seg            594ms
 ```
+
+(`blocking`/`overhead` are shares of all obstacles, so walls — which are made of `low` — dilute
+them; the share of *non-wall* obstacles that are unjumpable is roughly three times those figures.)
 
 **⚠ Layouts are generated one lap at a time and regenerated on the wrap.** The renderer and the
 collision both index by *segment*, so a layout laid across a distance longer than the lap puts two
