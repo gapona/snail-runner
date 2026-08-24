@@ -336,7 +336,7 @@ check('500 simulated runs, and the reaction budget never falls below REACTION_MS
   // Printed as a table because the numbers are the point: a curve nobody can see is a curve nobody
   // can tune.
   const bands = [0, 45_000, 90_000, 180_000, 360_000, 720_000]
-  const worstPerBand = new Map(bands.map((z) => [z, { gap: Infinity, rows: 0, obstacles: 0, blocking: 0, overhead: 0 }]))
+  const worstPerBand = new Map(bands.map((z) => [z, { gap: Infinity, rows: 0, obstacles: 0, blocking: 0, overhead: 0, jumpOnly: 0 }]))
   const floorMs = REACTION_MS
 
   for (let seed = 1; seed <= 500; seed++) {
@@ -357,13 +357,19 @@ check('500 simulated runs, and the reaction budget never falls below REACTION_MS
         if (obstacle.kind === 'blocking') record.blocking++
         if (obstacle.kind === 'overhead') record.overhead++
       }
+      for (const row of rows) {
+        // **The row that makes the jump a verb rather than an option.** Counted here rather than
+        // assumed from `wallShare`, because what matters is how many rows the *player* has no
+        // ground line through — which is the placer's output, not the curve's input.
+        if (passableLine(row.obstacles)?.mode === 'air') record.jumpOnly++
+      }
       for (let i = 1; i < rows.length; i++) record.gap = Math.min(record.gap, rows[i].z - rows[i - 1].z)
 
       assert.ok(provePassable(obstacles), `seed ${seed} at ${bandStart} produced an impassable stretch`)
     }
   }
 
-  console.log('      distance  density  blocking  overhead   rows/90k   min gap   reaction budget')
+  console.log('      distance  density  blocking  overhead  jump-only   rows/90k   min gap   reaction budget')
   for (const bandStart of bands) {
     const record = worstPerBand.get(bandStart)
     const difficulty = difficultyAt(bandStart + DIFFICULTY_TAU_Z / 2)
@@ -374,6 +380,7 @@ check('500 simulated runs, and the reaction budget never falls below REACTION_MS
         `${difficulty.density.toFixed(2).padStart(9)}` +
         `${(record.blocking / Math.max(1, record.obstacles)).toFixed(2).padStart(10)}` +
         `${(record.overhead / Math.max(1, record.obstacles)).toFixed(2).padStart(10)}` +
+        `${(record.jumpOnly / Math.max(1, record.rows)).toFixed(2).padStart(11)}` +
         `${(record.rows / 500).toFixed(1).padStart(11)}` +
         `${(record.gap / SEGMENT_LENGTH).toFixed(1).padStart(10)}seg` +
         `${budgetMs.toFixed(0).padStart(15)}ms`,
@@ -394,6 +401,18 @@ check('500 simulated runs, and the reaction budget never falls below REACTION_MS
     late.blocking / late.obstacles > early.blocking / early.obstacles,
     'the unjumpable share did not actually rise in the generated output',
   )
+
+  // **The jump has to be required, not merely available.** A scripted 443m play-through of an
+  // earlier build never left the ground once: every row had a line through it, so the jump button
+  // was decoration. Walls are what fixed that, and this is what keeps it fixed — at both ends of
+  // the curve, because a game that only requires the jump once you are good at it teaches nothing.
+  for (const bandStart of bands) {
+    const record = worstPerBand.get(bandStart)
+    const share = record.jumpOnly / Math.max(1, record.rows)
+
+    assert.ok(share > 0.1, `at ${Math.round(bandStart / 100)}m only ${(share * 100).toFixed(0)}% of rows require a jump`)
+    assert.ok(share < 0.45, `at ${Math.round(bandStart / 100)}m ${(share * 100).toFixed(0)}% of rows are walls — one answer to everything`)
+  }
 })
 
 console.log(`${passed} checks passed`)

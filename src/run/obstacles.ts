@@ -32,6 +32,7 @@ import {
   JUMP_AIR_MS,
   JUMP_APEX,
   OBSTACLE_BANDS,
+  OFFROAD_LIMIT,
   PLAYER_BODY_H,
   PLAYER_HALF_WIDTHS,
   REACTION_MS,
@@ -232,6 +233,13 @@ export interface PlacementOptions {
   /** What share of obstacles are `blocking`, and what share `overhead`. The rest are `low`. */
   blockingShare: number
   overheadShare: number
+  /**
+   * How often a row is a wall of `low` obstacles across the whole road — passable only by jumping.
+   *
+   * Defaults to `0`, which is what the fixture rows in `verify:obstacles` want. See
+   * `difficulty.ts`'s own note for why the shipped curve never sets it there.
+   */
+  wallShare?: number
 }
 
 
@@ -296,9 +304,34 @@ export function placeObstacles(options: PlacementOptions): Obstacle[] {
 /** How many times a row is redrawn before it is given up on. */
 const ROW_ATTEMPTS = 12
 
+/**
+ * A wall: `low` obstacles laid edge to edge across the whole road.
+ *
+ * **The one row that requires the jump.** Built by construction rather than drawn and tested,
+ * because the thing that makes it a wall is that it has *no* ground line — leaving that to chance
+ * would mean generating hundreds of rows to find one. It is still handed to `passableLine` by the
+ * caller like any other row, and `provePassable` still enforces the flight window after it.
+ *
+ * Overlapping by a third of a width on purpose: a wall with a hair-width seam in it is a wall the
+ * player will find once, by accident, and then never again.
+ */
+function drawWall(z: number, nextId: () => number): Obstacle[] {
+  const halfWidths = OBSTACLE_HALF_WIDTHS.max
+  const step = halfWidths * 1.3
+  const row: Obstacle[] = []
+
+  for (let offsetX = -OFFROAD_LIMIT; offsetX <= OFFROAD_LIMIT; offsetX += step) {
+    row.push(createObstacle({ id: nextId(), z, offsetX, halfWidths, kind: 'low' }))
+  }
+
+  return row
+}
+
 /** Draws one row at `z`, retrying until it has a line through it or the attempts run out. */
 function drawRow(options: PlacementOptions, z: number, nextId: () => number): Obstacle[] {
   const { rng, blockingShare, overheadShare } = options
+
+  if (rng() < (options.wallShare ?? 0)) return drawWall(z, nextId)
 
   for (let attempt = 0; attempt < ROW_ATTEMPTS; attempt++) {
     const count = 1 + Math.floor(rng() * MAX_PER_ROW)

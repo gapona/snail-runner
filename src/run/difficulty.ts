@@ -10,11 +10,12 @@
  * point, and going faster simply means meeting it sooner. It also composes with `runState`'s own
  * `distance`, which is already the score, so there is exactly one number the run is measured by.
  *
- * **Three knobs, and the floor is not one of them.** Density, the share of obstacles that cannot
- * be jumped, and the share that punish jumping — all three rise and all three saturate. What does
- * *not* move is `REACTION_MS`: the placer's row spacing is floored against it at the fastest speed
- * the game can reach, so no setting these knobs can take produces a row the player was not shown
- * in time. If the curve ever wants something the floor forbids, the curve is what changes.
+ * **Four knobs, and the floor is not one of them.** Density, the share of obstacles that cannot be
+ * jumped, the share that punish jumping, and how often a row is a *wall* — all four rise and all
+ * four saturate. What does *not* move is `REACTION_MS`: the placer's row spacing is floored against
+ * it at the fastest speed the game can reach, so no setting these knobs can take produces a row the
+ * player was not shown in time. If the curve ever wants something the floor forbids, the curve is
+ * what changes.
  *
  * The biomes do the rest for free: the run circuit cycles through eight of them along the track,
  * so a long run *looks* like progress without the difficulty having to carry that job as well.
@@ -37,6 +38,17 @@ export interface Difficulty {
   blockingShare: number
   /** Share that are overhead — run under, and fatal to jump into. */
   overheadShare: number
+  /**
+   * How often a row is a **wall**: low obstacles across the whole road, passable only by jumping.
+   *
+   * **This knob exists because the jump was optional without it.** An ordinary row is three
+   * obstacles at most on a road seven of them wide, so there is nearly always a line through it on
+   * the ground — and a scripted play-through of 443 metres never had to leave the ground once. A
+   * runner whose jump button is never *required* is a runner with one verb. A wall is the row that
+   * requires it, and `provePassable` still refuses to put anything air-blocking inside the flight
+   * it commits the player to.
+   */
+  wallShare: number
 }
 
 /** Where each knob starts and where it saturates. */
@@ -44,6 +56,10 @@ const CURVE = {
   density: { from: 0.28, to: 0.92 },
   blockingShare: { from: 0.12, to: 0.34 },
   overheadShare: { from: 0.06, to: 0.24 },
+  // Starts high enough that the very first stretch teaches the jump, and rises far less than the
+  // others: a road that is mostly walls is a road with one answer, which is the same failure as a
+  // road with none.
+  wallShare: { from: 0.18, to: 0.3 },
 } as const
 
 /**
@@ -69,5 +85,6 @@ export function difficultyAt(distance: number): Difficulty {
     density: lerp(CURVE.density),
     blockingShare: lerp(CURVE.blockingShare),
     overheadShare: lerp(CURVE.overheadShare),
+    wallShare: lerp(CURVE.wallShare),
   }
 }
