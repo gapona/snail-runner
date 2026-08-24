@@ -7,13 +7,22 @@ import { createPlayerState, isOffRoad, jump, playerScreenFraction, stepPlayer, t
 import { PlayerView } from '../run/PlayerView'
 import { createSquashState, squashAt, squashOnLanding, squashOnLaunch, type SquashState } from '../run/squash'
 import { addFreeze, isFrozen, type Freezable } from '../run/hitstop'
+import { hits, placeRunObstacles, type Obstacle } from '../run/obstacles'
+import { ObstacleSprites } from '../run/ObstacleSprites'
 import {
+  HITSTOP_MS,
+  HIT_INVULNERABLE_MS,
+  HIT_SPEED_LOSS,
   JUMP_LAUNCH_V,
   KEYBOARD_POINT_SPEED,
   LANDING_HITSTOP_MS,
+  OBSTACLE_DEPTH,
   OFFROAD_DRAG,
+  PLAYER_Z,
   SPEED_BASE,
 } from '../run/constants'
+import { SEGMENT_LENGTH } from '../road/constants'
+import { wrapZ } from '../road/project'
 import { playSfx } from '../audio/audio'
 import { SFX } from '../audio/sfx'
 
@@ -43,6 +52,31 @@ export class RunScene extends Phaser.Scene {
   private playerView!: PlayerView
   private steering!: Steering
   private squash!: SquashState
+  private obstacles!: Obstacle[]
+  private obstacleSprites!: ObstacleSprites
+  /**
+   * Obstacles indexed by the segment they stand on.
+   *
+   * **Built once, walked per frame.** The renderer visits 300 segments a frame and the run holds
+   * a couple of thousand obstacles; without this the draw would be O(obstacles) per frame instead
+   * of O(what is on screen), which is the same reason `Segment.sprites` exists in the road layer.
+   */
+  private obstaclesBySegment!: Map<number, Obstacle[]>
+  /**
+   * Which lap each obstacle was last resolved against the snail on.
+   *
+   * The track is a closed loop the run goes round several times, so "already hit" cannot be a
+   * boolean — it would disarm every obstacle for the rest of the run after one lap. Keyed by
+   * obstacle id, holding the lap number, so each obstacle is live again next time round.
+   */
+  private resolvedOnLap!: Map<number, number>
+  /** Where the snail was along the track last frame, for the swept collision test. */
+  private previousPlayerZ = 0
+  private invulnerableUntil = 0
+  /** One number a whole run is reproducible from: the scenery scatter and the obstacle layout. */
+  private runSeed = 0
+  /** How many times this run has been hit. The HUD and the run's end are chunk 5's. */
+  private hitCount = 0
   /**
    * The player's own hitstop deadline — `hitstop.ts`'s `Freezable`, on the snail and nothing else.
    *
@@ -62,6 +96,9 @@ export class RunScene extends Phaser.Scene {
     this.player = createPlayerState()
     this.squash = createSquashState()
     this.playerFreeze = { frozenUntil: 0 }
+    this.resolvedOnLap = new Map()
+    this.invulnerableUntil = 0
+    this.hitCount = 0
 
     // The ground, the scenery, the sky and the camera that rides through them — all of it in
     // `WorldView`, which `MainMenu` builds the same way. Two scenes drawing the same world from
@@ -72,9 +109,18 @@ export class RunScene extends Phaser.Scene {
     // sweeps every point of it), and a per-run random circuit would be an unverified one. Variety
     // across runs comes from the scenery seed and from the eight biomes the lap already cycles
     // through, neither of which can produce a corner you cannot see round.
-    this.world = new WorldView(this, { speed: SPEED_BASE, decorSeed: Math.floor(Math.random() * 0xffff) })
+    this.runSeed = Math.floor(Math.random() * 0xffff)
+    this.world = new WorldView(this, { speed: SPEED_BASE, decorSeed: this.runSeed })
 
-    // Built after the world, because it draws over it and the display list is the draw order.
+    // The obstacles, laid along the finished track and *proved passable* before they are used —
+    // see `obstacles.ts`. Seeded from the same draw as the scenery so a run is reproducible from
+    // one number.
+    this.obstacles = placeRunObstacles(this.runSeed, this.world.trackLength)
+    this.obstaclesBySegment = indexBySegment(this.obstacles, this.world.track.length)
+    this.previousPlayerZ = PLAYER_Z
+
+    // Built after the world, because they draw over it and the display list is the draw order.
+    this.obstacleSprites = new ObstacleSprites(this)
     this.playerView = new PlayerView(this)
 
     // World/UI split per CLAUDE.md "Responsive Layout". Nothing screen-space exists yet; the
@@ -105,6 +151,7 @@ export class RunScene extends Phaser.Scene {
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.playerView.destroy()
+      this.obstacleSprites.destroy()
       this.world.destroy()
     })
 
@@ -131,6 +178,9 @@ export class RunScene extends Phaser.Scene {
       player: () => ({ ...this.player, offRoad: isOffRoad(this.player.offsetX) }),
       screen: () => ({ x: this.playerView.screenX, y: this.playerView.screenY }),
       seconds: () => runSeconds(this.run),
+      obstacles: () => this.obstacles.length,
+      drawn: () => ({ used: this.obstacleSprites.usedLastFrame, wanted: this.obstacleSprites.wantedLastFrame }),
+      hits: () => this.hitCount,
     }
   }
 
@@ -145,6 +195,64 @@ export class RunScene extends Phaser.Scene {
     if (leaked.length > 0) {
       console.warn(`[run] ${leaked.length} world object(s) are not ignored by uiCamera and will be drawn twice`)
     }
+  }
+
+  /**
+   * Resolves the snail against everything it crossed this frame.
+   *
+   * **Swept, not sampled.** At `SPEED_CAP` a frame covers 60 world units and an obstacle is 200
+   * deep, so a point test would usually work and would miss on a long frame — which is exactly the
+   * frame a phone drops. The test is against the *interval* the snail travelled, so nothing can be
+   * passed through however long the frame was.
+   *
+   * The lap number is part of the key because the track loops: `hit` as a boolean would disarm
+   * every obstacle permanently after one lap.
+   */
+  private resolveObstacles(fromZ: number, toZ: number, lap: number, now: number): void {
+    if (now < this.invulnerableUntil) return
+
+    // Only the segments the sweep actually touched, through the same index the renderer uses. The
+    // alternative — walking the run's whole obstacle list every frame — is a couple of thousand
+    // comparisons per frame to find the two or three that can possibly matter.
+    const first = Math.floor(fromZ / SEGMENT_LENGTH) - 1
+    const last = Math.floor(toZ / SEGMENT_LENGTH)
+    const segmentCount = this.world.track.length
+
+    for (let index = first; index <= last; index++) {
+      const here = this.obstaclesBySegment.get(((index % segmentCount) + segmentCount) % segmentCount)
+
+      if (!here) continue
+
+      for (const obstacle of here) {
+        if (this.resolvedOnLap.get(obstacle.id) === lap) continue
+        // The swept interval against the obstacle's own depth. Both are unwrapped within one lap;
+        // the caller splits a frame that crosses the seam into two calls.
+        if (toZ < obstacle.z || fromZ > obstacle.z + OBSTACLE_DEPTH) continue
+
+        this.resolvedOnLap.set(obstacle.id, lap)
+        if (!hits(this.player, obstacle)) continue
+
+        this.takeHit(now)
+
+        return
+      }
+    }
+  }
+
+  /**
+   * What a hit costs: speed, a moment of the snail's own time, and a window of not being hit again.
+   *
+   * **Speed, not a life.** The punishment is measured in the same unit as the reward, which is what
+   * makes the whole run one economy rather than a score plus a health bar bolted to it. Three of
+   * them end the run — chunk 5 owns that part; this is the per-hit half.
+   */
+  private takeHit(now: number): void {
+    this.hitCount++
+    this.invulnerableUntil = now + HIT_INVULNERABLE_MS
+    addFreeze(this.playerFreeze, now, HITSTOP_MS)
+    this.run = { ...this.run, speed: Math.max(SPEED_BASE * 0.4, this.run.speed - HIT_SPEED_LOSS) }
+    this.cameras.main.shake(180, 0.008)
+    playSfx(SFX.HIT)
   }
 
   /**
@@ -164,7 +272,7 @@ export class RunScene extends Phaser.Scene {
 
   /** Everything that belongs to `cameras.main` and must be hidden from `uiCamera`. */
   private worldObjects(): Phaser.GameObjects.GameObject[] {
-    return [...this.world.gameObjects, ...this.playerView.gameObjects]
+    return [...this.world.gameObjects, ...this.obstacleSprites.gameObjects, ...this.playerView.gameObjects]
   }
 
   layout(width: number, height: number): void {
@@ -192,6 +300,21 @@ export class RunScene extends Phaser.Scene {
       this.player = stepPlayer(this.player, { targetFraction: steer.targetFraction, active: steer.active }, delta)
     }
 
+    // **Collisions before the draw and after the step**, so a hit is resolved against the frame
+    // the player actually saw. The snail's own z is the camera's plus the constant it lives at.
+    const playerZ = wrapZ(this.run.z + PLAYER_Z, this.world.trackLength)
+    const lap = Math.floor((this.run.distance + PLAYER_Z) / this.world.trackLength)
+
+    if (playerZ >= this.previousPlayerZ) {
+      this.resolveObstacles(this.previousPlayerZ, playerZ, lap, time)
+    } else {
+      // The frame crossed the loop seam. Two calls rather than one wrapped comparison: the second
+      // is a different lap, and an obstacle straddling the seam must be live in both.
+      this.resolveObstacles(this.previousPlayerZ, this.world.trackLength, lap - 1, time)
+      this.resolveObstacles(0, playerZ, lap, time)
+    }
+    this.previousPlayerZ = playerZ
+
     if (wasAirborne && this.player.grounded) {
       squashOnLanding(this.squash, time)
       addFreeze(this.playerFreeze, time, LANDING_HITSTOP_MS)
@@ -216,6 +339,14 @@ export class RunScene extends Phaser.Scene {
     // this runs, and the lean is what decides where the sprite goes.
     this.world.advance(delta, playerScreenFraction(this.player.offsetX))
     this.world.render(width, height)
+    this.obstacleSprites.render(
+      this.obstaclesBySegment,
+      this.world.track,
+      this.world.baseIndex,
+      this.world.clipY,
+      width,
+      height,
+    )
     // After the world, never before: it reads this frame's segment projections out of the mesh
     // pass, exactly as `RoadSprites` does.
     this.playerView.render(
@@ -228,4 +359,26 @@ export class RunScene extends Phaser.Scene {
       squashAt(this.squash, time, this.player.vy / JUMP_LAUNCH_V),
     )
   }
+}
+
+/**
+ * Groups obstacles by the segment index they stand on.
+ *
+ * The renderer walks segments, not obstacles — see `ObstacleSprites.render` — so this is what
+ * turns a run-long list into something a 300-segment draw can index into. The same shape
+ * `Segment.sprites` gives the scenery, built here rather than on the segment because `src/road/`
+ * does not know obstacles exist and is not going to be taught.
+ */
+function indexBySegment(obstacles: readonly Obstacle[], segmentCount: number): Map<number, Obstacle[]> {
+  const index = new Map<number, Obstacle[]>()
+
+  for (const obstacle of obstacles) {
+    const key = Math.floor(obstacle.z / SEGMENT_LENGTH) % segmentCount
+    const list = index.get(key)
+
+    if (list) list.push(obstacle)
+    else index.set(key, [obstacle])
+  }
+
+  return index
 }

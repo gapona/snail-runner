@@ -240,20 +240,27 @@ export const OBSTACLE_DEPTH = SEGMENT_LENGTH
  * player's `[y, y + PLAYER_BODY_H]` overlapping the obstacle's `[yLow, yHigh]`, and the three
  * rows below simply fall out of that arithmetic against `JUMP_APEX = 320`:
  *
- * | band       | range         | outcome                                             |
- * |------------|---------------|-----------------------------------------------------|
- * | `low`      | `[0, 150]`    | cleared by a jump — the apex puts the foot at 320    |
- * | `blocking` | `[0, 520]`    | **cannot** be jumped; must be gone around           |
- * | `overhead` | `[260, 1200]` | run under on the ground; **jumping into it hits**   |
+ * | band       | range        | outcome                                             |
+ * |------------|--------------|-----------------------------------------------------|
+ * | `low`      | `[0, 150]`   | cleared by a jump — the apex puts the foot at 320    |
+ * | `blocking` | `[0, 430]`   | **cannot** be jumped; must be gone around           |
+ * | `overhead` | `[250, 620]` | run under on the ground; **jumping into it hits**   |
  *
  * The third row is not decoration and must never be dropped for being fiddly: without something
  * that punishes being airborne, the optimal play is to hold jump forever and the whole mechanic
  * evaporates. It is also free — the same overlap test produces it.
+ *
+ * **The heights were cut once, by looking at them.** The first set (`blocking` to 520, `overhead`
+ * to 1200) satisfied every constraint above and drew a road lined with grey slabs three to six
+ * times the snail's own height — the frame read as an industrial estate rather than as something
+ * a snail is running through. What actually binds is only this: `blocking` must reach above 320
+ * (the apex) and `overhead` must start above 180 (the snail's back) and reach above 500 (the apex
+ * plus the body). Everything past those is bulk, and bulk was costing the read.
  */
 export const OBSTACLE_BANDS = {
   low: { yLow: 0, yHigh: 150 },
-  blocking: { yLow: 0, yHigh: 520 },
-  overhead: { yLow: 260, yHigh: 1200 },
+  blocking: { yLow: 0, yHigh: 430 },
+  overhead: { yLow: 250, yHigh: 620 },
 } as const
 
 export type ObstacleKind = keyof typeof OBSTACLE_BANDS
