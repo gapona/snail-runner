@@ -98,13 +98,17 @@ is the same question in both games.
 
 ### Reading the rest of this document
 
-Everything below **"## Road Renderer"** that is about the road, the billboards, the biomes, the
-themes, the interface kit, the save layer, the platform layer, the build guards and the scroll
-patterns is **current and binding**. Everything about ships, weapons, enemies, waves, the boss,
-lock-on, the volley, upgrades, the loadout, hulls and levels is **history**: the code is gone, and
-those sections are kept because they record *why* numbers that are still here were chosen (the
-dodge budget that set the spring constant, the sightline that shaped the circuit, the OKLab threat
-rule the palette still obeys). Do not restore behaviour from them.
+**The runner's own chapters are the eight between "## UI Kit" and "## Road Renderer"** — The Run,
+The Snail, The Jump, Obstacles, Pickups, The Difficulty Curve, The End Of A Run, The HUD. Those
+describe this game.
+
+Below them, everything about the road, the billboards, the biomes, the themes, the interface kit,
+the save layer, the platform layer, the build guards and the scroll patterns is **current and
+binding**. Everything about ships, weapons, enemies, waves, the boss, lock-on, the volley, upgrades,
+the loadout, hulls and levels is **history**: the code is gone, and those sections are kept because
+they record *why* numbers that are still here were chosen (the dodge budget that set the spring
+constant, the sightline that shaped the circuit, the OKLab threat rule the palette still obeys).
+Do not restore behaviour from them, and do not take a "⚠" in one of them as a live warning.
 
 ## Commands
 
@@ -180,15 +184,15 @@ Phaser 4 game client bundled with Vite. `tsconfig.json` uses `noEmit: true` — 
   - `Preloader` → shows a progress bar (on the standard `layout()` pattern — see "Responsive Layout"),
     loads all real game assets here, then starts `MainMenu`.
   - `MainMenu` → **renders the game's own world** through `WorldView`, with the title, the Play
-    button and two secondary buttons laid over the rows a run leaves empty; calls `gameReady()`,
-    and hands over to `RailScene` on `'primary'` with no fade. See "The Menu Is The Game".
-  - `RailScene` → **the gameplay scene of this game** (a pseudo-3D rail shooter). Owns the road
-    renderer and the player's ship; see "Road Renderer" and "Player Ship" below, including its
-    deliberate departure from `Game.ts`'s letterbox layout contract.
-  - `Game` → the template's original placeholder gameplay scene (a gear button bound to
-    `'openSettings'`; `create()`/`update()` otherwise empty stubs). Still registered in
-    `config.ts`, but nothing routes to it any more — `MainMenu` starts `RailScene` instead. Kept
-    only as the reference implementation of the fixed-logical-resolution layout contract.
+    button and two secondary buttons (Shop, Settings) laid over the rows a run leaves empty; calls
+    `gameReady()`, and hands over to `RunScene` on `'primary'` with no fade. See "The Menu Is The
+    Game" — the argument survived the genre change; only the ship flying across it did not.
+  - `RunScene` → **the gameplay scene**. Owns nothing but the wiring: the world (`WorldView`), the
+    run's clock (`runState.ts`), the snail (`playerMotion.ts` + `PlayerView`), the obstacles and
+    pickups and their pools, and the HUD. Every rule it applies lives in a `phaser`-free module
+    under `src/run/`. See "The Run", "The Snail", "The Jump", "Obstacles" and "Pickups".
+  - `RunOver` → the result overlay, and **the only place in the game an ad may appear**. See
+    "The End Of A Run".
   - `Settings` → overlay scene, built entirely from the `src/ui/theme.ts` widget kit
     (`roundedPanel` + `neonButton`) and `t()` strings — see "Audio Layer" below and "UI Kit" for
     the widgets themselves.
@@ -565,6 +569,217 @@ reference consumer — read it alongside this section for the intended call patt
   `formatTime(elapsedSec)` (`"M:SS"`), `titleCase(id)` (`'retro-tech'` -> `'Retro Tech'`),
   `fitContain(sourceW, sourceH, maxW, maxH)` (largest non-distorting fit inside a box — `preview.ts`'s
   own `'contain'` branch is built on this).
+
+## The Run
+
+`src/run/runState.ts` is the whole run as a value: where it is, how fast, how far, how much left.
+`RunScene` holds one and replaces it every frame; every rule that changes it is a pure function in
+this module, which is what makes `npm run verify:run-speed` able to test the game without a browser.
+
+- **`z` versus `distance` is the distinction the module exists to hold.** They advance by the same
+  amount every tick and are not the same number: `z` is a position on the closed circuit and wraps,
+  `distance` is how far the run has come and never does. `distance` is the score, and it is what the
+  difficulty curve reads. The rail shooter had no equivalent of the second — it scored kills, and
+  its lap was scenery.
+- **Speed is a saturating chase towards a ceiling, not a ramp**: `v += (cap - v) * SPEED_ACCEL * dt`,
+  which closes 63% of the remaining gap in `1 / SPEED_ACCEL` = 5.9s and asymptotes. Constant
+  acceleration would either pin the run at the ceiling or never reach it, depending on how long the
+  run happened to last. The same curve runs in *both* directions, which is what makes the boost's
+  expiry work with no second code path.
+- **The boost is state ticked down inside the fixed step, not a `Date.now()` deadline.** A wall-clock
+  deadline expires while a backgrounded tab draws nothing, and gives a 144Hz phone a different number
+  of boosted frames than a 60Hz one.
+- **A hit costs speed *and* a life, in that order**, and a shield is spent instead of the life but
+  never instead of the speed. That is the economy: the reward for playing well and the punishment for
+  playing badly are denominated in the same unit, so a run is one currency rather than a score with a
+  health bar bolted to it. A shield that absorbed everything would be the only pickup worth having.
+- **`RunScene` tells the world where the camera *is*, never how fast to go.** `WorldView.advance`
+  integrates a speed of its own — right for the menu, which rides on a script — and letting it do so
+  here would give two answers to "how far have we come", with the score reading one and the road
+  drawing the other. `setSpeed(0)` plus a direct `cameraZ` write; `advance` is still called with the
+  real delta because it also eases the camera's lean, which is dt-corrected.
+
+## The Snail
+
+`src/run/playerMotion.ts` is `rail/shipMotion.ts` with its state space replaced and **nothing else**
+— same spring, same `PLAYER_STIFFNESS`/`PLAYER_DAMPING` (the rail shooter's `SHIP_*` values, set
+there by measuring a dodge against a telegraph), same `runFixedSteps`. See "The Fork" at the top of
+this file for why the space had to change; what follows is what that bought.
+
+- **A bend cannot drag the snail off the road.** `offsetX` is measured from the road's *own*
+  projected centre, so on a curve — where that centre slides across the frame — a still finger keeps
+  the snail on the same piece of asphalt. `verify:player` proves this against `billboardRectInto`
+  (the road's centre moves 1147px across the frame; the snail stays exactly 508px from it) and
+  separately asserts, structurally, that `stepPlayer` takes no track argument at all.
+- **Two edges, not one.** `ROAD_EDGE` is where the asphalt runs out and `OFFROAD_LIMIT` is where the
+  ground does; between them the snail is on the verge, which is passable and costs `OFFROAD_DRAG`.
+  A single hard clamp reads as the input having stuck — the defect the rail shooter's `LANE_SOFT_BAND`
+  existed to fix, solved here more cheaply because this boundary is a *world* fact.
+- **The drawn footprint is derived from the collision box, never from the art.** `PLAYER_WIDTH` comes
+  from `PLAYER_HALF_WIDTHS`; `PlayerView` divides it by `SPRITE_SCALE` to get the units
+  `billboardRectInto` wants. The first version let the texture's pixel size decide and the two
+  disagreed by 2.5x — a snail 720 units wide on screen against a 180-unit body, a pancake that got hit
+  by things it visibly cleared.
+- **Steering is an *absolute* axis**, which is why `platform/input.ts` grew a third binder.
+  `bindAction` answers "did they tap"; `bindHeldAction` answers "are they holding left"; neither can
+  answer "where is the finger", which is the only question a game whose player is dragged across a
+  road actually asks. `bindSteering` does, from a pointer (absolute) or a keyboard virtual point
+  (a rate), and reading `scene.input.activePointer` at the call site instead would be exactly the
+  raw-input coupling that module exists to prevent.
+
+## The Jump
+
+The vertical shares `playerMotion.ts`'s module *and its tick*, and that is not tidiness: two
+integrators would each carry their own remainder, so the same wall-clock delta could run three
+lateral ticks and two vertical ones — and "was I over the log when I crossed it" is a question about
+both axes at one instant.
+
+- **The arc is solved, never tuned.** `JUMP_AIR_MS` is assigned first; `JUMP_GRAVITY = 8h/T^2` and
+  `JUMP_LAUNCH_V = gT/2` follow. Tuning `g` by hand is how an arc drifts away from the air time the
+  obstacle bands were laid out against.
+- **⚠ The position step must be the exact integral over the tick**, `y += v*dt - g*dt^2/2`, not
+  `y += v*dt` after updating `v`. The naive form drops that second term every tick: measured against
+  the shipped constants it peaked at **303 units instead of 320**, 5.3% low — enough to stop clearing
+  an obstacle the arc was solved to clear. `verify:jump` caught it on its first run and holds the apex
+  to 1%. Same lesson `ui/scrollMomentum.ts` records for its own decaying velocity.
+- **No double jump and no hold-to-go-higher.** The three-band obstacle model is an assertion about
+  where a *fixed* apex sits; a negotiable arc turns "can I clear this" into a question with no stable
+  answer.
+- **The shadow is part of the mechanic, not polish.** On a pseudo-3D road there is no other height
+  cue — a snail at `y = 300` and one standing on a rise both draw higher up the frame. The ellipse
+  stays on the ground at the snail's own `offsetX` and **shrinks without fading**, which is the
+  load-bearing half: the first version scaled size *and* alpha, the two multiplied, and at the apex it
+  was 41px wide at alpha 0.18 on grey asphalt — invisible at exactly the moment its whole job is to
+  say how high you are. Found by looking at the frame.
+- **`squash.ts` is the entire animation system**: one volume-preserving scalar. A snail has no legs
+  and no gait, so effort is expressed by deforming one blob — which is a large part of why the mascot
+  is a snail at all. Chunk 7's slide cycle sits *underneath* this, not instead of it.
+- Landing costs `LANDING_HITSTOP_MS` of **per-entity** hitstop on the snail (`run/hitstop.ts`,
+  inherited whole). Never `timeScale`, never a global pause: the road has to keep scrolling through a
+  landing, or the moment reads as a dropped frame rather than as weight.
+
+## Obstacles
+
+`src/run/obstacles.ts` is the model, `ObstacleSprites.ts` the pool — exactly the split `rail/enemy.ts`
+and `rail/Enemies.ts` had, and for the same reason: the model runs under Node.
+
+- **One rule.** A hit is two interval overlaps, across the road and up the body. `Obstacle.kind`
+  exists for *art* and for the placer's ratios, and the collision never reads it —
+  `verify:obstacles` proves that by hand-editing a branch's band and checking it behaves as the band
+  says rather than as the name does. The obvious design is a `jumpable: boolean`, and it fails on the
+  third class: an overhead is not "unjumpable", it is *hit by jumping*, which a boolean cannot say.
+- **A layout is proved passable before it ships.** `passableLine` scans 81 samples across the road,
+  on the ground first and then at the apex; `provePassable` adds the constraint a per-row check
+  cannot see — a jump-only row commits the snail to the air for up to `FLIGHT_LENGTH_Z`, so
+  everything inside that flight has to be clearable *from the air* too. A row that fails is redrawn
+  up to `ROW_ATTEMPTS` times and then dropped. Generate-and-check, the same shape a puzzle generator
+  uses; a runner that occasionally deals an impossible hand teaches the player that deaths are not
+  their fault, which is the one thing an endless game cannot afford.
+- **Collisions are swept, not sampled.** At top speed a frame covers 60 units against a 200-deep
+  obstacle, so a point test works right up until the frame a phone drops. Resolution is keyed by
+  `(id, lap)` because the track loops — a boolean would disarm every obstacle after one lap.
+- **⚠ `MAX_ATTAINABLE_SPEED`, not `SPEED_CAP`.** Both the row-spacing floor and the flight window are
+  solved at the fastest the game can actually go, which is `SPEED_CAP * BOOST_FACTOR`. Solved at
+  `SPEED_CAP` — as the first version was — the reaction budget silently fell to 281ms against a 450ms
+  floor *during a boost*, i.e. at the one moment the player chose to feel fastest.
+- **⚠ Row spacing jitter may only ever add distance.** Scaling the whole spacing by
+  `0.85 + rng() * 0.3` reads as more natural and put two rows 6.9 segments apart against an
+  8.1-segment floor. A floor a random multiplier can dip below is not a floor.
+- **The bands were cut by looking at the frame.** The first set (`blocking` to 520, `overhead` to
+  1200) satisfied every constraint and drew a road lined with grey slabs three to six times the
+  snail's height — the game read as an industrial estate. What actually binds is only that `blocking`
+  reaches above the apex and `overhead` starts above the snail's back and reaches above the apex plus
+  its body. Everything past those was bulk, and bulk was costing the read.
+
+## Pickups
+
+`src/run/pickups.ts`. **Three kinds — boost, shield, coin — and the rail shooter's own docstring is
+the argument for three.** That game cut its set twice, seven to five, on a rule about *meaning*: what
+survived was what a player can predict from the icon. Of its final five, three have no equivalent
+here (no guns, no multiplier) and two collapse into one once a hit costs speed rather than health. A
+fourth would have to answer a question the first three do not, and a runner with two verbs and one
+resource does not have one.
+
+- **`sideAwayFrom` is kept verbatim, weights and all.** There it kept a pickup out of the line of
+  fire so collecting it was a decision rather than a side effect of aiming; here it keeps one out of
+  the gap the player was already threading. A pickup that costs nothing is scenery.
+- **The catchment box is deliberately wider than the icon** — the one place in this game where the
+  collision and the sprite are allowed to disagree, and only in that direction. An obstacle that hits
+  you from further than it looks is a lie; a coin caught from slightly further is a game that is not
+  fighting you. (The first version drew the icon *at* the catchment width and put a 640-unit coin on
+  the road, four snails wide.)
+- Coins taken in a row climb `audio/sfx.ts`'s pitch ladder — the rail shooter's lock tone, unchanged,
+  because "how many did I just get without looking away" is the same question in both games. Anything
+  that is not a coin resets the run.
+
+## The Difficulty Curve
+
+`src/run/difficulty.ts` — a pure function of **distance, never of time**. A time-driven curve
+punishes the player for going slowly, which in this game means punishing them for having been hit on
+top of the speed they already lost. Three knobs (density, the unjumpable share, the overhead share),
+all rising, all saturating exponentially: a ramp would need a distance past which the road stops
+responding, and any such number is a promise an endless mode cannot keep.
+
+**What does not move is `REACTION_MS`.** The placer's row spacing is floored against it at
+`MAX_ATTAINABLE_SPEED`, so no setting the knobs can take produces a row the player was not shown in
+time. If the curve ever wants something the floor forbids, the curve is what changes.
+`verify:obstacles` simulates 500 runs across six distance bands and prints the table:
+
+```
+   distance  density  blocking  overhead   rows/90k   min gap   reaction budget
+         0m     0.53      0.21      0.14       10.5      37.2seg           1293ms
+       450m     0.68      0.25      0.18       13.2      29.3seg           1018ms
+       900m     0.78      0.29      0.20       15.7      24.5seg            851ms
+      1800m     0.87      0.32      0.22       19.2      19.8seg            689ms
+      3600m     0.91      0.34      0.24       21.8      17.5seg            607ms
+      7200m     0.92      0.34      0.24       22.2      17.1seg            594ms
+```
+
+**⚠ Layouts are generated one lap at a time and regenerated on the wrap.** The renderer and the
+collision both index by *segment*, so a layout laid across a distance longer than the lap puts two
+obstacles on the same piece of ground. The whole curve fits inside one lap (`DIFFICULTY_TAU_Z` is
+90 000 units against a 286 800-unit lap), so a run is at 96% of the ceiling by the time it first
+wraps and every later lap is generated at the saturated end — the seam is not a difficulty step
+because there is nothing left to step to.
+
+The biomes do the rest for free: the run circuit cycles through eight of them along the track, so a
+long run *looks* like progress without the difficulty having to carry that job as well.
+
+## The End Of A Run
+
+`src/scenes/RunOver.ts`, launched over the paused run — the same overlay shape `Settings` and `Shop`
+use, and registered in `platform/lifecycle.ts`'s `OVERLAY_SCENES` for the same reason.
+
+- **Paused, not stopped.** The panel is drawn over a frozen road rather than over black: the world is
+  what the player was just in, and cutting to an empty background makes the run feel deleted rather
+  than finished.
+- **The score and the coins are banked first, before anything else can go wrong.** They are the only
+  things a run produces, and an ad or a scene change between earning and saving them is a run played
+  for nothing.
+- **This is the only place an ad may appear.** An interstitial mid-run in a game whose whole subject
+  is momentum is the worst possible interruption, and a rewarded ad offered mid-run would make the
+  reward a reason to die. `platform/adPolicy.ts` limits it further by session count, gap and a
+  first-run grace period, and the policy state is `static` because a scene is rebuilt every run while
+  the session is not.
+- **Every rewarded offer has a non-ad alternative.** The coin-doubler's alternative is the run itself:
+  the coins are already banked, and the ad doubles them. A player who never watches one is slower,
+  never blocked.
+
+## The HUD
+
+`src/run/Hud.ts` — three readouts against the rail shooter's eleven. That game's HUD carried shields,
+score, a multiplier, a wave banner, a lock counter, a boss bar and a weapon row, and every one existed
+because the fight had a state the frame could not show. A runner's state is almost all visible: speed
+is the ground moving, position is the snail, what is coming is on screen. What is *not* visible is the
+number the run is scored in, how much carelessness is left, and whether the boost is still running.
+
+- **Distance is shown in metres, a hundred world units to one.** The raw number climbs by 3600 a
+  second at top speed, and a counter whose last three digits are a blur is a counter nobody reads.
+- Lives are pips rather than a count: a number is something to read, a shape is something to glance
+  at, and glancing is all the player can afford mid-run.
+- The boost meter is hidden when there is no boost. A permanently empty gauge is a permanent question.
+- Everything sits in the top band `ui/menuLayout.ts` reserves, so it appears into rows the menu
+  deliberately leaves empty — which is what lets the handover from menu to run be nothing but a fade.
 
 ## Road Renderer
 
