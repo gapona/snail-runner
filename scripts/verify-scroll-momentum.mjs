@@ -5,6 +5,7 @@
 // via the register-ts-loader.mjs + ts-extensionless-loader.mjs Node-native-TS setup.
 import assert from 'node:assert/strict'
 import { createScrollMomentumState, pushDragSample, computeReleaseVelocity, stepMomentum } from '../src/ui/scrollMomentum.ts'
+import { clampScroll, contentHeight, isTap, maxScroll, TAP_SLOP_PX, windowHeight } from '../src/ui/scrollList.ts'
 
 let passed = 0
 function check(name, fn) {
@@ -208,6 +209,72 @@ check('drag-sample timestamps must come from the real event clock, not a frame-l
   const finalAt60Hz = coastToZero(1000 / 60)
   assert.ok(Math.abs(finalAt120Hz - finalAt60Hz) < 0.5, `120Hz final position ${finalAt120Hz} and 60Hz final position ${finalAt60Hz} should match to rounding precision, differ by ${Math.abs(finalAt120Hz - finalAt60Hz)}`)
   console.log(`    coast-to-zero final position: 120Hz=${finalAt120Hz.toFixed(3)}px, 60Hz=${finalAt60Hz.toFixed(3)}px (diff ${Math.abs(finalAt120Hz - finalAt60Hz).toFixed(4)}px)`)
+})
+
+console.log('src/ui/scrollList.ts checks')
+
+check('contentHeight: n rows and n-1 gaps, and an empty list is zero, not a gap', () => {
+  assert.equal(contentHeight(0, 52, 10), 0)
+  assert.equal(contentHeight(1, 52, 10), 52)
+  assert.equal(contentHeight(3, 52, 10), 52 * 3 + 10 * 2)
+})
+
+check('maxScroll: content shorter than its window cannot scroll at all', () => {
+  // The bound must not go negative. A negative bound would let clampScroll push a two-item
+  // catalogue off the top of its own window, which reads as a broken list rather than a short one.
+  assert.equal(maxScroll(100, 400), 0)
+  assert.equal(maxScroll(400, 400), 0)
+  assert.equal(maxScroll(1044, 400), 644)
+})
+
+check('clampScroll: held inside 0..maxScroll from both ends', () => {
+  assert.equal(clampScroll(-80, 1044, 400), 0)
+  assert.equal(clampScroll(300, 1044, 400), 300)
+  assert.equal(clampScroll(9000, 1044, 400), 644)
+  assert.equal(clampScroll(300, 100, 400), 0, 'a list that cannot scroll clamps everything to the top')
+})
+
+check('clampScroll: a resize that lengthens the window pulls the offset back', () => {
+  // The real sequence this guards: scrolled to the end in portrait, then rotated to landscape.
+  // The window grows, the travel shrinks, and an unclamped offset leaves blank space under the
+  // last row until the player scrolls back up.
+  const atEnd = clampScroll(9000, 1044, 400)
+
+  assert.equal(atEnd, 644)
+  assert.equal(clampScroll(atEnd, 1044, 900), 144)
+})
+
+check('windowHeight: floored rather than allowed to go negative', () => {
+  // A zero or negative camera viewport throws in Phaser, and a landscape phone reaches it: the
+  // chrome alone can be taller than the panel the viewport allows.
+  assert.equal(windowHeight(700, 300, 60), 400)
+  assert.equal(windowHeight(200, 300, 60), 60)
+  assert.equal(windowHeight(340, 300, 60), 60)
+})
+
+check('isTap: a press that did not move is a tap, a drag is not', () => {
+  assert.equal(isTap(0, 0, TAP_SLOP_PX), true)
+  assert.equal(isTap(TAP_SLOP_PX, 0, TAP_SLOP_PX), true, 'exactly at the slop still counts')
+  assert.equal(isTap(0, TAP_SLOP_PX + 1, TAP_SLOP_PX), false)
+  // Radial, not per-axis: a diagonal drag of 10px on each axis travels 14px and is a drag.
+  assert.equal(isTap(10, 10, TAP_SLOP_PX), false, 'the test must be radial, not axis-by-axis')
+})
+
+check('isTap: a slow drag down a list is never mistaken for a tap', () => {
+  // The failure this exists for. A drag measured between consecutive frames moves only a few
+  // pixels per frame and would pass a per-frame test the whole way down the list; measured from
+  // the press, it fails immediately and keeps failing.
+  let y = 0
+  let taps = 0
+
+  for (let frame = 0; frame < 40; frame++) {
+    y += 3
+
+    if (isTap(0, y, TAP_SLOP_PX)) taps++
+  }
+
+  assert.equal(taps, 4, 'only the first few pixels of travel are still a tap')
+  assert.equal(isTap(0, y, TAP_SLOP_PX), false)
 })
 
 console.log(`${passed} checks passed`)

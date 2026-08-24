@@ -8,7 +8,7 @@ import { YTEvents } from './yt'
  * needing to remember to register it; only new *overlay* scenes (menus/dialogs meant to
  * stay interactive during a pause, like `Settings` and `Shop`) need to be added here.
  */
-const OVERLAY_SCENES = new Set(['Settings', 'Shop'])
+const OVERLAY_SCENES = new Set(['Settings', 'Shop', 'Loadout', 'LevelSelect', 'Hangar'])
 
 /**
  * Freezes gameplay on `YTEvents.PAUSE` and unfreezes it on `YTEvents.RESUME` — the

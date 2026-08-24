@@ -1,0 +1,278 @@
+import * as Phaser from 'phaser'
+import { BIOMES, biomeIndexForSegment } from './biomes'
+import { multiplyTint } from './color'
+import {
+  billboardOnScreen,
+  billboardVisibleFraction,
+  billboardRectInto,
+  createBillboardRect,
+} from './billboard'
+import { tintFor, variationFor, type DecorVariation } from './decorVariation'
+import { billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG } from './constants'
+import { isDecorArt, type DecorTexture } from './decor'
+import { getRoadTheme } from './themes'
+import type { Segment } from './track'
+
+/** What one pool slot is currently showing, so a frame can skip work it does not need. */
+interface SlotState {
+  image: Phaser.GameObjects.Image
+  key: string
+  cropped: boolean
+}
+
+/**
+ * Every billboard on screen, drawn from a fixed pool of `Image`s.
+ *
+ * **The pool never grows.** Its size is decided once, in the constructor, and if a frame wants
+ * more objects than there are slots the extras simply are not drawn. That is a deliberate
+ * guarantee, not a limitation to be fixed later: a pool that grows on demand turns a busy
+ * moment into an allocation spike and a texture-upload stall at exactly the moment the frame
+ * is already the most expensive, and it does so unpredictably, which makes the frame budget
+ * unmeasurable. `wantedLastFrame` reports the demand so the ceiling can be checked against
+ * reality (`RailScene`'s DEV `__decorPerf` report) rather than assumed.
+ *
+ * **Candidates are gathered near-to-far**, so when slots do run out it is the *farthest*
+ * objects that go undrawn — the ones a few pixels tall near the horizon, rather than the
+ * building-sized one about to pass the camera.
+ *
+ * **Must run after `RoadMesh.render` in the same frame.** It reuses that pass's work twice
+ * over: each segment's `s1` (the projection of the ground the billboard stands on, which
+ * already carries the integrated curvature — recomputing it here would mean redoing a
+ * stateful accumulation and getting a subtly different road) and its `clipY` (how much of
+ * this segment a nearer hill hides). Both are per-frame scratch owned by the mesh.
+ */
+
+export class RoadSprites {
+  /** Every pooled object. Callers need them for camera `ignore()` lists. */
+  readonly gameObjects: readonly Phaser.GameObjects.Image[]
+
+  /** Billboards that passed culling last frame, including any the pool had no room for. */
+  wantedLastFrame = 0
+
+  /** Pool slots actually used last frame — never more than `gameObjects.length`. */
+  usedLastFrame = 0
+
+  private readonly slots: SlotState[]
+  private readonly sizes: Map<string, DecorTexture>
+  private readonly rect = createBillboardRect()
+
+  /**
+   * Which slots show loaded art, decided once — the loader has long finished by the time this
+   * scene is constructed, and nothing adds decor textures afterwards.
+   */
+  private readonly artKeys: Set<string>
+
+  /**
+   * What each biome's props are drawn in this frame: its own colour times the theme's light.
+   *
+   * One entry per biome, recomputed once per frame rather than per sprite — eight multiplies against
+   * up to ninety draws. Recomputed *every* frame rather than cached across them for the same reason
+   * the theme tint always was: a theme switch replaces the whole object, and a value captured once
+   * keeps painting the light of a theme the player has left.
+   */
+  private readonly biomeTints: number[] = BIOMES.map(() => 0xffffff)
+
+  constructor(scene: Phaser.Scene, poolSize: number, textures: readonly DecorTexture[]) {
+    if (textures.length === 0) {
+      throw new Error('RoadSprites: needs at least one texture to pool')
+    }
+
+    this.sizes = new Map(textures.map((texture) => [texture.key, texture]))
+    this.artKeys = new Set(textures.map((t) => t.key).filter((key) => isDecorArt(scene, key)))
+
+    const initialKey = textures[0].key
+
+    this.slots = Array.from({ length: poolSize }, () => ({
+      image: scene.add
+        .image(0, 0, initialKey)
+        // Origin at the bottom centre: a billboard is positioned by the point where it meets
+        // the ground, which is what the projection gives us.
+        .setOrigin(0.5, 1)
+        .setVisible(false),
+      key: initialKey,
+      cropped: false,
+    }))
+
+    this.gameObjects = this.slots.map((slot) => slot.image)
+  }
+
+  /**
+   * Places every visible billboard into the pool for this frame.
+   *
+   * `baseIndex` and `clipY` both come from the `RoadMesh` render that must already have run —
+   * see the class docstring.
+   */
+  render(track: Segment[], baseIndex: number, clipY: readonly number[], screenWidth: number, screenHeight: number): void {
+    const previousUsed = this.usedLastFrame
+    const capacity = this.slots.length
+    let used = 0
+    let wanted = 0
+
+    // Read through the getter every frame, never captured once: a theme switch replaces the
+    // whole object, and a captured value would keep painting the previous theme's light.
+    const themeTint = getRoadTheme().decorTint
+
+    for (const [index, biome] of BIOMES.entries()) {
+      this.biomeTints[index] = multiplyTint(biome.decorTint, themeTint)
+    }
+
+    for (let n = 0; n < DRAW_DISTANCE; n++) {
+      const segment = track[(baseIndex + n) % track.length]
+
+      if (segment.sprites.length === 0) continue
+
+      // **Per segment, not per frame.** Biomes run along the track, so two of them are on screen at
+      // once at every boundary — a single tint for the whole frame would paint the forest in the
+      // dunes' sand for the six seconds either side of the seam.
+      const tint = this.biomeTints[biomeIndexForSegment(segment.index, track.length)]
+
+      const ground = segment.s1
+
+      // Same guard as the mesh's, and for the same reason: a segment sitting exactly on the
+      // camera plane projects an infinite scale, which passes a naive `> 0` test and would
+      // put NaN into a sprite's position rather than being culled.
+      if (!Number.isFinite(ground.scale) || ground.scale <= 0) continue
+
+      const clip = clipY[n]
+
+      for (const sprite of segment.sprites) {
+        const texture = this.sizes.get(sprite.key)
+
+        if (!texture) continue
+
+        const rect = billboardRectInto(
+          this.rect,
+          ground,
+          sprite.offsetX,
+          sprite.height,
+          texture.width,
+          texture.height,
+          screenWidth,
+          screenHeight,
+        )
+        const visible = billboardVisibleFraction(rect, clip)
+
+        if (!billboardOnScreen(rect, visible, screenWidth, screenHeight)) continue
+
+        wanted++
+
+        // Past capacity the loop keeps *counting* but stops drawing: the arithmetic above is
+        // what makes `wantedLastFrame` an honest measure of demand, and it costs no Phaser
+        // calls. Breaking out early would silently report the pool as exactly big enough.
+        if (used >= capacity) continue
+
+        // **The instance's own look, derived from where it stands.** Not stored on the sprite
+        // record and not rolled here: `variationFor` is a pure function of the coordinate, so the
+        // same prop on the same segment is the same object on every lap and at every screen size.
+        const variation = variationFor(segment.index, Math.sign(sprite.offsetX), sprite.key)
+
+        this.place(this.slots[used], sprite.key, rect, visible, n, tint, variation, sprite.tierScale)
+        used++
+      }
+    }
+
+    // Only the slots that were in use last frame and are not in use now need hiding.
+    for (let i = used; i < previousUsed; i++) {
+      this.slots[i].image.setVisible(false)
+    }
+
+    this.usedLastFrame = used
+    this.wantedLastFrame = wanted
+  }
+
+  /**
+   * Forgets which texture each slot is showing, after a theme swap rebuilt them all.
+   *
+   * The pool skips `setTexture` when the key has not changed — a real optimisation, and exactly
+   * the wrong behaviour when the *pixels behind the key* were replaced: every slot then keeps a
+   * reference to a destroyed `Texture` and the next frame throws inside the renderer. Clearing
+   * the cached key makes the next render re-point every slot by construction, which is cheaper
+   * and more honest than tracking texture identity per slot.
+   */
+  refreshTextures(): void {
+    for (const slot of this.slots) {
+      slot.key = ''
+      slot.image.setVisible(false)
+    }
+  }
+
+  destroy(): void {
+    for (const slot of this.slots) slot.image.destroy()
+  }
+
+  /** Points one pool slot at one billboard. */
+  private place(
+    slot: SlotState,
+    key: string,
+    rect: { x: number; y: number; w: number; h: number },
+    visibleFraction: number,
+    distanceIndex: number,
+    tint: number,
+    variation: DecorVariation,
+    tierScale: number,
+  ): void {
+    const image = slot.image
+
+    if (slot.key !== key) {
+      // Crops are expressed in the frame's own pixels, so one left over from the previous
+      // texture would be meaningless against the new one.
+      if (slot.cropped) {
+        image.setCrop()
+        slot.cropped = false
+      }
+      image.setTexture(key)
+      slot.key = key
+    }
+
+    image.setPosition(rect.x, rect.y)
+    // **Uniform, and applied to the projected size rather than to the texture.** Scaling the two
+    // axes apart would stretch the prop; scaling the texture instead would fight the projection,
+    // which is what decides how big a thing at this distance is allowed to look.
+    // Two scales, and they multiply: the tier decides whether this is a far silhouette or a verge
+    // prop, the instance decides how this particular one differs from its neighbours.
+    const size = variation.scale * tierScale
+
+    image.setDisplaySize(rect.w * size, rect.h * size)
+    // Mirroring costs nothing and doubles the silhouettes. `setFlipX` rather than a negative
+    // scale, because a negative display size confuses the crop the hill clip applies below.
+    image.setFlipX(variation.flipX)
+    // The lean, around the base: the origin is bottom-centre, so an angle rotates the prop about
+    // the point where it meets the ground rather than about its middle.
+    image.setAngle(variation.tilt)
+    // Farther objects get a more negative depth and so are painted first. The ground mesh
+    // sits below all of them at `ROAD_MESH_DEPTH`; there is no depth buffer in play.
+    image.setDepth(-distanceIndex)
+    image.setVisible(true)
+    // Distance haze, on the same curve the ground fades by. Applied every frame rather than
+    // cached per slot: a slot's distance changes on almost every frame anyway, so a dirty check
+    // would cost more than the assignment it skips.
+    image.setAlpha(1 - billboardFog(distanceIndex) * MAX_BILLBOARD_FOG)
+    // Art gets its biome's colour under the theme's light; a generated silhouette already *is*
+    // the theme's colour, and multiplying it again would darken it twice over.
+    // The biome's colour under the theme's light, moved a little for this instance. A generated
+    // silhouette is left alone: it already *is* the theme's colour, and tinting it again would
+    // darken it twice over.
+    image.setTint(this.artKeys.has(key) ? tintFor(tint, variation) : 0xffffff)
+
+    if (visibleFraction < 1) {
+      // Crop rather than squash: shrinking the display height would slide the object down the
+      // hillside instead of sinking behind it. The crop origin is (0, 0) — the one case
+      // Phaser positions correctly (see CLAUDE.md "UI Kit" on `preview.ts`'s same finding),
+      // and the only one needed, since a hill always hides a billboard from the bottom up.
+      //
+      // **Measured off the frame, not off `texture`.** `DecorTexture.width/height` is a *world*
+      // size (`billboardRectInto` above divides by `SPRITE_SCALE` with it); a crop rectangle is
+      // in the frame's own pixels. The two coincide only for the generated canvas textures,
+      // which happen to be created at exactly those dimensions. A loaded PNG of any other
+      // resolution would crop to a corner of itself instead of to its lower part.
+      const frameW = image.frame.realWidth
+      const frameH = image.frame.realHeight
+
+      image.setCrop(0, 0, frameW, Math.max(1, Math.round(frameH * visibleFraction)))
+      slot.cropped = true
+    } else if (slot.cropped) {
+      image.setCrop()
+      slot.cropped = false
+    }
+  }
+}

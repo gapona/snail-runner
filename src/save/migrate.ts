@@ -1,53 +1,310 @@
-import { DEFAULT_SAVE_STATE, SaveState } from './types'
+// `type` on SaveState is load-bearing, not style: Node's native TS stripping (which
+// `npm run verify:run` loads this file through) erases imports without executing them, so a
+// type imported as a value becomes a missing export at runtime.
+import { clampVolume } from '../audio/volume'
+import { AUTO_THEME_ID, DEFAULT_SAVE_STATE, DEFAULT_THEME_ID, DEFAULT_WEAPON_ID, type SaveState } from './types'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-function normalizeV2(raw: Record<string, unknown>): SaveState {
+/** A finite, non-negative number from an unverified field, or the default. */
+function count(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
+function normalizeV10(raw: Record<string, unknown>): SaveState {
   const settings = isRecord(raw.settings) ? raw.settings : {}
   const purchases = Array.isArray(raw.purchases) ? raw.purchases.filter((p): p is string => typeof p === 'string') : DEFAULT_SAVE_STATE.purchases
+  const themeProgress: Record<string, number> = {}
+
+  if (isRecord(raw.themeProgress)) {
+    // Filtered field by field rather than trusted wholesale: this is a map whose *keys* come
+    // from data, so one corrupt entry must not poison the rest of the record.
+    for (const [id, best] of Object.entries(raw.themeProgress)) {
+      if (typeof best === 'number' && Number.isFinite(best) && best >= 0) themeProgress[id] = best
+    }
+  }
+
+  const weaponLoadout = Array.isArray(raw.weaponLoadout)
+    ? raw.weaponLoadout.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    : DEFAULT_SAVE_STATE.weaponLoadout
 
   return {
-    v: 2,
-    bestScore:
-      typeof raw.bestScore === 'number' && Number.isFinite(raw.bestScore) ? raw.bestScore : DEFAULT_SAVE_STATE.bestScore,
-    coins: typeof raw.coins === 'number' && Number.isFinite(raw.coins) && raw.coins >= 0 ? raw.coins : DEFAULT_SAVE_STATE.coins,
+    v: 10,
+    bestScore: count(raw.bestScore, DEFAULT_SAVE_STATE.bestScore),
+    selectedTheme:
+      typeof raw.selectedTheme === 'string' && raw.selectedTheme.length > 0
+        ? raw.selectedTheme
+        : DEFAULT_SAVE_STATE.selectedTheme,
+    selectedWeapon:
+      typeof raw.selectedWeapon === 'string' && raw.selectedWeapon.length > 0
+        ? raw.selectedWeapon
+        : DEFAULT_SAVE_STATE.selectedWeapon,
+    weaponLoadout,
+    selectedShip:
+      typeof raw.selectedShip === 'string' && raw.selectedShip.length > 0
+        ? raw.selectedShip
+        : DEFAULT_SAVE_STATE.selectedShip,
+    bestWave: count(raw.bestWave, DEFAULT_SAVE_STATE.bestWave),
+    themeProgress,
+    coins: count(raw.coins, DEFAULT_SAVE_STATE.coins),
     purchases,
+    // Filtered entry by entry, exactly as `themeProgress` is and for the same reason: the keys
+    // come from data, and one corrupt entry must not poison the record.
+    levelProgress: normalizeLevelProgress(raw.levelProgress),
     settings: {
       sound: typeof settings.sound === 'boolean' ? settings.sound : DEFAULT_SAVE_STATE.settings.sound,
       music: typeof settings.music === 'boolean' ? settings.music : DEFAULT_SAVE_STATE.settings.music,
+      // Through `clampVolume`, which is where an edited save's `2` or `"loud"` becomes a number
+      // the mixer can use. It defaults to full rather than to silence: a save that arrives with a
+      // corrupt volume should not leave the player wondering why the game is mute.
+      soundVolume:
+        settings.soundVolume === undefined
+          ? DEFAULT_SAVE_STATE.settings.soundVolume
+          : clampVolume(settings.soundVolume),
+      musicVolume:
+        settings.musicVolume === undefined
+          ? DEFAULT_SAVE_STATE.settings.musicVolume
+          : clampVolume(settings.musicVolume),
     },
   }
+}
+
+/**
+ * v8 -> v9: opens the first level and stops an unchosen theme from overriding every level.
+ *
+ * Two things, both about not taking anything away:
+ *
+ * - **Level progress starts empty**, which `unlockedCount` reads as "the first level is open". A
+ *   returning player's `bestWave` is not translated into cleared levels: waves and levels are
+ *   different units, and inventing a clear the player never got would hand them content unplayed.
+ * - **`selectedTheme` moves to `'auto'` only if it is the old default.** That value means "nobody
+ *   chose", and leaving it would make every level render in `day` — the identity levels exist for,
+ *   gone on upgrade for everyone who never opened the shop. A deliberately chosen theme is left
+ *   exactly where it is and keeps overriding, which is what buying one was for.
+ */
+function upgradeV8ToV9(raw: Record<string, unknown>): Record<string, unknown> {
+  const chosen = typeof raw.selectedTheme === 'string' ? raw.selectedTheme : DEFAULT_THEME_ID
+
+  return {
+    ...raw,
+    v: 9,
+    selectedTheme: chosen === DEFAULT_THEME_ID ? AUTO_THEME_ID : chosen,
+    levelProgress: { cleared: [], stars: {}, bestScore: {} },
+  }
+}
+
+/**
+ * v9 -> v10: the hull the player flies.
+ *
+ * **A default would have been enough here, and the migration exists anyway.** Every earlier save
+ * has no `selectedShip` at all, and `normalizeV10` already fills a missing one with the starting
+ * hull — so this step writes the same value the normaliser would. It is written out rather than
+ * skipped because the ladder is the place a reader looks to find out what changed at each version,
+ * and a version that silently does nothing is a version nobody can tell from a bug.
+ *
+ * What it deliberately does **not** do is grant anything: a returning player owns the free hull and
+ * whatever they have actually bought, and inventing a purchase would make `purchases` a lie the
+ * first time anything else reads it.
+ */
+function upgradeV9ToV10(raw: Record<string, unknown>): Record<string, unknown> {
+  return { ...raw, v: 10, selectedShip: DEFAULT_SAVE_STATE.selectedShip }
+}
+
+/** Every field of `levelProgress`, filtered entry by entry. */
+function normalizeLevelProgress(raw: unknown): SaveState['levelProgress'] {
+  if (!isRecord(raw)) return { cleared: [], stars: {}, bestScore: {} }
+
+  const cleared = Array.isArray(raw.cleared) ? raw.cleared.filter((id): id is string => typeof id === 'string') : []
+  const numbers = (value: unknown): Record<string, number> => {
+    if (!isRecord(value)) return {}
+
+    const out: Record<string, number> = {}
+
+    for (const [key, entry] of Object.entries(value)) {
+      if (typeof entry === 'number' && Number.isFinite(entry)) out[key] = entry
+    }
+
+    return out
+  }
+
+  return { cleared: [...new Set(cleared)], stars: numbers(raw.stars), bestScore: numbers(raw.bestScore) }
+}
+
+/**
+ * v7 -> v8: gives an existing player the volumes their flags implied.
+ *
+ * **A muted channel must come back at zero, not at full.** Before v8 the only control was on/off,
+ * so a player who turned music off and then met a volume slider would otherwise find it sitting at
+ * 70% with the music silent — two controls disagreeing about the same thing on the first frame the
+ * second one existed. So `false` becomes 0 and `true` becomes the default; the flag itself is left
+ * exactly as it was, because `audio.ts` still reads it.
+ */
+function upgradeV7ToV8(raw: Record<string, unknown>): Record<string, unknown> {
+  const settings = isRecord(raw.settings) ? raw.settings : {}
+  const soundOn = typeof settings.sound === 'boolean' ? settings.sound : true
+  const musicOn = typeof settings.music === 'boolean' ? settings.music : true
+
+  return {
+    ...raw,
+    v: 8,
+    settings: {
+      ...settings,
+      soundVolume: soundOn ? DEFAULT_SAVE_STATE.settings.soundVolume : 0,
+      musicVolume: musicOn ? DEFAULT_SAVE_STATE.settings.musicVolume : 0,
+    },
+  }
+}
+
+/**
+ * v6 -> v7: seeds the loadout from the weapon the player was already carrying.
+ *
+ * **A default of `[]` would be wrong rather than merely empty.** A returning player has a
+ * `selectedWeapon` they chose and possibly paid for, and an empty loadout would put them back on
+ * the starting weapon with their own choice sitting one menu away — a silent demotion on
+ * upgrade. Seeding from `selectedWeapon` makes the first run after the update the run they were
+ * already set up for; `resolveLoadout` then fills the other two cells from what they own.
+ *
+ * The rest of the row is deliberately *not* seeded here. This step knows nothing about which
+ * weapons exist or which are owned — that is `resolveLoadout`'s job, and duplicating the
+ * ownership rule in a migration is how the two drift apart.
+ */
+function upgradeV6ToV7(raw: Record<string, unknown>): Record<string, unknown> {
+  // A save old enough to have no weapon at all still has *a* weapon — the one everybody starts
+  // with — so the row is seeded with it rather than left empty. An empty loadout is legal (
+  // `resolveLoadout` refills it) but it is not what the player had, and a migration that writes
+  // something other than what the player had is the kind of thing nobody checks twice.
+  const selected =
+    typeof raw.selectedWeapon === 'string' && raw.selectedWeapon.length > 0 ? raw.selectedWeapon : DEFAULT_WEAPON_ID
+
+  return { ...raw, v: 7, weaponLoadout: [selected] }
+}
+
+/**
+ * v2 -> v3: carries the old `bestScore` into the new per-theme record.
+ *
+ * The one thing in this bump that is a real *upgrade* rather than a default: a returning player
+ * whose best score predates themes has certainly played the default theme, and dropping that
+ * into an empty `themeProgress` would silently reset a record they can see on the results
+ * screen. Everything else v3 adds (`bestWave`) genuinely has no v2 answer and defaults to 0.
+ */
+function upgradeV2ToV3(raw: Record<string, unknown>): Record<string, unknown> {
+  const bestScore = count(raw.bestScore, 0)
+
+  return {
+    ...raw,
+    v: 3,
+    themeProgress: bestScore > 0 ? { [LEGACY_DEFAULT_THEME_ID]: bestScore } : {},
+  }
+}
+
+/**
+ * v3 -> v4: renames the placeholder theme key to the real one.
+ *
+ * v3 recorded per-theme progress under the literal `'default'`, written before themes had
+ * names; chunk 11 named them, and the starting one is `'night'`. Without this the record a
+ * returning player can see on the results screen is orphaned under a key no theme answers to.
+ */
+function upgradeV3ToV4(raw: Record<string, unknown>): Record<string, unknown> {
+  if (!isRecord(raw.themeProgress)) return { ...raw, v: 4 }
+
+  const { default: legacy, ...rest } = raw.themeProgress as Record<string, unknown>
+  const progress: Record<string, unknown> = { ...rest }
+
+  if (typeof legacy === 'number' && (typeof progress[LEGACY_DEFAULT_THEME_ID] !== 'number' || legacy > (progress[LEGACY_DEFAULT_THEME_ID] as number))) {
+    progress[LEGACY_DEFAULT_THEME_ID] = legacy
+  }
+
+  return { ...raw, v: 4, themeProgress: progress }
+}
+
+/**
+ * The theme that was the default when the v2 and v3 upgrades were written.
+ *
+ * **Frozen as a literal, deliberately, and not `DEFAULT_THEME_ID`.** Those two steps mean "the
+ * theme this player's old score was earned on", which is a fact about the past — and it was
+ * `'night'`, because that is what the game shipped as. They were written against the live constant
+ * and therefore changed meaning silently the day the default moved to `'day'`, quietly relabelling
+ * every archived score as having been set on a theme that did not exist when it was set.
+ *
+ * The general rule: **a migration may not read a constant that describes the present.** Anything a
+ * migration says about an old payload has to be spelled out at the version that wrote it.
+ */
+const LEGACY_DEFAULT_THEME_ID = 'night'
+
+/**
+ * v5 -> v6: moves a save still sitting on the old default theme onto the new one.
+ *
+ * `night` was the default and the only free theme, so **every** save that never actively chose
+ * anything holds `selectedTheme: 'night'` — not because the player picked a night palette but
+ * because that is what the field was initialised to. Leaving it would mean a returning player
+ * loads the game and sees the old dark look with no indication that anything changed.
+ *
+ * **This cannot distinguish "defaulted to night" from "chose night", and nothing can**: `night`
+ * costs nothing, so choosing it leaves no purchase record. The trade is accepted knowingly — a
+ * player who really wants night re-picks it in one tap from the shop, where it remains free and
+ * owned, and the alternative leaves everyone else on a look that was replaced for being unreadable.
+ * Any other saved theme is left exactly alone, because holding one of those *is* a deliberate act.
+ */
+function upgradeV5ToV6(raw: Record<string, unknown>): Record<string, unknown> {
+  if (raw.selectedTheme !== LEGACY_DEFAULT_THEME_ID) return { ...raw, v: 6 }
+
+  return { ...raw, v: 6, selectedTheme: DEFAULT_THEME_ID }
 }
 
 /**
  * Migrates a parsed-but-unverified save payload to the current SaveState shape.
  * Returns null for anything unrecognized — the caller falls back to DEFAULT_SAVE_STATE.
  *
- * Ladder pattern for future schema bumps: each case upgrades the payload in place and falls
- * through to the next, ending at SAVE_SCHEMA_VERSION. The v1 -> v2 bump (adding `coins`/
- * `purchases`) needed no actual upgrade step — a real v1 payload simply has neither field,
- * and `normalizeV2`'s own `typeof`/`Array.isArray` checks already default a missing field —
- * so `case 1` falls straight through with no separate `upgradeV1ToV2()`. A future bump that
- * needs to *derive* a new field from old data (not just default it) would add that upgrade
- * function here, e.g.:
- *
- *   case 2:
- *     raw = upgradeV2ToV3(raw)
- *   // falls through
- *   case 3:
- *     return normalizeV3(raw)
+ * Ladder pattern: each case upgrades the payload and falls through to the next, ending at
+ * SAVE_SCHEMA_VERSION. The v1 -> v2 bump (adding `coins`/`purchases`) needed no upgrade step at
+ * all — a real v1 payload simply has neither field, and `normalizeV6`'s own `typeof`/
+ * `Array.isArray` checks already default a missing one — so `case 1` falls straight through.
+ * The v2 -> v3 bump is the first that has to *derive* something (`themeProgress` from the old
+ * `bestScore`), which is what `upgradeV2ToV3` is for and why the ladder has a step in it now.
  */
 export function migrate(raw: unknown): SaveState | null {
   if (!isRecord(raw)) {
     return null
   }
 
-  switch (raw.v) {
+  let payload = raw
+
+  switch (payload.v) {
     case 1:
+    // A v1 payload has no v2 fields to derive; it upgrades by defaulting, so it falls through.
     case 2:
-      return normalizeV2(raw)
+      payload = upgradeV2ToV3(payload)
+    // falls through
+    case 3:
+      payload = upgradeV3ToV4(payload)
+    // falls through
+    case 4:
+    // **The v4 -> v5 step needs no `upgradeV4ToV5`, and that is a property of the change rather
+    // than an oversight.** It adds one field, `selectedWeapon`, which `normalizeV6` already
+    // defaults when absent — exactly the situation the v1 -> v2 fallthrough documents. A bump
+    // that *derived* something from the old shape (as v2 -> v3 does, carrying `bestScore` into
+    // `themeProgress`) would need its own step.
+    // falls through
+    case 5:
+      payload = upgradeV5ToV6(payload)
+    // falls through
+    case 6:
+      payload = upgradeV6ToV7(payload)
+    // eslint-disable-next-line no-fallthrough
+    case 7:
+      payload = upgradeV7ToV8(payload)
+    // eslint-disable-next-line no-fallthrough
+    case 8:
+      payload = upgradeV8ToV9(payload)
+    // eslint-disable-next-line no-fallthrough
+    // eslint-disable-next-line no-fallthrough
+    case 9:
+      payload = upgradeV9ToV10(payload)
+    // eslint-disable-next-line no-fallthrough
+    case 10:
+      return normalizeV10(payload)
 
     default:
       return null

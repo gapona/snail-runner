@@ -13,6 +13,18 @@ export function canAfford(coins: number, price: number): boolean {
 
 /** New balance after crediting `amount` (floored, never negative — a caller passing a
  * negative/fractional value can't accidentally shrink the balance through this function). */
+/**
+ * What the rewarded ad pays.
+ *
+ * **A share of a run, not a round number.** It used to be 50 against a per-run ceiling of 250 — a
+ * fifth of a good run, which was the right ratio. The ceiling is now a property of the level
+ * (`coinCapFor`) and averages several hundred, so the same 50 would have quietly become a fiftieth
+ * of a run: an ad nobody would trade thirty seconds for, which is worse for the player and worse
+ * for the game than not offering one. `verify:levels` holds it to the same fifth of the average
+ * cap that it originally was, computed from the real tables.
+ */
+export const REWARDED_TOPUP_COINS = 150
+
 export function earnCoins(coins: number, amount: number): number {
   return coins + Math.max(0, Math.floor(amount))
 }

@@ -3,14 +3,26 @@ import { showRewarded } from '../platform/adGate'
 import { bindAction } from '../platform/input'
 import { isPlatformPaused, YTEvents } from '../platform/yt'
 import { t, tOptional } from '../i18n/strings'
-import { getDisplayFontStack } from '../ui/font'
 import { titleCase } from '../ui/format'
 import { bindLayout } from '../ui/layout'
-import { getTheme, neonButton, roundedPanel, rowButton, toCssColor, valueBadge, type NeonButton, type RoundedPanel, type RowButton, type RowColumns, type ValueBadge } from '../ui/theme'
+import {
+  kitBadge,
+  kitButton,
+  kitRow,
+  kitTitle,
+  plate,
+  type KitBadge,
+  type KitButton,
+  type KitRow,
+  type Plate,
+  type RowState,
+} from '../ui/kit'
 import { uiScale } from '../ui/uiScale'
 import { getCatalog, type ShopItem } from '../shop/catalog'
-import { canAfford, earnCoins, hasPurchased, spendCoins } from '../shop/coins'
+import { canAfford, earnCoins, hasPurchased, REWARDED_TOPUP_COINS, spendCoins } from '../shop/coins'
 import { getState, mutate } from '../save/store'
+import { scrollPanel, type ScrollPanel } from '../ui/scrollPanel'
+import { contentHeight, windowHeight } from '../ui/scrollList'
 
 export interface ShopData {
   opener: string
@@ -18,10 +30,25 @@ export interface ShopData {
    * applies whatever effect the item represents. Never called for `'unlock'` items; those
    * are tracked entirely in `SaveState.purchases`, nothing else needs telling. */
   onPurchase?: (item: ShopItem) => void
+  /**
+   * Called when an **already-owned** `'unlock'` row is tapped.
+   *
+   * Without this an owned unlock is a dead row — bought once and never touchable again, which
+   * is right for a permanent capability and wrong for a cosmetic the player picks between.
+   * Supplying it turns "Owned" into a two-state Select / In use control.
+   */
+  onSelect?: (item: ShopItem) => void
+  /**
+   * Whether an owned unlock is the one currently in use.
+   *
+   * A predicate rather than an id, because it is re-read on every refresh: the selection
+   * changes while the shop is open, and a value captured at launch would go stale the moment
+   * the player picks something.
+   */
+  isSelected?: (item: ShopItem) => boolean
 }
 
 const TOPUP_REWARD_ID = 'coins-topup'
-const TOPUP_COINS = 50
 
 const PANEL_WIDTH = 420
 const PANEL_SIDE_PADDING = 24
@@ -30,54 +57,120 @@ const ROW_HEIGHT = 52
 const ROW_GAP = 10
 const HEADER_HEIGHT = 60
 const TOPUP_HEIGHT = 60
+/**
+ * The tab strip, and the gap between two tabs.
+ *
+ * Only drawn when the catalogue has more than one category - a game whose products are all one
+ * kind gets the screen exactly as it was before tabs existed, chrome height included.
+ */
+const TABS_HEIGHT = 52
+const TAB_GAP = 8
+const TAB_FONT_SIZE = 15
 const FOOTER_HEIGHT = 70
 const TOP_PAD = 24
 const BOTTOM_PAD = 16
 
+/**
+ * Largest fraction of the viewport's height the panel may take, and the smallest the row window
+ * may shrink to.
+ *
+ * The panel used to be exactly as tall as its contents, which was correct while the catalogue was
+ * eight rows and is unshippable at seventeen: 17 rows is 1044px of list before any chrome, so on
+ * every phone in portrait the panel would extend past both edges of the screen and the Close
+ * button would sit off the bottom. Capping the panel and scrolling the rows inside it is what
+ * makes the catalogue's length stop being a layout constraint at all.
+ *
+ * `MIN_WINDOW_HEIGHT` is what stops a short landscape viewport from producing a zero- or
+ * negative-height camera, which Phaser throws on rather than degrading.
+ */
+const MAX_PANEL_HEIGHT_FRACTION = 0.86
+const MIN_WINDOW_HEIGHT = 60
+
+/** Below the plate's own negative depth — see the backdrop's own note in `create()`. */
+const BACKDROP_DEPTH = -10
+
 const TITLE_FONT_SIZE = 26
-const COINS_FONT_SIZE = 18
-const TOPUP_FONT_SIZE = 18
-const ROW_FONT_SIZE = 16
-const CLOSE_FONT_SIZE = 22
-
-// `'unlock'`-owned / can't-afford rows both dim to this same neutral gray — matches
-// `ui/theme.ts`'s own `PILL_BADGE_MAX_COLOR` convention ("only what you can act on glows").
-const DIMMED_ROW_COLOR = 0x888888
-
-// [left: icon+title, result: price, reserved (unused), accent: Buy/Owned]
-const SHOP_ROW_COLUMNS: RowColumns = [
-  { x: 0.04, align: 'left', width: 0.52 },
-  { x: 0.56, align: 'left', width: 0.22 },
-  { x: 0.78, align: 'left', width: 0 },
-  { x: 0.96, align: 'right', width: 0.22 },
-]
+const TOPUP_FONT_SIZE = 17
+const CLOSE_FONT_SIZE = 20
 
 interface RowEntry {
   item: ShopItem
-  row: RowButton
+  row: KitRow
+}
+
+interface TabEntry {
+  /** The category key, itself an i18n key - see `ShopItem.category`. */
+  key: string
+  button: KitButton
+}
+
+/** A row's whole title: the glyph, the translated name, the number after it, and what it does. */
+function rowLabel(item: ShopItem): string {
+  const name = tOptional(item.titleKey) ?? titleCase(item.id)
+  const detail = item.detailKey === undefined ? undefined : tOptional(item.detailKey)
+
+  return (
+    `${item.icon} ${name}${item.titleSuffix ? ` ${item.titleSuffix}` : ''}` +
+    `${detail ? `  · ${detail}` : ''}`
+  )
 }
 
 /**
- * A demo/reference Shop overlay for the `src/shop/` layer — same `scene.launch({ opener })`
- * pattern as `Settings.ts` (pauses the opener, resumes it by key on close). Not registered
- * anywhere in `MainMenu.ts` by default in production; see CLAUDE.md "Shop Layer" for how a
- * real game wires this up (its own catalog via `setCatalog()`, its own permanent entry
- * point, no DEV gate).
+ * The shop, on the game's own widget kit.
  *
- * Deliberately does not scroll — rows simply stack to fit the catalog's length. A game with
- * a catalog too large for one screen needs its own scrolling list (see `Gallery`-style
- * scroll-vs-tap patterns in other Phaser 4 projects) — out of scope for this template.
+ * **What changed in the restyle, and what deliberately did not.** Every widget is now from
+ * `ui/kit.ts` — the soft plate, the kit's rows, the coin badge — so the screen stops being neon
+ * pink over a daylight sky. The scrolling, the tap-to-buy rule and the four row states are
+ * untouched: each of them was worked out against a real defect (see below) and a restyle is not a
+ * licence to re-litigate them.
+ *
+ * - **Rows buy on the tap, not on the press** (`bindAction`'s `tap: true`). The rows are the only
+ *   thing there is to grab, so every scroll gesture begins on one; on the press, the first flick
+ *   through the catalogue spends the player's coins.
+ * - **The clip is a camera viewport, never a mask.** `setMask(geometryMask)` is a silent no-op
+ *   under this renderer — see `ui/scrollRegion.ts`, where that is documented as a standing fact
+ *   about Phaser rather than a bug to work around.
+ * - **Four row states, distinguished by mark and not by tint alone.** `ui/kit.ts`'s `kitRow` draws
+ *   the diamond on the one in use; the previous version differed only in the colour of the same
+ *   label, which made the list something the player had to read word by word.
  */
 export class Shop extends Phaser.Scene {
   private openerKey = ''
   private onPurchase?: (item: ShopItem) => void
+  private onSelect?: (item: ShopItem) => void
+  private isSelected?: (item: ShopItem) => boolean
   private backdrop!: Phaser.GameObjects.Rectangle
-  private panel!: RoundedPanel
+  private panel!: Plate
   private title!: Phaser.GameObjects.Text
-  private coinsBadge!: ValueBadge
-  private topupButton!: NeonButton
-  private closeButton!: NeonButton
+  private coinsBadge!: KitBadge
+  private topupButton!: KitButton
+  private closeButton!: KitButton
   private rows: RowEntry[] = []
+  /**
+   * One tab per category in the catalogue, in the order the game registered them.
+   *
+   * Empty when every item shares a category (or has none), which is what keeps a single-kind
+   * catalogue laying out exactly as it did before this existed. The tabs *filter* rather than
+   * rebuild: every row is created once in `create()` and a hidden one is simply not visible, so
+   * switching tabs allocates nothing and a row's purchase binding never has to be re-made.
+   */
+  private tabs: TabEntry[] = []
+  private activeTab = ''
+
+  /**
+   * The scrolling window the rows are drawn through — clip, flick physics and pointer binding.
+   *
+   * A camera viewport rather than a mask, and that is a standing rule of this project rather than
+   * a preference: `setMask(geometryMask)` is a **silent no-op** under this renderer — it warns and
+   * returns without ever assigning `.mask` — so a masked list does not clip at all and scrolled
+   * rows render straight over the header and the Close button. See `ui/scrollRegion.ts`.
+   *
+   * The wiring lives in `ui/scrollPanel.ts` since the loadout screen needed the same thing; what
+   * stays here is the half only this scene can know, which objects belong to which camera.
+   */
+  private scroll!: ScrollPanel
+  private windowSize = 0
+  private rowsExtent = 0
 
   constructor() {
     super('Shop')
@@ -86,45 +179,99 @@ export class Shop extends Phaser.Scene {
   create(data: ShopData) {
     this.openerKey = data.opener
     this.onPurchase = data.onPurchase
+    this.onSelect = data.onSelect
+    this.isSelected = data.isSelected
     this.rows = []
+    // **Reset beside `rows`, and for the same reason.** This scene is launched again every time the
+    // player opens the shop, and `create()` builds a fresh set of buttons each time; a list that
+    // survives the previous instance leaves `layoutTabs` sizing objects Phaser has already
+    // destroyed, which throws inside the text renderer on a texture that is gone. Caught by opening
+    // the shop a second time, not by reading the code.
+    this.tabs = []
 
     // Same 0x0-until-layout() backdrop pattern as Settings.ts — see its own comment for why
     // setInteractive() can't be called until a real size exists.
-    this.backdrop = this.add.rectangle(0, 0, 0, 0, 0x000000, 0.6)
+    this.backdrop = this.add.rectangle(0, 0, 0, 0, 0x04121e, 0.66)
+    // Explicitly below the plate. `plate()` puts its own graphics at a *negative* depth so it sits
+    // under its contents (see `ui/kit.ts`), and a backdrop left at the default 0 therefore draws over
+    // the panel rather than behind it — the panel still shows, dimmed by the very scrim meant to dim
+    // the world behind it. Nothing errors and it looks plausible, which is why the depth is stated.
+    this.backdrop.setDepth(BACKDROP_DEPTH)
 
-    this.panel = roundedPanel(this)
+    this.panel = plate(this)
+    this.title = kitTitle(this, t('shop'), TITLE_FONT_SIZE)
+    this.coinsBadge = kitBadge(this, '🪙', getState().coins)
 
-    this.title = this.add
-      .text(0, 0, t('shop'), { fontFamily: getDisplayFontStack(), fontSize: TITLE_FONT_SIZE, color: toCssColor(getTheme().colors.primary) })
-      .setOrigin(0.5)
-
-    this.coinsBadge = valueBadge(this, '🪙', getState().coins)
-
-    this.topupButton = neonButton(this, t('shopTopup', { n: TOPUP_COINS }), getTheme().colors.secondary, TOPUP_FONT_SIZE)
+    this.topupButton = kitButton(this, t('shopTopup', { n: REWARDED_TOPUP_COINS }), { fontSize: TOPUP_FONT_SIZE })
     bindAction(this, 'shopTopup', { pointer: this.topupButton.container }, () => {
       void this.requestTopup()
     })
 
     for (const item of getCatalog()) {
-      const label = `${item.icon} ${tOptional(item.titleKey) ?? titleCase(item.id)}`
-      const row = rowButton(this, label, `🪙 ${item.priceCoins}`, t('buy'), SHOP_ROW_COLUMNS, getTheme().colors.secondary, ROW_FONT_SIZE)
-      bindAction(this, `shopBuy:${item.id}`, { pointer: row.container }, () => this.purchase(item))
+      const row = kitRow(this, rowLabel(item), `🪙 ${item.priceCoins}`, 'buy')
+      // `tap: true`, not the default press: the rows are the only thing there is to grab, so a
+      // press that starts a scroll always lands on one. On the press it would buy it.
+      bindAction(this, `shopBuy:${item.id}`, { pointer: row.container, tap: true }, () => this.purchase(item))
       this.rows.push({ item, row })
     }
+
+    this.buildTabs()
     this.refreshAllRows()
 
-    this.closeButton = neonButton(this, t('close'), getTheme().colors.primary, CLOSE_FONT_SIZE)
+    this.closeButton = kitButton(this, t('close'), { primary: true, fontSize: CLOSE_FONT_SIZE })
     bindAction(this, 'close', { pointer: this.closeButton.container, keys: ['ESC', 'ENTER'] }, () => this.close())
+
+    // Created after every widget exists, because both halves of the split are named explicitly:
+    // the region's camera must ignore all the chrome, and the main camera must ignore the rows.
+    // Nothing guesses which side an object belongs to — see `scrollRegion.ts`.
+    this.scroll = scrollPanel(this)
+    this.scroll.camera.ignore(this.chromeObjects())
+    this.cameras.main.ignore(this.rowObjects())
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scroll.destroy()
+      this.panel.destroy()
+    })
 
     bindLayout(this, (width, height) => this.layout(width, height))
   }
 
+  /** Everything drawn by the main camera, i.e. everything the scrolling window must not show. */
+  private chromeObjects(): Phaser.GameObjects.GameObject[] {
+    return [
+      this.backdrop,
+      ...this.panel.gameObjects,
+      this.title,
+      this.coinsBadge.container,
+      this.topupButton.container,
+      this.closeButton.container,
+      ...this.tabs.map((tab) => tab.button.container),
+    ]
+  }
+
+  /** Everything that scrolls. */
+  private rowObjects(): Phaser.GameObjects.GameObject[] {
+    return this.rows.map(({ row }) => row.container)
+  }
+
+  update(time: number, delta: number): void {
+    this.scroll.update(time, delta)
+  }
+
   layout(width: number, height: number): void {
     const scale = uiScale(width)
-    const rowCount = this.rows.length
-    const rowsHeight = rowCount > 0 ? rowCount * ROW_HEIGHT + (rowCount - 1) * ROW_GAP : 0
-    const panelHeight = (TOP_PAD + HEADER_HEIGHT + TOPUP_HEIGHT + rowsHeight + FOOTER_HEIGHT + BOTTOM_PAD) * scale
-    const panelWidth = PANEL_WIDTH * scale
+    // **The list is what the active tab holds, not what the catalogue holds.** Every measurement
+    // below - the panel's height, the window's height, the scroll extent - is about the rows the
+    // player can actually reach, so a 21-row upgrade tab must not make the themes tab scroll.
+    const visible = this.visibleRows()
+    const tabsHeight = this.tabs.length > 1 ? TABS_HEIGHT : 0
+    const rowsHeight = contentHeight(visible.length, ROW_HEIGHT, ROW_GAP)
+    const chromeHeight = (TOP_PAD + HEADER_HEIGHT + TOPUP_HEIGHT + tabsHeight + FOOTER_HEIGHT + BOTTOM_PAD) * scale
+    // The panel is as tall as its content wants **or** as tall as the screen allows, whichever is
+    // smaller. Only the second branch scrolls; a short catalogue lays out exactly as it did before
+    // this scene could scroll at all, which is what keeps the template's own demo unchanged.
+    const panelHeight = Math.min(chromeHeight + rowsHeight * scale, height * MAX_PANEL_HEIGHT_FRACTION)
+    const panelWidth = Math.min(PANEL_WIDTH * scale, width - 24)
 
     const cx = width / 2
     const cy = height / 2
@@ -138,25 +285,50 @@ export class Shop extends Phaser.Scene {
       ;(this.backdrop.input.hitArea as Phaser.Geom.Rectangle).setTo(0, 0, width, height)
     }
 
-    this.panel.draw(cx, cy, panelWidth, panelHeight, getTheme().colors.secondary)
+    this.panel.draw(cx, cy, panelWidth, panelHeight)
 
     this.title.setFontSize(TITLE_FONT_SIZE * scale)
     this.title.setPosition(cx, panelTop + TOP_PAD * scale + (HEADER_HEIGHT * scale) / 2)
 
-    this.coinsBadge.setFontSize(Math.round(COINS_FONT_SIZE * scale))
+    this.coinsBadge.layout(scale)
     this.coinsBadge.container.setPosition(
-      panelLeft + panelWidth - PANEL_SIDE_PADDING * scale - this.coinsBadge.container.width / 2,
+      panelLeft + panelWidth - PANEL_SIDE_PADDING * scale - this.coinsBadge.width / 2,
       panelTop + TOP_PAD * scale + (HEADER_HEIGHT * scale) / 2,
     )
 
     this.topupButton.setFontSize(TOPUP_FONT_SIZE * scale)
     this.topupButton.container.setPosition(cx, panelTop + (TOP_PAD + HEADER_HEIGHT) * scale + (TOPUP_HEIGHT * scale) / 2)
 
-    let cursorY = panelTop + (TOP_PAD + HEADER_HEIGHT + TOPUP_HEIGHT) * scale + (ROW_HEIGHT * scale) / 2
-    for (const { row } of this.rows) {
-      row.setSize(ROW_WIDTH * scale, ROW_HEIGHT * scale)
-      row.setFontSize(ROW_FONT_SIZE * scale)
-      row.container.setPosition(cx, cursorY)
+    this.layoutTabs(cx, panelTop + (TOP_PAD + HEADER_HEIGHT + TOPUP_HEIGHT) * scale + (tabsHeight * scale) / 2, scale)
+
+    // The scrolling window: everything between the tab strip and the footer.
+    const windowTop = panelTop + (TOP_PAD + HEADER_HEIGHT + TOPUP_HEIGHT + tabsHeight) * scale
+
+    this.windowSize = windowHeight(panelHeight, chromeHeight, MIN_WINDOW_HEIGHT)
+    this.rowsExtent = contentHeight(visible.length, ROW_HEIGHT * scale, ROW_GAP * scale)
+    this.scroll.setWindow(
+      { x: panelLeft, y: windowTop, width: panelWidth, height: this.windowSize },
+      this.rowsExtent,
+    )
+
+    // **Rows are positioned once, at their true unscrolled coordinates, and never touched again
+    // by a scroll tick** — the camera pans over them. The coordinate they are laid out in is the
+    // camera's, whose origin is the top of the window, so the first row sits at half a row down
+    // and not at `windowTop`.
+    let cursorY = (ROW_HEIGHT * scale) / 2
+
+    for (const entry of this.rows) {
+      const shown = visible.includes(entry)
+
+      // A hidden row is hidden rather than moved off-window, which is also what keeps it out of the
+      // input system: Phaser hit-tests through `willRender`, so an invisible container cannot be
+      // tapped and the tab filter needs no second guard in the purchase path.
+      entry.row.container.setVisible(shown)
+
+      if (!shown) continue
+
+      entry.row.layout(Math.min(ROW_WIDTH * scale, panelWidth - PANEL_SIDE_PADDING * 2 * scale), ROW_HEIGHT * scale, scale)
+      entry.row.container.setPosition(panelWidth / 2, cursorY)
       cursorY += (ROW_HEIGHT + ROW_GAP) * scale
     }
 
@@ -164,11 +336,84 @@ export class Shop extends Phaser.Scene {
     this.closeButton.container.setPosition(cx, panelTop + panelHeight - BOTTOM_PAD * scale - (FOOTER_HEIGHT * scale) / 2)
   }
 
+  /**
+   * One button per category the catalogue actually uses, in first-appearance order.
+   *
+   * **Order comes from the catalogue, not from the shop.** The shop has no opinion about whether
+   * weapons matter more than themes — it cannot, since it does not know what either is — so the
+   * game says which tab opens first by the order it registers its items in (see `main.ts`).
+   *
+   * A catalogue with one category (or none) gets no strip at all: a single tab is a label the
+   * player can press, which teaches them that the control does nothing.
+   */
+  private buildTabs(): void {
+    const keys: string[] = []
+
+    for (const { item } of this.rows) {
+      const key = item.category ?? ''
+
+      if (!keys.includes(key)) keys.push(key)
+    }
+
+    this.activeTab = keys[0] ?? ''
+
+    if (keys.length < 2) return
+
+    for (const key of keys) {
+      const button = kitButton(this, tOptional(key) ?? titleCase(key), {
+        primary: key === this.activeTab,
+        fontSize: TAB_FONT_SIZE,
+      })
+
+      bindAction(this, `shopTab:${key}`, { pointer: button.container }, () => this.setActiveTab(key))
+      this.tabs.push({ key, button })
+    }
+  }
+
+  /** The rows the active tab shows. */
+  private visibleRows(): RowEntry[] {
+    return this.rows.filter(({ item }) => (item.category ?? '') === this.activeTab)
+  }
+
+  /**
+   * Switches tabs, and **jumps the list back to the top**.
+   *
+   * `setWindow` deliberately re-clamps the offset rather than resetting it, which is the right
+   * answer for a rotation and the wrong one here: the content has been replaced, not reshaped, and
+   * clamping would drop the player part-way down a list they have never seen.
+   */
+  private setActiveTab(key: string): void {
+    if (key === this.activeTab) return
+
+    this.activeTab = key
+
+    for (const tab of this.tabs) tab.button.setPrimary(tab.key === key)
+
+    this.scroll.scrollTo(0)
+    this.layout(this.scale.width, this.scale.height)
+  }
+
+  /** The strip itself, centred on the panel and measured from the buttons' own widths. */
+  private layoutTabs(cx: number, cy: number, scale: number): void {
+    if (this.tabs.length < 2) return
+
+    for (const tab of this.tabs) tab.button.setFontSize(TAB_FONT_SIZE * scale)
+
+    const gap = TAB_GAP * scale
+    const total = this.tabs.reduce((sum, tab) => sum + tab.button.width, 0) + gap * (this.tabs.length - 1)
+    let cursorX = cx - total / 2
+
+    for (const tab of this.tabs) {
+      tab.button.container.setPosition(cursorX + tab.button.width / 2, cy)
+      cursorX += tab.button.width + gap
+    }
+  }
+
   private async requestTopup(): Promise<void> {
     const granted = await showRewarded(this.game, TOPUP_REWARD_ID)
     if (!granted) return
     mutate((s) => {
-      s.coins = earnCoins(s.coins, TOPUP_COINS)
+      s.coins = earnCoins(s.coins, REWARDED_TOPUP_COINS)
     })
     this.coinsBadge.setValue(getState().coins)
     this.refreshAllRows()
@@ -176,7 +421,20 @@ export class Shop extends Phaser.Scene {
 
   private purchase(item: ShopItem): void {
     const state = getState()
-    if (item.kind === 'unlock' && hasPurchased(state.purchases, item.id)) return
+    if (item.kind === 'unlock' && (item.priceCoins <= 0 || hasPurchased(state.purchases, item.id))) {
+      // Owned already: this tap is a selection, not a purchase. Falls through to the old
+      // silent no-op when the caller did not supply a selector.
+      if (this.onSelect && item.selectable !== false) {
+        this.onSelect(item)
+        this.refreshAllRows()
+      }
+
+      return
+    }
+    // The prerequisite is checked here as well as in the row's state, because a state is a picture
+    // and a purchase is a debit: the two are refreshed at different moments, and only one of them
+    // takes the player's coins.
+    if (item.requires !== undefined && !hasPurchased(state.purchases, item.requires)) return
     if (!canAfford(state.coins, item.priceCoins)) return
 
     let spent = false
@@ -194,18 +452,43 @@ export class Shop extends Phaser.Scene {
     if (item.kind === 'consumable') this.onPurchase?.(item)
   }
 
-  /** Re-derives every row's color/price-alpha/accent-label from the current balance and
-   * purchase list — called after both a purchase (this item's own state changed) and a
-   * top-up (every row's affordability may have changed). */
+  /**
+   * Re-derives every row's state from the current balance and purchase list — called after both a
+   * purchase (this item's own state changed) and a top-up (every row's affordability may have
+   * changed).
+   *
+   * Four states rather than two, because the row means four different things and the player has to
+   * be able to tell them apart at a glance: something they can buy, something they cannot yet
+   * afford, something they own but are not using, and the one in use.
+   */
   private refreshAllRows(): void {
     const state = getState()
+
     for (const { item, row } of this.rows) {
-      const owned = item.kind === 'unlock' && hasPurchased(state.purchases, item.id)
+      // A zero-price unlock is owned by definition — it is a thing the player already has, listed so
+      // that it can be *selected*. Without this it would render as a `Buy` row that, when tapped,
+      // "spends" nothing and writes a purchase record for something nobody bought.
+      const owned = item.kind === 'unlock' && (item.priceCoins <= 0 || hasPurchased(state.purchases, item.id))
       const affordable = canAfford(state.coins, item.priceCoins)
-      const color = owned || !affordable ? DIMMED_ROW_COLOR : getTheme().colors.secondary
-      row.setColor(color)
-      row.setResultText(`🪙 ${item.priceCoins}`, owned || !affordable ? 0.4 : 0.75)
-      row.setAccentText(owned ? t('owned') : t('buy'))
+      // Not yet reachable at any price — something else has to be bought first. Distinguished from
+      // "cannot afford" by its label rather than by its tint, because the two are different
+      // problems: one is solved by playing another run, the other by buying the row above.
+      const blocked = !owned && item.requires !== undefined && !hasPurchased(state.purchases, item.requires)
+      const label = rowLabel(item)
+      let stateName: RowState
+
+      if (!owned) stateName = !blocked && affordable ? 'buy' : 'locked'
+      else if (this.isSelected?.(item)) stateName = 'selected'
+      else stateName = 'owned'
+
+      // With no selector supplied — or for an item that is not a choice at all, like an upgrade
+      // that applies the moment it is bought — an owned unlock is a finished transaction rather
+      // than a control, so it says so. A `Select` the player can tap and see nothing happen is
+      // worse than a label.
+      const selectable = item.selectable !== false && this.onSelect !== undefined
+      const actionLabel = blocked ? t('shopLocked') : owned && !selectable ? t('owned') : undefined
+
+      row.setContent(label, owned ? '' : `🪙 ${item.priceCoins}`, stateName, actionLabel)
     }
   }
 

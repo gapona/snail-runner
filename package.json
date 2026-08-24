@@ -1,14 +1,22 @@
 {
-  "name": "Phaser_Core",
-  "version": "1.3.0",
+  "name": "snail-runner",
+  "version": "0.1.0",
   "description": "",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node scripts/check-bundle.mjs",
+    "build": "tsc && vite build && node scripts/verify-mattes.mjs && node scripts/check-bundle.mjs",
     "bundle": "npm run build && node scripts/make-bundle.mjs",
     "preview": "vite preview",
-    "verify:scroll": "node --import ./scripts/register-ts-loader.mjs scripts/verify-scroll-momentum.mjs"
+    "verify:scroll": "node --import ./scripts/register-ts-loader.mjs scripts/verify-scroll-momentum.mjs",
+    "verify:road": "node --import ./scripts/register-ts-loader.mjs scripts/verify-road-projection.mjs",
+    "verify:run-speed": "node --import ./scripts/register-ts-loader.mjs scripts/verify-run-speed.mjs",
+    "verify:player": "node --import ./scripts/register-ts-loader.mjs scripts/verify-player.mjs",
+    "verify:jump": "node --import ./scripts/register-ts-loader.mjs scripts/verify-jump.mjs",
+    "verify:obstacles": "node --import ./scripts/register-ts-loader.mjs scripts/verify-obstacles.mjs",
+    "verify:audio": "node --import ./scripts/register-ts-loader.mjs scripts/verify-audio.mjs",
+    "verify:ui": "node --import ./scripts/register-ts-loader.mjs scripts/verify-ui.mjs",
+    "verify:mattes": "node scripts/verify-mattes.mjs"
   },
   "dependencies": {
     "phaser": "^4.2.0"
