@@ -6,7 +6,7 @@ import { createScreenPoint, wrapZ } from '../road/project'
 import { playerGroundInto } from './playerProjection'
 import { WORLD_LAYER, worldDepth } from './worldDepth'
 import { PLAYER_BODY_H, PLAYER_WIDTH, PLAYER_Z } from './constants'
-import { createSnailTexture, SNAIL_TEXTURE } from './snailArt'
+import { createSnailTexture, snailFrameKey, SNAIL_TEXTURE } from './snailArt'
 import type { PlayerState } from './playerMotion'
 
 /**
@@ -38,6 +38,17 @@ const SHADOW_MIN_SCALE = 0.45
  * passes) and before the one ahead. A flat depth put it in front of both. See `worldDepth.ts`.
  */
 const PLAYER_DISTANCE_INDEX = PLAYER_Z / SEGMENT_LENGTH
+
+/**
+ * How far the run travels per frame of the glide cycle, in world units.
+ *
+ * **Tied to distance rather than to time, so the ripple speeds up with the snail.** A cycle on a
+ * wall clock would ripple at the same rate whether the run was crawling at `SPEED_BASE` or flat out
+ * at `SPEED_CAP`, which reads as the animation having come loose from the game. One segment per
+ * frame gives 7.2 frames a second at the base speed and 18 at the cap, and puts the ripple on the
+ * same rhythm as the road's own rumble stripes.
+ */
+const GLIDE_UNITS_PER_FRAME = SEGMENT_LENGTH
 
 /**
  * The Phaser half of the player: two objects, no state of its own.
@@ -111,6 +122,7 @@ export class PlayerView {
     screenWidth: number,
     screenHeight: number,
     squash = 1,
+    distance = 0,
   ): void {
     const trackLength = trackLengthOf(track.length)
     const worldZ = wrapZ(cameraZ + PLAYER_Z, trackLength)
@@ -196,6 +208,10 @@ export class PlayerView {
       screenHeight,
     )
 
+    // The glide frame. Set before the position for no reason but readability; `setTexture` on the
+    // key it already holds is a no-op inside Phaser, so this costs nothing on the five frames out
+    // of six where nothing changes.
+    this.sprite.setTexture(snailFrameKey(Math.floor(distance / GLIDE_UNITS_PER_FRAME)))
     this.sprite.setVisible(true)
     this.sprite.setPosition(this.rect.x, this.rect.y)
     // Squash and stretch is volume-preserving: wider when flatter. Applied here rather than baked

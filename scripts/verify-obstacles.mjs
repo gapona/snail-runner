@@ -27,6 +27,15 @@ import {
 import { difficultyAt, difficultyProgress, DIFFICULTY_TAU_Z } from '../src/run/difficulty.ts'
 import { WORLD_LAYER, worldDepth } from '../src/run/worldDepth.ts'
 import {
+  INK,
+  INK_LIGHTNESS,
+  lightnessOf,
+  OBSTACLE_MATERIALS,
+  saturationOf,
+  SNAIL_BODY,
+  SNAIL_SHELL,
+} from '../src/run/artPalette.ts'
+import {
   JUMP_APEX,
   OBSTACLE_BANDS,
   OBSTACLE_DEPTH,
@@ -476,6 +485,68 @@ check('the distance haze obstacles now share costs the reaction budget nothing',
   console.log(
     `    at ${reactionSegments.toFixed(1)} segments — where an obstacle must be readable — the haze leaves it at alpha ${alpha.toFixed(3)}`,
   )
+})
+
+console.log('the palette')
+
+check('every obstacle shading band is dark enough to read as ink', () => {
+  // **The first pass missed this by a hair and it cost the whole look.** Each `dark` band landed at
+  // lightness 71-72 against a 70 threshold, so the shaded half of every rock counted as body
+  // colour: the obstacles measured 10-18% ink where the scenery they stand beside measures 34%, and
+  // they read as flat cut-outs pasted onto the road.
+  for (const [kind, material] of Object.entries(OBSTACLE_MATERIALS)) {
+    assert.ok(
+      lightnessOf(material.dark) < INK_LIGHTNESS,
+      `${kind}'s shadow band is at lightness ${lightnessOf(material.dark).toFixed(0)}, over the ${INK_LIGHTNESS} ink threshold`,
+    )
+    assert.ok(lightnessOf(material.light) > lightnessOf(material.mid), `${kind}'s bands are not ordered`)
+    assert.ok(lightnessOf(material.mid) > lightnessOf(material.dark), `${kind}'s bands are not ordered`)
+  }
+})
+
+check('obstacles sit inside the scenery saturation bracket, and the trunk especially', () => {
+  // The other first-pass miss: a rich brown trunk at 42% measured saturation against a verge that
+  // measures 5%. A hazard has to belong to the picture -- what separates it from the verge is that
+  // it stands on grey asphalt, not that it is a different colour.
+  for (const [kind, material] of Object.entries(OBSTACLE_MATERIALS)) {
+    for (const [band, color] of Object.entries(material)) {
+      assert.ok(
+        saturationOf(color) < 25,
+        `${kind}.${band} is ${saturationOf(color).toFixed(0)}% saturated — the scenery it stands in measures 5%`,
+      )
+    }
+  }
+})
+
+check('the snail is the one thing aimed away from the scenery, and by a wide margin', () => {
+  // Stated as a fact rather than left to taste: the mascot is the only object a player must never
+  // have to search for, so it is deliberately brighter and many times more saturated than anything
+  // it shares a frame with. Measured on the drawn textures: lightness 140 and 66% saturation
+  // against the verge's 111 and 5%.
+  const snail = [...Object.values(SNAIL_SHELL), ...Object.values(SNAIL_BODY)]
+  const obstacle = Object.values(OBSTACLE_MATERIALS).flatMap((m) => Object.values(m))
+  const mean = (values) => values.reduce((sum, v) => sum + v, 0) / values.length
+
+  const snailSat = mean(snail.map(saturationOf))
+  const obstacleSat = mean(obstacle.map(saturationOf))
+
+  assert.ok(snailSat > obstacleSat * 3, `the snail is only ${(snailSat / obstacleSat).toFixed(1)}x as saturated as an obstacle`)
+  assert.ok(
+    mean(snail.map(lightnessOf)) > mean(obstacle.map(lightnessOf)),
+    'the snail is not brighter than the things it has to be seen against',
+  )
+  console.log(
+    `    snail ${mean(snail.map(lightnessOf)).toFixed(0)} lightness / ${snailSat.toFixed(0)}% saturation ` +
+      `against obstacles at ${mean(obstacle.map(lightnessOf)).toFixed(0)} / ${obstacleSat.toFixed(0)}%`,
+  )
+})
+
+check('the ink is not pure black, which verify:mattes would reject', () => {
+  // A pure-black outline hard against the alpha boundary means the closing flood copies black into
+  // the transparent ring and every mipmap averages it back into the silhouette. That is the exact
+  // defect `verify:mattes` exists for, and it caught it on a real sprite once already.
+  assert.ok(lightnessOf(INK) > 20, `ink at lightness ${lightnessOf(INK).toFixed(0)} is effectively black`)
+  assert.ok(lightnessOf(INK) < INK_LIGHTNESS, 'the ink is not dark enough to be ink')
 })
 
 console.log(`${passed} checks passed`)

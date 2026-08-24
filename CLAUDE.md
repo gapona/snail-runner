@@ -98,9 +98,9 @@ is the same question in both games.
 
 ### Reading the rest of this document
 
-**The runner's own chapters are the nine between "## UI Kit" and "## Road Renderer"** — The Run,
-The Snail, The Jump, Obstacles, Draw Order, Pickups, The Difficulty Curve, The End Of A Run, The
-HUD. Those describe this game.
+**The runner's own chapters are the ten between "## UI Kit" and "## Road Renderer"** — The Run,
+The Snail, The Jump, Obstacles, Draw Order, Pickups, The Art, The Difficulty Curve, The End Of A
+Run, The HUD. Those describe this game.
 
 Below them, everything about the road, the billboards, the biomes, the themes, the interface kit,
 the save layer, the platform layer, the build guards and the scroll patterns is **current and
@@ -149,6 +149,10 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
 - `npm run verify:ui` — `src/ui/sliderMath.ts`, `src/audio/volume.ts` (the slider-to-gain curve),
   `src/ui/kitPalette.ts` (the interface palette, its contrast, its touch-target arithmetic and the
   OKLab threat rule applied to it) and the shared tap-versus-drag rule — see "The Interface Kit".
+- `node scripts/measure-art.mjs [dir-or-file ...]` — not a suite either, and it asserts nothing: it
+  reports each sprite's lightness, saturation and ink share, which is the instrument the art is
+  aimed with. Defaults to `public/assets/decor`, whose 49 props are the tone every new sprite is
+  measured against — see "The Art".
 - `npm run verify:mattes` — not a logic suite: it reads every RGBA sprite in `public/assets/` and
   checks the two things a matte can be wrong about independently of what is drawn (alpha under the
   floor, colour flooded under the transparency). Runs inside `npm run build` — see "The Matte That
@@ -797,6 +801,88 @@ resource does not have one.
 - Coins taken in a row climb `audio/sfx.ts`'s pitch ladder — the rail shooter's lock tone, unchanged,
   because "how many did I just get without looking away" is the same question in both games. Anything
   that is not a coin resets the run.
+
+## The Art
+
+**One decision for the whole project: full-colour, smoothed, never pixel art.** `config.ts` sets
+neither `pixelArt` nor `roundPixels`, so WebGL antialiasing is on and every sprite is scaled
+continuously by the road's projection. The two styles cannot share a frame — a pixel grid only
+reads as intentional when nothing beside it is being resampled, and this projection resamples
+everything by definition. The 49 inherited verge props are diffusion-style art, and everything
+drawn since matches them.
+
+### The tone target, and how to aim at it
+
+`node scripts/measure-art.mjs` walks the sprites and reports three numbers over their opaque
+pixels: **lightness, saturation, and what share reads as ink** (below lightness 70). The verge
+comes back at **111 / 5% / 34%**, and that triple is the target — the rail shooter established
+that *tone*, not line style, is what makes a prop belong to a frame: bought props measuring 1.29x
+as bright and 2.66x as saturated as their neighbours jumped forward off the roadside, and no amount
+of redrawing fixed it until the numbers moved.
+
+So the rule has two halves, and they point opposite ways:
+
+- **Obstacles aim at the verge's numbers.** They measure 93–105 lightness, 10–12% saturation,
+  34–43% ink. A rock is part of the picture; what separates it from the scenery is that it stands
+  on grey asphalt, not that it is a different colour.
+- **The snail aims away from them, and it is the only thing that does.** 140 lightness and 66%
+  saturation against the verge's 111 and 5% — thirteen times the saturation of anything it shares a
+  frame with. It is the one object a player must never have to search for.
+
+`verify:obstacles` pins both halves against `src/run/artPalette.ts`, because both mistakes made
+while drawing this were mistakes about numbers and are catchable without a rasteriser:
+
+- **⚠ Every `dark` band must be below `INK_LIGHTNESS`.** The first pass landed them at 71–72
+  against a threshold of 70, so the shaded half of every rock counted as body colour: the obstacles
+  measured 10–18% ink beside a verge at 34% and read as flat cut-outs pasted onto the road.
+- **⚠ A rich brown is not a muted brown.** The trunk shipped at 42% saturation against the verge's
+  5%.
+- **Ink is `26,28,26`, never pure black** — `verify:mattes`'s border-flood rule.
+
+### ⚠ Ink weight is a fraction of the canvas's geometric mean, not of its width
+
+The three obstacle canvases are all 256 wide and 56, 162 and 139 tall. A width-derived outline put
+a 5.6px ring on a 56px-tall rock — a sixth of its height — and the low cluster measured 60% ink,
+i.e. mostly outline. `sqrt(width * height)` tracks the shape's actual size and gives 2.6px, 4.5px
+and 4.2px.
+
+This is the second time this project has got ink weight wrong in the opposite direction: the rail
+shooter shipped a prop with *no* visible outline because its ink was set in supersample pixels and
+survived two downscales. **Ink weight is always derived from the delivered size.**
+
+### The snail
+
+Six frames of glide (`snail-0` … `snail-5`), and **the whole character animation is one wave
+travelling along the foot**. That is why the mascot is a snail at all: a runner with legs needs a
+walk cycle, a run cycle, a launch pose, an airborne pose and a landing pose, where a snail has no
+gait and its silhouette's bottom edge rippling is the entire read. `squash.ts`'s procedural
+deformation rides on top for the jump.
+
+- **The cycle advances with distance, not with time** — one segment per frame, so the ripple runs
+  at 7.2 frames a second at `SPEED_BASE` and 18 at `SPEED_CAP`. A wall-clock cycle would ripple at
+  the same rate whether the run was crawling or flat out, which reads as the animation having come
+  loose from the game.
+- **The eye stalks are what make it legible small.** Everything else about a snail is round lumps;
+  two thin verticals with dots on top is what a player reads as "creature" first. Measured at
+  390x844 — the narrowest viewport this game supports — the snail is **23x15px** and still reads.
+- **The shell carries bands *and* a spiral**, doing different jobs: the bands survive the downscale
+  to a phone, the spiral is what makes it a shell rather than a target at 100px on a desktop.
+
+### The obstacles
+
+Three silhouettes that must be told apart at the 9–27px `verify:obstacles` measures them at, so
+they differ in **outline** first and colour second: a wide flat cluster of lumps, a tall slab with
+a straight vertical face, and a trunk hanging in the air with daylight drawn under it.
+
+**⚠ `low` has three shape variants because a wall is made of nothing else.** `drawWall` lays low
+rocks edge to edge to build the one row a jump is required for, and with a single texture that came
+out as a picket fence — the same triangular lump repeated fourteen times across the road. Three
+silhouettes (centre-, left- and right-heavy) plus a horizontal flip keyed off the obstacle's id
+give six distinct rocks, which is enough that no two neighbours match. `blocking` has two, leaning
+opposite ways; an `overhead` spans the road alone and never has a neighbour.
+
+Variation is **flip and shape only, never scale** — the drawn size is the collision box (see "The
+Snail" on `PLAYER_WIDTH`), and a scale jitter would break that.
 
 ## The Difficulty Curve
 

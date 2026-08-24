@@ -511,6 +511,7 @@ export class RunScene extends Phaser.Scene {
       width,
       height,
       squashAt(this.squash, time, this.player.vy / JUMP_LAUNCH_V),
+      this.run.distance,
     )
   }
 }

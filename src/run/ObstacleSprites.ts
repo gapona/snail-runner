@@ -7,7 +7,7 @@ import {
 } from '../road/billboard'
 import { billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, ROAD_WIDTH, SPRITE_SCALE } from '../road/constants'
 import type { Segment } from '../road/track'
-import { createObstacleTextures, OBSTACLE_TEXTURES } from './obstacleArt'
+import { createObstacleTextures, obstacleTextureKey } from './obstacleArt'
 import { WORLD_LAYER, worldDepth } from './worldDepth'
 import type { Obstacle } from './obstacles'
 
@@ -61,7 +61,7 @@ export class ObstacleSprites {
   constructor(scene: Phaser.Scene, poolSize = OBSTACLE_POOL_SIZE) {
     createObstacleTextures(scene)
 
-    const initialKey = OBSTACLE_TEXTURES.low
+    const initialKey = obstacleTextureKey('low', 0)
 
     this.slots = Array.from({ length: poolSize }, () => ({
       image: scene.add
@@ -115,7 +115,7 @@ export class ObstacleSprites {
       const clip = clipY[n]
 
       for (const obstacle of here) {
-        const key = OBSTACLE_TEXTURES[obstacle.kind]
+        const key = obstacleTextureKey(obstacle.kind, obstacle.id)
         // The world box, converted into the texture-pixel units `billboardRectInto` wants — the
         // same conversion `PlayerView` does, and for the same reason: the drawn size has to be the
         // collision box, so the sprite can never claim ground the model does not.
@@ -143,7 +143,7 @@ export class ObstacleSprites {
         // honest measure of demand. Breaking out early would report the pool as exactly big enough.
         if (used >= capacity) continue
 
-        this.place(this.slots[used], key, rect, visible, n)
+        this.place(this.slots[used], key, rect, visible, n, (obstacle.id & 1) === 1)
         used++
       }
     }
@@ -173,6 +173,7 @@ export class ObstacleSprites {
     rect: { x: number; y: number; w: number; h: number },
     visibleFraction: number,
     distanceIndex: number,
+    flipX: boolean,
   ): void {
     const image = slot.image
 
@@ -190,6 +191,9 @@ export class ObstacleSprites {
     image.setVisible(true)
     image.setPosition(rect.x, rect.y)
     image.setDisplaySize(rect.w, Math.max(1, rect.h))
+    // Mirroring doubles the silhouettes for free. `setFlipX` rather than a negative display size,
+    // because a negative size confuses the hill crop below — the same note `RoadSprites` carries.
+    image.setFlipX(flipX)
     // **Sorted with the scenery, on the scenery's own axis.** Set every frame because the distance
     // changes every frame; a depth assigned once in the constructor is what let the farthest
     // obstacle paint over the nearest.
