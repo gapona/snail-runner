@@ -1,9 +1,11 @@
 import * as Phaser from 'phaser'
-import { bindAction } from '../platform/input'
+import { bindAction, bindSteering, type Steering } from '../platform/input'
 import { bindLayout } from '../ui/layout'
 import { WorldView } from '../run/WorldView'
 import { createRunState, runSeconds, stepRun, type RunState } from '../run/runState'
-import { SPEED_BASE } from '../run/constants'
+import { createPlayerState, isOffRoad, playerScreenFraction, stepPlayer, type PlayerState } from '../run/playerMotion'
+import { PlayerView } from '../run/PlayerView'
+import { KEYBOARD_POINT_SPEED, OFFROAD_DRAG, SPEED_BASE } from '../run/constants'
 
 /**
  * The run.
@@ -27,6 +29,9 @@ export class RunScene extends Phaser.Scene {
   private world!: WorldView
   private uiCamera!: Phaser.Cameras.Scene2D.Camera
   private run!: RunState
+  private player!: PlayerState
+  private playerView!: PlayerView
+  private steering!: Steering
 
   constructor() {
     super('RunScene')
@@ -34,6 +39,7 @@ export class RunScene extends Phaser.Scene {
 
   create() {
     this.run = createRunState()
+    this.player = createPlayerState()
 
     // The ground, the scenery, the sky and the camera that rides through them — all of it in
     // `WorldView`, which `MainMenu` builds the same way. Two scenes drawing the same world from
@@ -46,10 +52,22 @@ export class RunScene extends Phaser.Scene {
     // through, neither of which can produce a corner you cannot see round.
     this.world = new WorldView(this, { speed: SPEED_BASE, decorSeed: Math.floor(Math.random() * 0xffff) })
 
-    // World/UI split per CLAUDE.md "Responsive Layout". Created empty: nothing screen-space
-    // exists yet, and creating it now is what keeps the `ignore()` contract in one place.
+    // Built after the world, because it draws over it and the display list is the draw order.
+    this.playerView = new PlayerView(this)
+
+    // World/UI split per CLAUDE.md "Responsive Layout". Nothing screen-space exists yet; the
+    // snail is a *world* object and belongs on `cameras.main` with the road.
     this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height)
-    this.uiCamera.ignore(this.world.gameObjects)
+    this.uiCamera.ignore(this.worldObjects())
+
+    // Steering is an *absolute* axis — a runner steers to a place, not in a direction — so it is
+    // `bindSteering` rather than `bindHeldAction`. See `platform/input.ts` for why that shape had
+    // to exist and why reading `activePointer` at this call site would not do.
+    this.steering = bindSteering(this, 'steer', {
+      leftKeys: ['LEFT', 'A'],
+      rightKeys: ['RIGHT', 'D'],
+      keyboardSpeed: KEYBOARD_POINT_SPEED,
+    })
 
     bindAction(this, 'close', { keys: ['ESC'] }, () => {
       this.scene.start('MainMenu')
@@ -58,6 +76,7 @@ export class RunScene extends Phaser.Scene {
     bindLayout(this, (width, height) => this.layout(width, height))
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.playerView.destroy()
       this.world.destroy()
     })
 
@@ -80,6 +99,8 @@ export class RunScene extends Phaser.Scene {
 
     ;(window as unknown as Record<string, unknown>).__run = {
       state: () => ({ ...this.run }),
+      player: () => ({ ...this.player, offRoad: isOffRoad(this.player.offsetX) }),
+      screen: () => ({ x: this.playerView.screenX, y: this.playerView.screenY }),
       seconds: () => runSeconds(this.run),
     }
   }
@@ -90,11 +111,16 @@ export class RunScene extends Phaser.Scene {
    * mistake. Cheap to check once at start-up, impossible to spot by eye later.
    */
   private assertWorldIsSingleCamera(): void {
-    const leaked = this.world.gameObjects.filter((object) => (object.cameraFilter & this.uiCamera.id) === 0)
+    const leaked = this.worldObjects().filter((object) => (object.cameraFilter & this.uiCamera.id) === 0)
 
     if (leaked.length > 0) {
       console.warn(`[run] ${leaked.length} world object(s) are not ignored by uiCamera and will be drawn twice`)
     }
+  }
+
+  /** Everything that belongs to `cameras.main` and must be hidden from `uiCamera`. */
+  private worldObjects(): Phaser.GameObjects.GameObject[] {
+    return [...this.world.gameObjects, ...this.playerView.gameObjects]
   }
 
   layout(width: number, height: number): void {
@@ -108,7 +134,16 @@ export class RunScene extends Phaser.Scene {
     const width = this.scale.width
     const height = this.scale.height
 
-    this.run = stepRun(this.run, delta, { trackLength: this.world.trackLength })
+    // **The snail is stepped before the run, and the run reads the result.** Leaving the road
+    // costs speed, so the drag this frame has to be about where the snail is *now* — stepping the
+    // run first would charge the verge a frame late, which at top speed is a whole segment.
+    const steer = this.steering.read(delta)
+
+    this.player = stepPlayer(this.player, { targetFraction: steer.targetFraction, active: steer.active }, delta)
+    this.run = stepRun(this.run, delta, {
+      trackLength: this.world.trackLength,
+      drag: isOffRoad(this.player.offsetX) ? OFFROAD_DRAG : 0,
+    })
 
     // **The world is told where the camera is, not how fast to go.** `WorldView.advance` integrates
     // a speed of its own, which is right for the menu (it rides on a script) and wrong here: the
@@ -119,9 +154,13 @@ export class RunScene extends Phaser.Scene {
     this.world.cameraZ = this.run.z
     // Still called, with the real delta and a zero speed: `advance` also eases the camera's lean,
     // and that easing is dt-corrected — handing it a zero delta would freeze the lean instead of
-    // leaving it alone. Nothing to follow yet, so it is told to look straight ahead (`0.5` = the
-    // centre of the frame); chunk 2 passes the snail's own screen fraction here.
-    this.world.advance(delta, 0.5)
+    // leaving it alone. What it follows is the snail's own screen fraction, converted from its
+    // road position rather than read off the sprite: the sprite is a frame behind by the time
+    // this runs, and the lean is what decides where the sprite goes.
+    this.world.advance(delta, playerScreenFraction(this.player.offsetX))
     this.world.render(width, height)
+    // After the world, never before: it reads this frame's segment projections out of the mesh
+    // pass, exactly as `RoadSprites` does.
+    this.playerView.render(this.player, this.world.track, this.world.baseIndex, this.run.z, width, height)
   }
 }

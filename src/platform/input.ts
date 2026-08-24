@@ -1,6 +1,6 @@
 import * as Phaser from 'phaser'
 import { isTap, TAP_SLOP_PX } from '../ui/scrollList'
-import { HeldSourceSet } from './heldSources'
+import { axisFrom, HeldSourceSet } from './heldSources'
 
 export interface ActionSources {
   /** Game object(s) that trigger the action on `pointerdown` — Phaser unifies mouse and
@@ -224,4 +224,149 @@ export function bindHeldAction(scene: Phaser.Scene, action: string, sources: Hel
   )
 
   return { isActive: () => held.isHeld, clear }
+}
+
+export interface SteeringSources {
+  /** Keys that push the virtual point left and right, e.g. `['LEFT', 'A']`. */
+  leftKeys?: string[]
+  rightKeys?: string[]
+  /** How fast the keyboard's virtual point travels, in viewport widths per second. */
+  keyboardSpeed?: number
+}
+
+export interface Steering {
+  /**
+   * Where the player is asking to be, as a fraction across the frame, and whether they are asking
+   * at all. Advance by `dtMs` of wall clock — the keyboard's virtual point moves at a rate.
+   */
+  read(dtMs: number): { targetFraction: number; active: boolean }
+  /** Force-releases every source. Called automatically on focus loss and scene pause. */
+  clear(): void
+}
+
+/**
+ * The *absolute* counterpart to `bindHeldAction`: one abstract steering axis fed by a pointer's
+ * position and by a pair of key sets, reported as a fraction across the frame.
+ *
+ * **A third shape was needed because a runner steers to a place, not in a direction.** `bindAction`
+ * answers "did they tap"; `bindHeldAction` answers "are they holding left". Neither can answer
+ * "where is the finger", which is the only question a game whose player is dragged across a road
+ * actually asks — and answering it by reading `scene.input.activePointer` at the call site is
+ * exactly the raw-input coupling the whole module exists to prevent.
+ *
+ * Two sources, one answer, same as everywhere else here:
+ *
+ * - **A pointer, while it is down.** Absolute: the fraction *is* the request. Releasing sets
+ *   `active` false rather than freezing the last value, so the caller's spring can coast back to
+ *   the centre with its own weight instead of the axis inventing a rest position.
+ * - **The keyboard, through a virtual point** that travels at `keyboardSpeed` while a key is held
+ *   and stays where it was let go. A key cannot express an absolute position, so the point is what
+ *   turns a direction back into one; it starts at the centre and is clamped to the frame.
+ *
+ * The pointer wins while it is down, because a player touching the screen has stopped using the
+ * keyboard by definition. Same `SHUTDOWN`/`DESTROY`/focus-loss cleanup as the other two binders.
+ */
+export function bindSteering(scene: Phaser.Scene, action: string, sources: SteeringSources = {}): Steering {
+  // One set per direction rather than one shared set: `axisFrom` needs to know which side is
+  // down, and holding both has to cancel rather than latch whichever arrived first.
+  const heldLeft = new HeldSourceSet()
+  const heldRight = new HeldSourceSet()
+  const cleanups: Array<() => void> = []
+  const speed = sources.keyboardSpeed ?? 0.9
+
+  let pointerFraction: number | null = null
+  let keyboardPoint = 0.5
+
+  const bindKeys = (keys: string[] | undefined, held: HeldSourceSet, id: string) => {
+    for (const key of keys ?? []) {
+      const downEvent = `keydown-${key}`
+      const upEvent = `keyup-${key}`
+      const sourceId = `${id}:${key}`
+      const onDown = () => {
+        if (!scene.scene.isActive()) return
+        held.press(sourceId)
+      }
+      // Never gated on the scene being active: a key released while paused must still release,
+      // or the snail steers into the verge for the rest of the run. Same rule as `bindHeldAction`.
+      const onUp = () => held.release(sourceId)
+
+      scene.input.keyboard?.on(downEvent, onDown)
+      scene.input.keyboard?.on(upEvent, onUp)
+      cleanups.push(() => {
+        scene.input.keyboard?.off(downEvent, onDown)
+        scene.input.keyboard?.off(upEvent, onUp)
+      })
+    }
+  }
+
+  bindKeys(sources.leftKeys, heldLeft, 'left')
+  bindKeys(sources.rightKeys, heldRight, 'right')
+
+  const onPointer = (pointer: Phaser.Input.Pointer) => {
+    if (!scene.scene.isActive() || !pointer.isDown) {
+      pointerFraction = null
+
+      return
+    }
+    pointerFraction = Math.min(1, Math.max(0, pointer.x / scene.scale.width))
+  }
+  const onUp = () => {
+    pointerFraction = null
+  }
+
+  scene.input.on(Phaser.Input.Events.POINTER_DOWN, onPointer)
+  scene.input.on(Phaser.Input.Events.POINTER_MOVE, onPointer)
+  scene.input.on(Phaser.Input.Events.POINTER_UP, onUp)
+  // A pointer released outside the canvas never fires POINTER_UP; without this the snail would
+  // keep steering towards wherever the finger left the frame.
+  scene.input.on(Phaser.Input.Events.POINTER_UP_OUTSIDE, onUp)
+  cleanups.push(() => {
+    scene.input.off(Phaser.Input.Events.POINTER_DOWN, onPointer)
+    scene.input.off(Phaser.Input.Events.POINTER_MOVE, onPointer)
+    scene.input.off(Phaser.Input.Events.POINTER_UP, onUp)
+    scene.input.off(Phaser.Input.Events.POINTER_UP_OUTSIDE, onUp)
+  })
+
+  const clear = () => {
+    heldLeft.clear()
+    heldRight.clear()
+    pointerFraction = null
+  }
+
+  scene.game.events.on(Phaser.Core.Events.BLUR, clear)
+  scene.game.events.on(Phaser.Core.Events.HIDDEN, clear)
+  scene.events.on(Phaser.Scenes.Events.PAUSE, clear)
+  cleanups.push(() => {
+    scene.game.events.off(Phaser.Core.Events.BLUR, clear)
+    scene.game.events.off(Phaser.Core.Events.HIDDEN, clear)
+    scene.events.off(Phaser.Scenes.Events.PAUSE, clear)
+  })
+
+  scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => cleanups.forEach((fn) => fn()))
+  scene.events.once(Phaser.Scenes.Events.DESTROY, () => cleanups.forEach((fn) => fn()))
+
+  console.debug(`[input] bound steering "${action}": pointer + keys`)
+
+  return {
+    read(dtMs: number) {
+      if (pointerFraction !== null) {
+        // The virtual point follows the finger, so switching back to the keyboard resumes from
+        // where the snail actually is rather than from wherever the point was left.
+        keyboardPoint = pointerFraction
+
+        return { targetFraction: pointerFraction, active: true }
+      }
+
+      const axis = axisFrom(heldLeft.isHeld, heldRight.isHeld)
+
+      if (axis === 0) return { targetFraction: keyboardPoint, active: false }
+
+      const dtSec = Number.isFinite(dtMs) && dtMs > 0 ? dtMs / 1000 : 0
+
+      keyboardPoint = Math.min(1, Math.max(0, keyboardPoint + axis * speed * dtSec))
+
+      return { targetFraction: keyboardPoint, active: true }
+    },
+    clear,
+  }
 }

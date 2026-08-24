@@ -64,15 +64,33 @@ export function halfWidthsAtLane(screenFraction: number): number {
 }
 
 /**
- * Half the snail's width, in road half-widths.
+ * Half the snail's width, in road half-widths — and, through `PLAYER_WIDTH` below, its **drawn**
+ * width too.
  *
  * `offsetX` spans `[-1, 1]` across the asphalt, so `2 * ROAD_WIDTH` = 4000 world units is the
- * full carriageway and the snail is 720 of them across. That is deliberately a *large* fraction
- * of the road: three lanes' worth of dodging room is what makes an obstacle a choice rather than
- * a reflex test, and a mascot too small to read at the player's own row is the more common
- * mistake in this genre.
+ * full carriageway and the snail is 280 of them across: 7% of the road. That leaves room for
+ * three clearly separated lines through any obstacle without the road having to be marked into
+ * lanes, which is what keeps an obstacle a choice rather than a reflex test.
+ *
+ * **The collision width and the drawn width are the same number, and that is enforced rather than
+ * remembered** — see `PLAYER_WIDTH`. The first version of this let the texture's own pixel size
+ * decide how wide the snail looked (via `SPRITE_SCALE`, which is world units per texture pixel),
+ * and the two promptly disagreed by a factor of two and a half: a snail 720 units wide on screen
+ * and 180 tall by the collision model, i.e. a pancake that got hit by things it visibly cleared.
  */
-export const PLAYER_HALF_WIDTHS = 0.18
+export const PLAYER_HALF_WIDTHS = 0.07
+
+/**
+ * The snail's drawn footprint in world units — width from `PLAYER_HALF_WIDTHS`, height from
+ * `PLAYER_BODY_H`.
+ *
+ * **The drawing is derived from the collision box, never the other way round.** `PlayerView` hands
+ * these to `billboardRectInto` (divided by `SPRITE_SCALE`, which is the unit that function's
+ * texture-size arguments are in), so the sprite on screen is exactly the box the obstacle test
+ * uses. Redrawing the art at a different pixel size changes nothing about how big the snail is;
+ * only these two numbers do.
+ */
+export const PLAYER_WIDTH = PLAYER_HALF_WIDTHS * 2 * ROAD_WIDTH
 
 /**
  * The last `offsetX` at which the snail is still entirely on the asphalt, and the hard limit
