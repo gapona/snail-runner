@@ -407,8 +407,14 @@ export const DEBRIS_SPEED_FRACTION = 0.22
 export const DEBRIS_GRAVITY = 2.2
 export const DEBRIS_LIFE_MS = 520
 
-/** Draw order for the things the run adds on top of the world. */
-export const PLAYER_DEPTH = 1000
-export const SHADOW_DEPTH = PLAYER_DEPTH - 2
-export const OBSTACLE_DEPTH_ORDER = PLAYER_DEPTH - 1
-export const PICKUP_DEPTH = PLAYER_DEPTH - 1
+/**
+ * Where the air sits, in front of the whole world.
+ *
+ * **The only flat depth left.** Everything that stands *in* the world — scenery, obstacles,
+ * pickups, the snail — sorts by distance through `worldDepth.ts`; motes hanging between the camera
+ * and all of it are the one thing that is genuinely in front of everything, so they get a number
+ * rather than a distance. The four flat depths that used to live here (`PLAYER_DEPTH`,
+ * `SHADOW_DEPTH`, `OBSTACLE_DEPTH_ORDER`, `PICKUP_DEPTH`) are what let far obstacles paint over
+ * near ones; see `worldDepth.ts` for the measurement.
+ */
+export const ATMOSPHERE_DEPTH = 1000

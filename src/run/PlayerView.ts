@@ -4,7 +4,8 @@ import { DRAW_DISTANCE, SEGMENT_LENGTH, SPRITE_SCALE } from '../road/constants'
 import { segmentPercent, surfaceHeight, trackLengthOf, type Segment } from '../road/track'
 import { createScreenPoint, wrapZ } from '../road/project'
 import { playerGroundInto } from './playerProjection'
-import { PLAYER_BODY_H, PLAYER_DEPTH, PLAYER_WIDTH, PLAYER_Z, SHADOW_DEPTH } from './constants'
+import { WORLD_LAYER, worldDepth } from './worldDepth'
+import { PLAYER_BODY_H, PLAYER_WIDTH, PLAYER_Z } from './constants'
 import { createSnailTexture, SNAIL_TEXTURE } from './snailArt'
 import type { PlayerState } from './playerMotion'
 
@@ -28,6 +29,15 @@ const DRAW_UNITS = { width: PLAYER_WIDTH / SPRITE_SCALE, height: PLAYER_BODY_H /
  */
 const SHADOW_ALPHA = 0.38
 const SHADOW_MIN_SCALE = 0.45
+
+/**
+ * How far ahead of the camera the snail is, in segments — 9.83, not a whole number.
+ *
+ * **That it lands between two segments is the point.** The snail's depth has to place it after the
+ * obstacle one segment behind it (which is nearer to the camera, and must paint over it as it
+ * passes) and before the one ahead. A flat depth put it in front of both. See `worldDepth.ts`.
+ */
+const PLAYER_DISTANCE_INDEX = PLAYER_Z / SEGMENT_LENGTH
 
 /**
  * The Phaser half of the player: two objects, no state of its own.
@@ -69,12 +79,16 @@ export class PlayerView {
 
     // Below the snail in the display list, and below it in depth: an ellipse drawn over the
     // sprite would read as a hole rather than as a shadow.
-    this.shadow = scene.add.ellipse(0, 0, 10, 4, 0x000000, SHADOW_ALPHA).setDepth(SHADOW_DEPTH)
+    // Both depths are constant, unlike every other world object's: the snail never changes its
+    // distance from the camera. They still come from the same scale everything else sorts on.
+    this.shadow = scene.add
+      .ellipse(0, 0, 10, 4, 0x000000, SHADOW_ALPHA)
+      .setDepth(worldDepth(PLAYER_DISTANCE_INDEX, WORLD_LAYER.shadow))
     this.sprite = scene.add
       .image(0, 0, SNAIL_TEXTURE)
       // Bottom centre: a billboard is positioned by the point where it meets the ground.
       .setOrigin(0.5, 1)
-      .setDepth(PLAYER_DEPTH)
+      .setDepth(worldDepth(PLAYER_DISTANCE_INDEX, WORLD_LAYER.player))
   }
 
   /** Both objects, for the camera `ignore()` lists and for teardown. */

@@ -5,10 +5,10 @@ import {
   billboardVisibleFraction,
   createBillboardRect,
 } from '../road/billboard'
-import { DRAW_DISTANCE, ROAD_WIDTH, SPRITE_SCALE } from '../road/constants'
+import { billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, ROAD_WIDTH, SPRITE_SCALE } from '../road/constants'
 import type { Segment } from '../road/track'
-import { OBSTACLE_DEPTH_ORDER } from './constants'
 import { createObstacleTextures, OBSTACLE_TEXTURES } from './obstacleArt'
+import { WORLD_LAYER, worldDepth } from './worldDepth'
 import type { Obstacle } from './obstacles'
 
 /** What one pool slot is currently showing, so a frame can skip work it does not need. */
@@ -69,7 +69,8 @@ export class ObstacleSprites {
         // Origin at the bottom centre: a billboard is positioned by the point where it meets the
         // ground — which for an overhead is the bottom of its *band*, not the road.
         .setOrigin(0.5, 1)
-        .setDepth(OBSTACLE_DEPTH_ORDER)
+        // No depth here: it is set per object per frame from how far away it is — see
+        // `worldDepth.ts` for what a flat depth did to the draw order.
         .setVisible(false),
       key: initialKey,
       cropped: false,
@@ -142,7 +143,7 @@ export class ObstacleSprites {
         // honest measure of demand. Breaking out early would report the pool as exactly big enough.
         if (used >= capacity) continue
 
-        this.place(this.slots[used], key, rect, visible)
+        this.place(this.slots[used], key, rect, visible, n)
         used++
       }
     }
@@ -166,7 +167,13 @@ export class ObstacleSprites {
   }
 
   /** Points one pool slot at one billboard. */
-  private place(slot: SlotState, key: string, rect: { x: number; y: number; w: number; h: number }, visibleFraction: number): void {
+  private place(
+    slot: SlotState,
+    key: string,
+    rect: { x: number; y: number; w: number; h: number },
+    visibleFraction: number,
+    distanceIndex: number,
+  ): void {
     const image = slot.image
 
     if (slot.key !== key) {
@@ -183,6 +190,16 @@ export class ObstacleSprites {
     image.setVisible(true)
     image.setPosition(rect.x, rect.y)
     image.setDisplaySize(rect.w, Math.max(1, rect.h))
+    // **Sorted with the scenery, on the scenery's own axis.** Set every frame because the distance
+    // changes every frame; a depth assigned once in the constructor is what let the farthest
+    // obstacle paint over the nearest.
+    image.setDepth(worldDepth(distanceIndex, WORLD_LAYER.obstacle))
+    // The same distance haze the verge gets. Obstacles were the one thing in the frame drawn at
+    // full contrast against faded scenery, which read as pasted on rather than as standing there.
+    // At the reaction distance it is a 4% fade, so it costs the read nothing — measured, not
+    // assumed, because `REACTION_MS` is a floor and this is the one place that could quietly
+    // undercut it.
+    image.setAlpha(1 - billboardFog(distanceIndex) * MAX_BILLBOARD_FOG)
 
     // A hill in front of this segment hides the bottom of whatever stands on it. Cropping from the
     // top of the frame's worth of texture is the same trick `RoadSprites` uses — without it an

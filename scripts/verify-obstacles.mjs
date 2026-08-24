@@ -25,17 +25,19 @@ import {
   provePassable,
 } from '../src/run/obstacles.ts'
 import { difficultyAt, difficultyProgress, DIFFICULTY_TAU_Z } from '../src/run/difficulty.ts'
+import { WORLD_LAYER, worldDepth } from '../src/run/worldDepth.ts'
 import {
   JUMP_APEX,
   OBSTACLE_BANDS,
   OBSTACLE_DEPTH,
   PLAYER_BODY_H,
   PLAYER_HALF_WIDTHS,
+  PLAYER_Z,
   REACTION_MS,
   ROAD_EDGE,
   SPEED_CAP,
 } from '../src/run/constants.ts'
-import { CAMERA_DEPTH, SEGMENT_LENGTH } from '../src/road/constants.ts'
+import { billboardFog, CAMERA_DEPTH, MAX_BILLBOARD_FOG, SEGMENT_LENGTH } from '../src/road/constants.ts'
 import { createRng } from '../src/race/rng.ts'
 
 let passed = 0
@@ -413,6 +415,67 @@ check('500 simulated runs, and the reaction budget never falls below REACTION_MS
     assert.ok(share > 0.1, `at ${Math.round(bandStart / 100)}m only ${(share * 100).toFixed(0)}% of rows require a jump`)
     assert.ok(share < 0.45, `at ${Math.round(bandStart / 100)}m ${(share * 100).toFixed(0)}% of rows are walls — one answer to everything`)
   }
+})
+
+console.log('draw order')
+
+check('nearer always paints over farther, whatever the two things are', () => {
+  // **The defect this replaces was measured in the running game**: every obstacle and every pickup
+  // shared one flat depth, so equal depth fell back to display-list order, which is pool-slot
+  // order, which the render loop fills near-to-far — the farthest obstacle was added last and
+  // painted last. Nearest at screen y 805 sat at list index 134; farthest at y 576 sat at 147.
+  const layers = Object.values(WORLD_LAYER)
+
+  for (const near of layers) {
+    for (const far of layers) {
+      // One whole segment apart is the smallest gap that must be decided by distance rather than
+      // by category, and it is what every tiebreak below has to stay inside.
+      assert.ok(
+        worldDepth(9, near) > worldDepth(10, far),
+        `something at 10 segments (layer ${far}) paints over something at 9 (layer ${near})`,
+      )
+    }
+  }
+})
+
+check('every tiebreak is smaller than one segment, which is what keeps distance in charge', () => {
+  // The property the check above rests on, stated on its own so a future layer added at 1.5
+  // fails here rather than mysteriously reordering the world.
+  for (const [name, layer] of Object.entries(WORLD_LAYER)) {
+    assert.ok(layer >= 0 && layer < 1, `WORLD_LAYER.${name} is ${layer} — a tiebreak must be inside one segment`)
+  }
+})
+
+check('on the same segment, a pickup is never lost behind the obstacle beside it', () => {
+  assert.ok(worldDepth(20, WORLD_LAYER.pickup) > worldDepth(20, WORLD_LAYER.obstacle))
+  assert.ok(worldDepth(20, WORLD_LAYER.obstacle) > worldDepth(20, WORLD_LAYER.scenery))
+})
+
+check('the snail sits between the segment behind it and the one ahead', () => {
+  // **The snail is 9.83 segments out, and landing between two segments is the point.** An obstacle
+  // it has just passed is nearer to the camera and has to paint over it; one still ahead must not.
+  // A flat depth put the snail in front of both, so a boulder slid *under* it on the way past.
+  const snail = worldDepth(PLAYER_Z / SEGMENT_LENGTH, WORLD_LAYER.player)
+
+  assert.ok(worldDepth(9, WORLD_LAYER.obstacle) > snail, 'an obstacle the snail has passed draws behind it')
+  assert.ok(worldDepth(10, WORLD_LAYER.obstacle) < snail, 'an obstacle still ahead draws over the snail')
+  // ...and its shadow stays immediately underneath it rather than joining the sort somewhere else.
+  const shadow = worldDepth(PLAYER_Z / SEGMENT_LENGTH, WORLD_LAYER.shadow)
+
+  assert.ok(shadow < snail && snail - shadow < 0.1, 'the shadow is not directly under the snail')
+})
+
+check('the distance haze obstacles now share costs the reaction budget nothing', () => {
+  // Obstacles were the one thing drawn at full contrast against faded scenery, which read as
+  // pasted on. They fade with the verge now — but `REACTION_MS` is a floor, and this is the one
+  // change that could quietly undercut it, so the fade at that distance is measured.
+  const reactionSegments = ((REACTION_MS / 1000) * MAX_ATTAINABLE_SPEED) / SEGMENT_LENGTH
+  const alpha = 1 - billboardFog(Math.round(reactionSegments)) * MAX_BILLBOARD_FOG
+
+  assert.ok(alpha > 0.9, `an obstacle is at alpha ${alpha.toFixed(3)} when the player must first read it`)
+  console.log(
+    `    at ${reactionSegments.toFixed(1)} segments — where an obstacle must be readable — the haze leaves it at alpha ${alpha.toFixed(3)}`,
+  )
 })
 
 console.log(`${passed} checks passed`)

@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser'
-import { PLAYER_DEPTH } from '../run/constants'
+import { ATMOSPHERE_DEPTH } from '../run/constants'
 import { createMoteTextures, moteTextureKey, MOTE_TEXTURE_SIZE } from './particleArt'
 import {
   ATMOSPHERE_ALPHA,
@@ -73,7 +73,7 @@ export class Atmosphere {
         blendMode: Phaser.BlendModes.NORMAL,
       })
 
-      emitter.setDepth(PLAYER_DEPTH - 1)
+      emitter.setDepth(ATMOSPHERE_DEPTH)
       this.emitters.set(shape, emitter)
     }
 

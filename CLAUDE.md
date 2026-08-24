@@ -98,9 +98,9 @@ is the same question in both games.
 
 ### Reading the rest of this document
 
-**The runner's own chapters are the eight between "## UI Kit" and "## Road Renderer"** — The Run,
-The Snail, The Jump, Obstacles, Pickups, The Difficulty Curve, The End Of A Run, The HUD. Those
-describe this game.
+**The runner's own chapters are the nine between "## UI Kit" and "## Road Renderer"** — The Run,
+The Snail, The Jump, Obstacles, Draw Order, Pickups, The Difficulty Curve, The End Of A Run, The
+HUD. Those describe this game.
 
 Below them, everything about the road, the billboards, the biomes, the themes, the interface kit,
 the save layer, the platform layer, the build guards and the scroll patterns is **current and
@@ -738,6 +738,44 @@ and `rail/Enemies.ts` had, and for the same reason: the model runs under Node.
   snail's height — the game read as an industrial estate. What actually binds is only that `blocking`
   reaches above the apex and `overhead` starts above the snail's back and reaches above the apex plus
   its body. Everything past those was bulk, and bulk was costing the read.
+
+## Draw Order
+
+**There is no depth buffer in this renderer.** The whole thing is painter's-order — what is drawn
+last is on top — and the only lever is `GameObject.depth`. `src/run/worldDepth.ts` is the single
+scale everything standing in the world sorts on: distance from the camera in segments, negated,
+plus a per-category tiebreak below 1.
+
+**⚠ A depth set once in a constructor is the bug this exists to prevent.** `RoadSprites` has always
+got it right — `setDepth(-distanceIndex)` every frame — but the obstacle and pickup pools each set
+one flat number for every slot at construction. Equal depth falls back to display-list order, which
+is pool-slot order, which the render loop fills **near to far**: so the farthest object was added
+last and painted last, over everything nearer than it. Both pools used the *same* flat number too,
+so a coin fifty segments out drew over a boulder about to arrive.
+
+Measured in the running game before the fix: every obstacle at depth 999, the nearest (screen y 805)
+at display-list index 134 and the farthest (y 576) at 147. Reported as the textures riding over each
+other, and that is exactly what it was. After: −5.7 for the nearest, −195.7 for the farthest, depth
+rising monotonically with nearness.
+
+- **Every tiebreak in `WORLD_LAYER` is smaller than one segment**, which is what keeps distance in
+  charge; the tiebreak only decides two things on the *same* segment, where the answer is genuinely
+  arbitrary but must be stable or they flicker against each other as the pool reorders. The order
+  encodes what should win: pickup over snail over obstacle over scenery.
+- **The snail's distance index is 9.83, and it landing between two segments is the point.** An
+  obstacle it has just passed is *nearer to the camera* and has to paint over it as it goes by; one
+  still ahead must not. The old flat depth put the snail in front of both, so a boulder slid under
+  it on the way past.
+- **Obstacles and pickups now take the same distance haze the verge does.** They were the only
+  things in the frame drawn at full contrast against faded scenery, which read as pasted on rather
+  than as standing there. At the reaction distance that is a 4.3% fade — measured rather than
+  assumed, because `REACTION_MS` is a floor and this is the one change that could quietly undercut
+  it.
+- `ATMOSPHERE_DEPTH` is the only flat depth left, and it is honest: motes hang between the camera
+  and the whole world, so they are not sorting against anything.
+
+**Anything new that draws in the world gets a `worldDepth` call, per object, per frame.** Anything
+that draws on the *screen* (the HUD) is on `uiCamera` and does not enter this sort at all.
 
 ## Pickups
 

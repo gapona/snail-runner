@@ -5,10 +5,10 @@ import {
   billboardVisibleFraction,
   createBillboardRect,
 } from '../road/billboard'
-import { DRAW_DISTANCE, SPRITE_SCALE } from '../road/constants'
+import { billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, SPRITE_SCALE } from '../road/constants'
 import type { Segment } from '../road/track'
-import { PICKUP_DEPTH } from './constants'
 import { createPickupTextures, PICKUP_TEXTURES } from './pickupArt'
+import { WORLD_LAYER, worldDepth } from './worldDepth'
 import { PICKUP_DRAW_SIZE, PICKUP_HEIGHT, type Pickup } from './pickups'
 
 /**
@@ -43,7 +43,8 @@ export class PickupSprites {
     const initialKey = PICKUP_TEXTURES.coin
 
     this.slots = Array.from({ length: poolSize }, () => ({
-      image: scene.add.image(0, 0, initialKey).setOrigin(0.5, 1).setDepth(PICKUP_DEPTH).setVisible(false),
+      // Depth is set per object per frame, from distance — see `worldDepth.ts`.
+      image: scene.add.image(0, 0, initialKey).setOrigin(0.5, 1).setVisible(false),
       key: initialKey,
       cropped: false,
     }))
@@ -98,7 +99,7 @@ export class PickupSprites {
 
         if (!billboardOnScreen(rect, visible, screenWidth, screenHeight)) continue
 
-        this.place(this.slots[used], PICKUP_TEXTURES[pickup.kind], rect, visible)
+        this.place(this.slots[used], PICKUP_TEXTURES[pickup.kind], rect, visible, n)
         used++
       }
     }
@@ -124,6 +125,7 @@ export class PickupSprites {
     key: string,
     rect: { x: number; y: number; w: number; h: number },
     visibleFraction: number,
+    distanceIndex: number,
   ): void {
     const image = slot.image
 
@@ -139,6 +141,10 @@ export class PickupSprites {
     image.setVisible(true)
     image.setPosition(rect.x, rect.y)
     image.setDisplaySize(rect.w, Math.max(1, rect.h))
+    // A pickup wins a tie against an obstacle on the same segment — it is the small bright thing
+    // that must not be swallowed by the boulder beside it — but loses to anything nearer.
+    image.setDepth(worldDepth(distanceIndex, WORLD_LAYER.pickup))
+    image.setAlpha(1 - billboardFog(distanceIndex) * MAX_BILLBOARD_FOG)
 
     if (visibleFraction < 1) {
       image.setCrop(0, 0, image.frame.realWidth, Math.max(1, Math.round(image.frame.realHeight * visibleFraction)))
