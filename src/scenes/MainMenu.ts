@@ -397,6 +397,12 @@ export class MainMenu extends Phaser.Scene {
     this.leaving = true
 
     this.playPulse?.stop()
+    // **The entry cascade has to be killed first, or it wins.** Play is clickable from the frame
+    // it appears, which is well before the secondary row's own fade-in has finished — and a
+    // still-running entry tween keeps writing alpha 1 over the exit tween's fade. Seen exactly
+    // that way: the title and Play faded out on cue and the Shop/Settings row sat there at full
+    // alpha over an accelerating road.
+    this.tweens.killTweensOf(this.uiAlphaTargets())
     this.tweens.add({
       targets: this.uiAlphaTargets(),
       alpha: 0,

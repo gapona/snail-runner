@@ -4,7 +4,7 @@ import { skyPlateKey } from '../road/Backdrop'
 import { DECOR_TEXTURES } from '../road/decorShapes'
 import { themeIds } from '../road/themes'
 import { bindLayout } from '../ui/layout'
-import { BRAND_TEXTURES, createBrand, type Brand } from '../ui/brand'
+import { createBrand, type Brand } from '../ui/brand'
 import { getTheme, neonProgressBar, type NeonProgressBar } from '../ui/theme'
 import { uiScale } from '../ui/uiScale'
 

@@ -44,7 +44,7 @@ const FORBIDDEN_SOURCE_EXTENSIONS = ['.psd', '.ai', '.sketch', '.fig', '.xcf', '
  * "we gated it" and "it is gone" are different claims, and only one of them is checkable.
  * Grepping the built bundle is the check; the gate is merely how it passes.
  */
-const FORBIDDEN_DEV_GLOBALS = ['__game', '__getRecentErrors', '__adGate', '__roadPerf', '__decorPerf', '__runPerf', '__menuContrast', '__menu']
+const FORBIDDEN_DEV_GLOBALS = ['__game', '__getRecentErrors', '__adGate', '__roadPerf', '__decorPerf', '__runPerf', '__menuContrast', '__menu', '__run']
 
 /**
  * Filename fragments that mark an asset as work-in-progress.
