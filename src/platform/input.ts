@@ -24,6 +24,19 @@ export interface ActionSources {
    * where a drag has to be possible.
    */
   tap?: boolean
+  /**
+   * A tap anywhere on the canvas — press and release without the pointer having moved.
+   *
+   * **For an action whose target is the whole screen rather than a widget.** The runner's jump is
+   * the case: there is no button, the road is not an object, and inventing an invisible
+   * full-screen rectangle to `setInteractive()` would put a click-swallowing object over
+   * everything (the same argument `bindHeldAction`'s `screenBand` makes).
+   *
+   * **The slop test is what lets this share a pointer with steering.** A steer is a drag; a jump
+   * is a tap; `isTap` is the same rule the shop's scrolling rows already use to tell one from the
+   * other, so the two gestures compose on one finger instead of competing for it.
+   */
+  screenTap?: boolean
 }
 
 /**
@@ -51,6 +64,35 @@ export function bindAction(scene: Phaser.Scene, action: string, sources: ActionS
   }
 
   const cleanups: Array<() => void> = []
+
+  if (sources.screenTap) {
+    // Where each press landed, per pointer id — the same shape the per-object `tap` path uses,
+    // and for the same reason: `pointer.downX/downY` belong to the pointer, so a press that began
+    // during a scene that has since been replaced would still satisfy a distance test here.
+    const pressedAt = new Map<number, { x: number; y: number }>()
+
+    const onDown = (pointer: Phaser.Input.Pointer) => {
+      pressedAt.set(pointer.id, { x: pointer.x, y: pointer.y })
+    }
+    const onUp = (pointer: Phaser.Input.Pointer) => {
+      const start = pressedAt.get(pointer.id)
+
+      pressedAt.delete(pointer.id)
+      if (start && isTap(pointer.x - start.x, pointer.y - start.y, TAP_SLOP_PX)) guarded()
+    }
+    const onCancel = (pointer: Phaser.Input.Pointer) => pressedAt.delete(pointer.id)
+
+    scene.input.on(Phaser.Input.Events.POINTER_DOWN, onDown)
+    scene.input.on(Phaser.Input.Events.POINTER_UP, onUp)
+    // A release outside the canvas is not a tap and must not become one when the finger comes
+    // back; dropping the record is what makes that true.
+    scene.input.on(Phaser.Input.Events.POINTER_UP_OUTSIDE, onCancel)
+    cleanups.push(() => {
+      scene.input.off(Phaser.Input.Events.POINTER_DOWN, onDown)
+      scene.input.off(Phaser.Input.Events.POINTER_UP, onUp)
+      scene.input.off(Phaser.Input.Events.POINTER_UP_OUTSIDE, onCancel)
+    })
+  }
 
   const pointerTargets = sources.pointer ? (Array.isArray(sources.pointer) ? sources.pointer : [sources.pointer]) : []
 

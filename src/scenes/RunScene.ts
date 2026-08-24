@@ -3,9 +3,19 @@ import { bindAction, bindSteering, type Steering } from '../platform/input'
 import { bindLayout } from '../ui/layout'
 import { WorldView } from '../run/WorldView'
 import { createRunState, runSeconds, stepRun, type RunState } from '../run/runState'
-import { createPlayerState, isOffRoad, playerScreenFraction, stepPlayer, type PlayerState } from '../run/playerMotion'
+import { createPlayerState, isOffRoad, jump, playerScreenFraction, stepPlayer, type PlayerState } from '../run/playerMotion'
 import { PlayerView } from '../run/PlayerView'
-import { KEYBOARD_POINT_SPEED, OFFROAD_DRAG, SPEED_BASE } from '../run/constants'
+import { createSquashState, squashAt, squashOnLanding, squashOnLaunch, type SquashState } from '../run/squash'
+import { addFreeze, isFrozen, type Freezable } from '../run/hitstop'
+import {
+  JUMP_LAUNCH_V,
+  KEYBOARD_POINT_SPEED,
+  LANDING_HITSTOP_MS,
+  OFFROAD_DRAG,
+  SPEED_BASE,
+} from '../run/constants'
+import { playSfx } from '../audio/audio'
+import { SFX } from '../audio/sfx'
 
 /**
  * The run.
@@ -32,6 +42,16 @@ export class RunScene extends Phaser.Scene {
   private player!: PlayerState
   private playerView!: PlayerView
   private steering!: Steering
+  private squash!: SquashState
+  /**
+   * The player's own hitstop deadline — `hitstop.ts`'s `Freezable`, on the snail and nothing else.
+   *
+   * **Never `timeScale`, never a global pause.** The ground has to keep moving through a landing:
+   * a world that stopped would read as a dropped frame, where a snail that stops for 45ms while
+   * the road keeps going reads as weight. Same rule the rail shooter's per-entity hitstop had, and
+   * the module is the same one.
+   */
+  private playerFreeze!: Freezable
 
   constructor() {
     super('RunScene')
@@ -40,6 +60,8 @@ export class RunScene extends Phaser.Scene {
   create() {
     this.run = createRunState()
     this.player = createPlayerState()
+    this.squash = createSquashState()
+    this.playerFreeze = { frozenUntil: 0 }
 
     // The ground, the scenery, the sky and the camera that rides through them — all of it in
     // `WorldView`, which `MainMenu` builds the same way. Two scenes drawing the same world from
@@ -68,6 +90,12 @@ export class RunScene extends Phaser.Scene {
       rightKeys: ['RIGHT', 'D'],
       keyboardSpeed: KEYBOARD_POINT_SPEED,
     })
+
+    // **A tap anywhere jumps, and steering is a drag.** They share the pointer and do not
+    // conflict: `bindAction`'s `tap` mode fires only on a press-and-release that stayed inside
+    // `TAP_SLOP_PX`, which is exactly the gesture a steer is not. On a keyboard they are separate
+    // keys and the question does not arise.
+    bindAction(this, 'jump', { keys: ['SPACE', 'UP', 'W'], screenTap: true }, () => this.tryJump())
 
     bindAction(this, 'close', { keys: ['ESC'] }, () => {
       this.scene.start('MainMenu')
@@ -99,6 +127,7 @@ export class RunScene extends Phaser.Scene {
 
     ;(window as unknown as Record<string, unknown>).__run = {
       state: () => ({ ...this.run }),
+      jump: () => this.tryJump(),
       player: () => ({ ...this.player, offRoad: isOffRoad(this.player.offsetX) }),
       screen: () => ({ x: this.playerView.screenX, y: this.playerView.screenY }),
       seconds: () => runSeconds(this.run),
@@ -118,6 +147,21 @@ export class RunScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Leaves the ground, if the snail is on it.
+   *
+   * The sound and the stretch are triggered here rather than by watching `grounded` flip, because
+   * a launch is a thing the *player* did: reacting to the state change would also fire on any
+   * future launch the game itself causes (a bounce, a ramp), which wants a different sound.
+   */
+  private tryJump(): void {
+    if (!this.player.grounded) return
+
+    this.player = jump(this.player)
+    squashOnLaunch(this.squash, this.time.now)
+    playSfx(SFX.JUMP)
+  }
+
   /** Everything that belongs to `cameras.main` and must be hidden from `uiCamera`. */
   private worldObjects(): Phaser.GameObjects.GameObject[] {
     return [...this.world.gameObjects, ...this.playerView.gameObjects]
@@ -130,7 +174,7 @@ export class RunScene extends Phaser.Scene {
     this.world.layout(width, height)
   }
 
-  update(_time: number, delta: number): void {
+  update(time: number, delta: number): void {
     const width = this.scale.width
     const height = this.scale.height
 
@@ -138,8 +182,21 @@ export class RunScene extends Phaser.Scene {
     // costs speed, so the drag this frame has to be about where the snail is *now* — stepping the
     // run first would charge the verge a frame late, which at top speed is a whole segment.
     const steer = this.steering.read(delta)
+    const wasAirborne = !this.player.grounded
 
-    this.player = stepPlayer(this.player, { targetFraction: steer.targetFraction, active: steer.active }, delta)
+    // **The snail is frozen; the world is not.** A landing takes 45ms out of the creature and
+    // nothing else, so the road keeps scrolling underneath it — which is what reads as weight
+    // rather than as a stutter. `stepPlayer` is simply not called, so its accumulator does not
+    // advance either and the frame it thaws on is a clean one.
+    if (!isFrozen(this.playerFreeze, time)) {
+      this.player = stepPlayer(this.player, { targetFraction: steer.targetFraction, active: steer.active }, delta)
+    }
+
+    if (wasAirborne && this.player.grounded) {
+      squashOnLanding(this.squash, time)
+      addFreeze(this.playerFreeze, time, LANDING_HITSTOP_MS)
+      playSfx(SFX.LAND)
+    }
     this.run = stepRun(this.run, delta, {
       trackLength: this.world.trackLength,
       drag: isOffRoad(this.player.offsetX) ? OFFROAD_DRAG : 0,
@@ -161,6 +218,14 @@ export class RunScene extends Phaser.Scene {
     this.world.render(width, height)
     // After the world, never before: it reads this frame's segment projections out of the mesh
     // pass, exactly as `RoadSprites` does.
-    this.playerView.render(this.player, this.world.track, this.world.baseIndex, this.run.z, width, height)
+    this.playerView.render(
+      this.player,
+      this.world.track,
+      this.world.baseIndex,
+      this.run.z,
+      width,
+      height,
+      squashAt(this.squash, time, this.player.vy / JUMP_LAUNCH_V),
+    )
   }
 }

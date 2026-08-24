@@ -219,8 +219,17 @@ export function stepPlayer(
     if (clamp) clampInPlace(s)
 
     if (!s.grounded) {
+      // **The exact integral over the tick, not `y += v * dt` after updating `v`.** Under constant
+      // acceleration the position over one step is `v*dt - g*dt^2/2`, and the naive form drops
+      // that second term on every tick. It is not a rounding difference: measured against the
+      // shipped constants it peaked at **303 units instead of 320**, 5.3% low, which is enough to
+      // stop clearing an obstacle the arc was solved to clear. `verify:jump` caught it on the
+      // first run and holds the apex to 1%.
+      //
+      // Same lesson as `ui/scrollMomentum.ts`'s own note about integrating a decaying velocity —
+      // a per-step position update has to be the integral, not a sample of the velocity.
+      s.y += s.vy * dtSec - 0.5 * JUMP_GRAVITY * dtSec * dtSec
       s.vy -= JUMP_GRAVITY * dtSec
-      s.y += s.vy * dtSec
 
       if (s.y <= 0) {
         s.y = 0

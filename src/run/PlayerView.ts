@@ -19,6 +19,16 @@ import type { PlayerState } from './playerMotion'
 const DRAW_UNITS = { width: PLAYER_WIDTH / SPRITE_SCALE, height: PLAYER_BODY_H / SPRITE_SCALE }
 
 /**
+ * How dark the ground shadow is, and how small it is allowed to get.
+ *
+ * Both are read-at-a-glance numbers rather than physical ones — see the note in `render`. 0.38 is
+ * dark enough to separate from the asphalt at every theme's road colour without reading as a hole;
+ * the floor keeps the apex's ellipse at 45% of the footprint, which is still obviously an ellipse.
+ */
+const SHADOW_ALPHA = 0.38
+const SHADOW_MIN_SCALE = 0.45
+
+/**
  * The Phaser half of the player: two objects, no state of its own.
  *
  * **The snail is drawn by the same `billboardRectInto` every piece of scenery uses**, against the
@@ -51,7 +61,7 @@ export class PlayerView {
 
     // Below the snail in the display list, and below it in depth: an ellipse drawn over the
     // sprite would read as a hole rather than as a shadow.
-    this.shadow = scene.add.ellipse(0, 0, 10, 4, 0x000000, 0.32).setDepth(SHADOW_DEPTH)
+    this.shadow = scene.add.ellipse(0, 0, 10, 4, 0x000000, SHADOW_ALPHA).setDepth(SHADOW_DEPTH)
     this.sprite = scene.add
       .image(0, 0, SNAIL_TEXTURE)
       // Bottom centre: a billboard is positioned by the point where it meets the ground.
@@ -122,16 +132,22 @@ export class PlayerView {
     const groundY = this.rect.y
     const footprint = this.rect.w
 
-    // **The shadow shrinks with altitude, it does not fade.** A fading shadow is ambiguous with a
-    // dark patch of road; a smaller one is unambiguously "further away from the ground". The
-    // fraction is of the apex rather than an absolute height, so it reads the same at any scale.
+    // **The shadow shrinks with altitude and does not fade, and the alpha being constant is the
+    // load-bearing half.** The first version scaled both, which is what a shadow physically does
+    // and is exactly wrong here: the two multiply, so at the apex it was 41px wide at alpha 0.18
+    // on grey asphalt — invisible at the one moment the player needs to know how high they are.
+    // Measured in the running game, not reasoned about. A fading shadow is also ambiguous with a
+    // dark patch of road; a smaller one is unambiguously "further from the ground".
+    //
+    // The floor on the shrink is the same argument taken to the limit: past a point a smaller
+    // ellipse stops reading as height and starts reading as absence.
     const lift = Math.max(0, player.y)
-    const shrink = 1 / (1 + lift / 260)
+    const shrink = Math.max(SHADOW_MIN_SCALE, 1 / (1 + lift / 260))
 
     this.shadow.setVisible(true)
     this.shadow.setPosition(groundX, groundY)
-    this.shadow.setSize(footprint * 0.78 * shrink, footprint * 0.2 * shrink)
-    this.shadow.setAlpha(0.34 * shrink)
+    this.shadow.setSize(footprint * 0.82 * shrink, footprint * 0.22 * shrink)
+    this.shadow.setAlpha(SHADOW_ALPHA)
 
     // Then the snail itself, lifted by its world height through the same helper — so the lift is
     // in the projection's own units and shrinks with distance exactly as the sprite does.
