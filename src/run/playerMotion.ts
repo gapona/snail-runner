@@ -71,8 +71,8 @@ export interface PlayerState {
  * scripted mover has. Exactly one of them is expected — `targetOffsetX` wins if both are present.
  *
  * `active` is whether the player is pointing at all. Letting go does not freeze the snail or snap
- * it home: it retargets the spring at the centreline, so it coasts back with the same weight it
- * has everywhere else.
+ * it anywhere: it retargets the spring at wherever the snail already is, so it coasts to a stop on
+ * the line it was steered onto. See `targetFor` for why holding beats returning to the centre.
  */
 export interface PlayerInput {
   targetFraction?: number
@@ -145,15 +145,24 @@ function clampInPlace(s: Kinematics): void {
 }
 
 /** Resolves an input to a target in half-widths, clamped to somewhere the snail may actually go. */
-function targetFor(input: PlayerInput, clamp: boolean): number {
+function targetFor(input: PlayerInput, clamp: boolean, current: number): number {
   const raw =
     input.targetOffsetX !== undefined
       ? input.targetOffsetX
       : input.targetFraction !== undefined
         ? halfWidthsAtLane(input.targetFraction)
-        : 0
+        : current
 
-  if (!input.active) return 0
+  // **Letting go holds the line; it does not return to the centre.** The rail shooter's ship
+  // coasted back to a rest point, which is right for a craft you fly and let go of — and wrong
+  // here, where the line you are on *is* the decision you just made. Aiming the spring at the
+  // centreline meant that every time the player released an arrow key, or moved a mouse without
+  // holding the button, the snail slid back to the middle of the road and undid the dodge it had
+  // just been steered into. Reported as "it keeps pulling to the centre", and it was.
+  //
+  // Targeting the current position means the spring force is zero and only the damping is left, so
+  // the snail decelerates and stops where it is — still with weight, never with a snap.
+  if (!input.active) return current
   if (!clamp) return raw
 
   // **The target is clamped, and that is what makes the wall a wall rather than a stall.** A finger
@@ -202,7 +211,7 @@ export function stepPlayer(
   options: PlayerStepOptions = {},
 ): PlayerState {
   const clamp = options.clamp ?? true
-  const target = targetFor(input, clamp)
+  const target = targetFor(input, clamp, state.offsetX)
 
   const s: Kinematics = {
     offsetX: state.offsetX,

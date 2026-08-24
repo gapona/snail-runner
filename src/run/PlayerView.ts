@@ -2,7 +2,8 @@ import * as Phaser from 'phaser'
 import { billboardRectInto, createBillboardRect } from '../road/billboard'
 import { DRAW_DISTANCE, SEGMENT_LENGTH, SPRITE_SCALE } from '../road/constants'
 import { segmentPercent, surfaceHeight, trackLengthOf, type Segment } from '../road/track'
-import { wrapZ } from '../road/project'
+import { createScreenPoint, wrapZ } from '../road/project'
+import { playerGroundInto } from './playerProjection'
 import { PLAYER_BODY_H, PLAYER_DEPTH, PLAYER_WIDTH, PLAYER_Z, SHADOW_DEPTH } from './constants'
 import { createSnailTexture, SNAIL_TEXTURE } from './snailArt'
 import type { PlayerState } from './playerMotion'
@@ -55,6 +56,13 @@ export class PlayerView {
   screenY = 0
 
   private readonly rect = createBillboardRect()
+  /**
+   * The snail's own ground projection, interpolated between the segment's two edges every frame.
+   *
+   * A field rather than a local so the frame allocates nothing — the same reason `Segment` carries
+   * its own `s1`/`s2` slots instead of `project()` returning fresh objects.
+   */
+  private readonly ground = createScreenPoint()
 
   constructor(scene: Phaser.Scene) {
     createSnailTexture(scene)
@@ -106,7 +114,19 @@ export class PlayerView {
     }
 
     const segment = track[index]
-    const ground = segment.s1
+
+    if (!Number.isFinite(segment.s1.scale) || segment.s1.scale <= 0) {
+      this.sprite.setVisible(false)
+      this.shadow.setVisible(false)
+
+      return
+    }
+
+    // The snail is the one object not attached to the segment it is over, so its ground point is
+    // interpolated across that segment rather than read off its near edge — see
+    // `playerProjection.ts` for the 11.3%-per-segment pop that costs, and `verify:player` for the
+    // check that keeps it fixed.
+    const ground = playerGroundInto(this.ground, segment.s1, segment.s2, worldZ)
 
     if (!Number.isFinite(ground.scale) || ground.scale <= 0) {
       this.sprite.setVisible(false)

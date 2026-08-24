@@ -35,8 +35,9 @@ import {
 } from '../src/run/constants.ts'
 import { FIXED_STEP_MS } from '../src/race/constants.ts'
 import { billboardRectInto, createBillboardRect } from '../src/road/billboard.ts'
+import { playerGroundInto } from '../src/run/playerProjection.ts'
 import { createScreenPoint, projectInto } from '../src/road/project.ts'
-import { CAMERA_DEPTH, CAMERA_HEIGHT, ROAD_WIDTH } from '../src/road/constants.ts'
+import { CAMERA_DEPTH, CAMERA_HEIGHT, ROAD_WIDTH, SEGMENT_LENGTH } from '../src/road/constants.ts'
 
 let passed = 0
 function check(name, fn) {
@@ -54,6 +55,22 @@ function hold(fraction, ms, from = createPlayerState(), dtMs = FIXED_STEP_MS) {
   }
 
   return state
+}
+
+/** A ground point at `distance` ahead of the camera, on a flat straight road. */
+function groundAt(distance) {
+  const scale = CAMERA_DEPTH / distance
+
+  return { x: 960, y: 945 * 0.62 + scale * CAMERA_HEIGHT * 945 * 0.5, w: scale * ROAD_WIDTH * 960, scale }
+}
+
+/** The biggest frame-to-frame change in a series, as a percentage of `base`. */
+function biggestJump(values, base) {
+  let worst = 0
+
+  for (let i = 1; i < values.length; i++) worst = Math.max(worst, Math.abs(values[i] - values[i - 1]))
+
+  return (worst / base) * 100
 }
 
 console.log('src/run/playerMotion.ts -- the fixed timestep')
@@ -234,24 +251,38 @@ check('playerResponse describes the same spring the integrator runs', () => {
   )
 })
 
-check('releasing the input coasts back to the centreline without snapping', () => {
+check('releasing the input holds the line rather than returning to the centre', () => {
+  // **The defect this replaces was reported as "it keeps pulling to the centre", and it was.**
+  // The rail shooter's ship coasted back to a rest point on release, which is right for a craft
+  // you fly and let go of. Here the line you are on *is* the decision you just made, and aiming
+  // the spring at the centreline undid it every time an arrow key came up or a mouse moved without
+  // its button held.
   const held = hold(0.95, 1500)
   let released = held
 
-  for (let i = 0; i < 4; i++) released = stepPlayer(released, { targetFraction: 0.5, active: false }, FIXED_STEP_MS)
+  for (let i = 0; i < 300; i++) released = stepPlayer(released, { targetFraction: 0.5, active: false }, FIXED_STEP_MS)
 
-  assert.ok(Math.abs(released.offsetX) < Math.abs(held.offsetX), 'it did not start coming back')
-  assert.ok(Math.abs(released.offsetX) > Math.abs(held.offsetX) * 0.8, 'it snapped rather than coasted')
+  assert.ok(
+    Math.abs(released.offsetX - held.offsetX) < 0.02,
+    `released at ${held.offsetX.toFixed(3)} and drifted to ${released.offsetX.toFixed(3)}`,
+  )
+  // ...and it coasts to that stop rather than freezing on the frame the input stopped.
+  const coasting = stepPlayer(
+    stepPlayer(hold(0.2, 200), { targetFraction: 0.5, active: false }, FIXED_STEP_MS),
+    { targetFraction: 0.5, active: false },
+    FIXED_STEP_MS,
+  )
 
-  // Stepped tick by tick rather than by one 5000ms delta: `runFixedSteps` caps a single call at
-  // `MAX_SUB_STEPS` and drops the backlog, which is the right behaviour for a backgrounded tab and
-  // the wrong way to fast-forward a test. (Caught exactly that way — the first version of this
-  // check ran five ticks and reported the snail parked out at 0.64.)
-  let settled = released
+  assert.ok(coasting.vx !== 0, 'the snail stopped dead on release instead of coasting')
+})
 
-  for (let i = 0; i < 300; i++) settled = stepPlayer(settled, { targetFraction: 0.5, active: false }, FIXED_STEP_MS)
+check('...and comes to rest, rather than drifting on forever', () => {
+  // The other half: zero spring force leaves only the damping, so the velocity has to die.
+  let state = hold(0.95, 400)
 
-  assert.ok(Math.abs(settled.offsetX) < 0.01, `it settled at ${settled.offsetX} instead of the centreline`)
+  assert.ok(Math.abs(state.vx) > 0.01, 'the fixture never got moving')
+  for (let i = 0; i < 600; i++) state = stepPlayer(state, { targetFraction: 0.5, active: false }, FIXED_STEP_MS)
+  assert.ok(Math.abs(state.vx) < 1e-6, `still drifting at ${state.vx}`)
 })
 
 console.log('the walls')
@@ -373,6 +404,81 @@ check('stepPlayer takes no track, so no bend can reach it', () => {
   // were tacked on after one. That is fine for what this is guarding: a track would have to be
   // *required* to be useful, and a required parameter moves this number.
   assert.equal(stepPlayer.length, 3, 'stepPlayer grew a required argument -- if it is the track, the invariant is gone')
+})
+
+console.log('the projection under the snail')
+
+check('reading the segment its near edge would strobe the snail 11% every segment', () => {
+  // **The negative control, and the defect this section exists for.** The snail holds a fixed
+  // distance ahead of the camera, so its true projected scale never changes at all -- but the
+  // segment beneath it does, every `SEGMENT_LENGTH`. Reading `s1` therefore reports the distance
+  // to the segment's *near edge*, which sweeps a whole segment's worth and snaps back.
+  const scales = []
+
+  for (let step = 0; step < 200; step++) {
+    const cameraZ = step * 17.3 // an arbitrary, non-segment-aligned advance
+    const segmentStart = Math.floor((cameraZ + PLAYER_Z) / SEGMENT_LENGTH) * SEGMENT_LENGTH
+
+    scales.push(CAMERA_DEPTH / (segmentStart - cameraZ))
+  }
+
+  const swing = (Math.max(...scales) - Math.min(...scales)) / Math.min(...scales)
+
+  assert.ok(swing > 0.1, `the near-edge read only swings ${(swing * 100).toFixed(1)}% -- this control has stopped measuring`)
+  console.log(`    near-edge read: ${(swing * 100).toFixed(1)}% swing, ${biggestJump(scales, Math.min(...scales)).toFixed(1)}% in a single frame`)
+})
+
+check('interpolating across the segment holds the snail steady instead', () => {
+  // The fix, measured the same way. What has to be true is not that the scale is *constant* -- a
+  // linear interpolation of a reciprocal cannot be -- but that it never jumps: a smooth 1% drift
+  // is invisible, an 11% snap is a strobe.
+  const out = { x: 0, y: 0, w: 0, scale: 0 }
+  const scales = []
+
+  for (let step = 0; step < 200; step++) {
+    const cameraZ = step * 17.3
+    const worldZ = cameraZ + PLAYER_Z
+    const segmentStart = Math.floor(worldZ / SEGMENT_LENGTH) * SEGMENT_LENGTH
+    // The two edges as the mesh projects them, with no curvature so the scale is the only variable.
+    const near = groundAt(segmentStart - cameraZ)
+    const far = groundAt(segmentStart + SEGMENT_LENGTH - cameraZ)
+
+    playerGroundInto(out, near, far, worldZ)
+    scales.push(out.scale)
+  }
+
+  const base = Math.min(...scales)
+  const swing = (Math.max(...scales) - base) / base
+  const worstFrame = biggestJump(scales, base)
+
+  assert.ok(swing < 0.03, `the interpolated scale still swings ${(swing * 100).toFixed(1)}%`)
+  assert.ok(worstFrame < 0.5, `a single frame still moves it ${worstFrame.toFixed(1)}%`)
+  console.log(`    interpolated:   ${(swing * 100).toFixed(1)}% swing, ${worstFrame.toFixed(2)}% in a single frame`)
+})
+
+check('the interpolation is continuous across a segment boundary, which is what removes the snap', () => {
+  // The property that makes it work at all: `s2` of one segment is `s1` of the next, so the value
+  // either side of a boundary is the same. Sampled a hair before and after one.
+  const out = { x: 0, y: 0, w: 0, scale: 0 }
+  const boundary = SEGMENT_LENGTH * 12
+  const read = (worldZ) => {
+    const cameraZ = worldZ - PLAYER_Z
+    const segmentStart = Math.floor(worldZ / SEGMENT_LENGTH) * SEGMENT_LENGTH
+
+    return playerGroundInto(
+      out,
+      groundAt(segmentStart - cameraZ),
+      groundAt(segmentStart + SEGMENT_LENGTH - cameraZ),
+      worldZ,
+    ).scale
+  }
+  const before = read(boundary - 1e-6)
+  const after = read(boundary + 1e-6)
+
+  assert.ok(
+    Math.abs(after - before) / before < 1e-6,
+    `the scale jumps by ${(((after - before) / before) * 100).toFixed(2)}% across a segment boundary`,
+  )
 })
 
 console.log(`${passed} checks passed`)

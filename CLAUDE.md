@@ -626,6 +626,47 @@ this file for why the space had to change; what follows is what that bought.
   road actually asks. `bindSteering` does, from a pointer (absolute) or a keyboard virtual point
   (a rate), and reading `scene.input.activePointer` at the call site instead would be exactly the
   raw-input coupling that module exists to prevent.
+- **⚠ Letting go holds the line; it does not return to the centre.** The rail shooter's ship coasted
+  back to a rest point, which is right for a craft you fly and let go of, and `targetFor` inherited
+  it — so releasing an arrow key, or moving a mouse without its button held, slid the snail back to
+  the middle of the road and undid the dodge it had just been steered into. Reported as "it keeps
+  pulling to the centre", and it was. An inactive input now targets the snail's *current* offset, so
+  the spring force is zero and only the damping is left: it coasts to a stop where it is.
+- **⚠ A mouse steers by where it is; a finger steers by where it is pressed.** `bindSteering`
+  originally required `pointer.isDown` for both, which is a touch-first rule ported carelessly to a
+  desktop — the player moved the mouse and nothing happened. There is nothing else on this screen a
+  mouse could be doing, so hovering *is* the input; a touch pointer has no hover state, which is why
+  the two cannot share a rule (`pointer.wasTouch` is the branch). A mouse button coming up does not
+  end steering either; leaving the canvas does, for both.
+
+### Why the snail is projected differently from everything else
+
+**`src/run/playerProjection.ts` exists because the snail is the one object not attached to the
+ground it is over**, and getting that wrong strobed it.
+
+A tree stands at a segment's near edge, so `Segment.s1` *is* its ground point and `RoadSprites` can
+read it directly. The snail holds a fixed `PLAYER_Z` ahead of the camera: its true distance never
+changes at all, but the segment beneath it changes every `SEGMENT_LENGTH`. Read off `s1`, its
+projected scale therefore reports the distance to that segment's *near edge*, which sweeps a whole
+segment's worth and snaps back — **an 11.3% jump in size and screen row, 7 times a second at
+`SPEED_BASE` and 18 at `SPEED_CAP`.**
+
+Reported as the snail juddering when moving sideways. It was juddering when running straight too;
+sideways motion is simply where the eye could catch it.
+
+The fix is to interpolate between the segment's two edges by how far into it the snail actually is.
+`s2` of one segment is `s1` of the next, so the value is continuous across a boundary, and both
+edges already carry the curvature and hill offsets the mesh integrated this frame — which is why
+this reads them rather than projecting a point of its own. Measured, before and after:
+
+```
+near-edge read:  11.2% swing, 10.4% in a single frame
+interpolated:     0.3% swing,  0.09% in a single frame
+```
+
+`verify:player` holds both halves — the negative control has to keep failing, or the check has
+stopped measuring anything. **Anything else that is ever given a fixed `z` relative to the camera
+needs the same treatment**; anything that stands on the road does not.
 
 ## The Jump
 

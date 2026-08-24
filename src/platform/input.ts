@@ -345,14 +345,27 @@ export function bindSteering(scene: Phaser.Scene, action: string, sources: Steer
   bindKeys(sources.rightKeys, heldRight, 'right')
 
   const onPointer = (pointer: Phaser.Input.Pointer) => {
-    if (!scene.scene.isActive() || !pointer.isDown) {
+    // **A mouse steers by where it is; a finger steers by where it is pressed.** Requiring the
+    // button on both is what a touch-first implementation looks like ported carelessly to a
+    // desktop: the player moves the mouse, nothing happens, and the snail sits in the middle of
+    // the road. There is nothing else on this screen a mouse could be doing, so hovering *is* the
+    // input. A touch pointer has no hover state at all, which is why the two cannot share a rule.
+    const engaged = pointer.isDown || !pointer.wasTouch
+
+    if (!scene.scene.isActive() || !engaged) {
       pointerFraction = null
 
       return
     }
     pointerFraction = Math.min(1, Math.max(0, pointer.x / scene.scale.width))
   }
-  const onUp = () => {
+  // A mouse button coming up does not end mouse steering — the cursor is still there, and still
+  // the input. A finger coming up does, because there is nothing left to point with.
+  const onUp = (pointer: Phaser.Input.Pointer) => {
+    if (pointer.wasTouch) pointerFraction = null
+  }
+  // Leaving the canvas ends it for either kind: there is no position to steer to any more.
+  const onLeave = () => {
     pointerFraction = null
   }
 
@@ -361,12 +374,14 @@ export function bindSteering(scene: Phaser.Scene, action: string, sources: Steer
   scene.input.on(Phaser.Input.Events.POINTER_UP, onUp)
   // A pointer released outside the canvas never fires POINTER_UP; without this the snail would
   // keep steering towards wherever the finger left the frame.
-  scene.input.on(Phaser.Input.Events.POINTER_UP_OUTSIDE, onUp)
+  scene.input.on(Phaser.Input.Events.POINTER_UP_OUTSIDE, onLeave)
+  scene.input.on(Phaser.Input.Events.GAME_OUT, onLeave)
   cleanups.push(() => {
     scene.input.off(Phaser.Input.Events.POINTER_DOWN, onPointer)
     scene.input.off(Phaser.Input.Events.POINTER_MOVE, onPointer)
     scene.input.off(Phaser.Input.Events.POINTER_UP, onUp)
-    scene.input.off(Phaser.Input.Events.POINTER_UP_OUTSIDE, onUp)
+    scene.input.off(Phaser.Input.Events.POINTER_UP_OUTSIDE, onLeave)
+    scene.input.off(Phaser.Input.Events.GAME_OUT, onLeave)
   })
 
   const clear = () => {
