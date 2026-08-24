@@ -13,8 +13,25 @@
 //    and `wrapZ` on a negative `z` has to land at the *end* of the track rather than at zero --
 //    a knockback at `z = 30` would otherwise teleport the camera to the start line.
 import assert from 'node:assert/strict'
-import { createRunState, runSeconds, stepRun } from '../src/run/runState.ts'
-import { SPEED_ACCEL, SPEED_BASE, SPEED_CAP, BOOST_FACTOR } from '../src/run/constants.ts'
+import {
+  addShield,
+  applyBoost,
+  createRunState,
+  earnCoin,
+  isRunOver,
+  runSeconds,
+  stepRun,
+  takeHit,
+} from '../src/run/runState.ts'
+import {
+  BOOST_FACTOR,
+  BOOST_MS,
+  HIT_SPEED_LOSS,
+  RUN_LIVES,
+  SPEED_ACCEL,
+  SPEED_BASE,
+  SPEED_CAP,
+} from '../src/run/constants.ts'
 import { wrapZ } from '../src/road/project.ts'
 import { FIXED_STEP_MS } from '../src/race/constants.ts'
 
@@ -204,6 +221,135 @@ check('runSeconds reports the wall clock the run has actually simulated', () => 
   const state = drive(5, 60)
 
   assert.ok(Math.abs(runSeconds(state) - 5) < FIXED_STEP_MS / 1000, `5s of frames simulated ${runSeconds(state)}s`)
+})
+
+console.log('the run as an economy')
+
+check('a fresh run has all its lives, no boost and no coins', () => {
+  const state = createRunState()
+
+  assert.equal(state.lives, RUN_LIVES)
+  assert.equal(state.shields, 0)
+  assert.equal(state.coins, 0)
+  assert.equal(state.boostMsRemaining, 0)
+  assert.equal(isRunOver(state), false)
+})
+
+check('a hit costs speed, and costs it in the same unit the run is scored in', () => {
+  // **The punishment is measured in the currency of the reward**, which is what makes this one
+  // economy rather than a score with a health bar bolted to it.
+  let state = drive(20, 60)
+  const before = state.speed
+
+  state = takeHit(state)
+
+  assert.ok(state.speed < before - HIT_SPEED_LOSS * 0.9, `a hit cost only ${(before - state.speed).toFixed(0)}u/s`)
+  assert.equal(state.lives, RUN_LIVES - 1)
+  assert.equal(isRunOver(state), false)
+})
+
+check('a hit never stops the run dead', () => {
+  // At low speed the loss would go negative, and a run that reaches zero speed is a run that has
+  // silently ended without saying so.
+  let state = takeHit(createRunState())
+
+  assert.ok(state.speed > 0, 'a hit at the starting speed brought the run to a halt')
+  for (let i = 0; i < 5; i++) state = takeHit(state)
+  assert.ok(state.speed > 0)
+})
+
+check('three hits end the run, and a fourth changes nothing', () => {
+  let state = createRunState()
+
+  for (let i = 1; i <= RUN_LIVES; i++) {
+    state = takeHit(state)
+    assert.equal(state.lives, RUN_LIVES - i)
+    assert.equal(isRunOver(state), i === RUN_LIVES)
+  }
+
+  const ended = state
+
+  state = takeHit(state)
+  assert.deepEqual(state, ended, 'a hit after the run ended changed the state')
+})
+
+check('a shield absorbs one hit instead of a life, and is spent doing it', () => {
+  let state = addShield(createRunState())
+
+  assert.equal(state.shields, 1)
+
+  const speedBefore = state.speed
+
+  state = takeHit(state)
+  assert.equal(state.lives, RUN_LIVES, 'a shielded hit cost a life')
+  assert.equal(state.shields, 0, 'the shield was not spent')
+  // **A shield saves the life, not the speed**, and that is the design rather than an oversight:
+  // a pickup that absorbed everything would be the only one worth having.
+  assert.ok(state.speed < speedBefore, 'a shielded hit was free — it must still cost speed')
+
+  state = takeHit(state)
+  assert.equal(state.lives, RUN_LIVES - 1, 'the next hit did not land')
+})
+
+check('a boost raises the ceiling for BOOST_MS of simulated time, at any frame rate', () => {
+  // Counted down inside the fixed tick rather than against a wall clock, for the same reason
+  // everything else here is: a 144Hz phone must not get a shorter boost than a 60Hz one.
+  const at = (hz) => {
+    let state = applyBoost(createRunState())
+    const dt = 1000 / hz
+
+    for (let i = 0; i < Math.round((BOOST_MS / 1000) * hz); i++) {
+      state = stepRun(state, dt, { trackLength: TRACK })
+    }
+
+    return state
+  }
+
+  for (const hz of [30, 60, 144]) {
+    const state = at(hz)
+
+    assert.ok(state.boostMsRemaining <= FIXED_STEP_MS, `${hz}Hz still had ${state.boostMsRemaining.toFixed(1)}ms of boost left`)
+  }
+
+  // ...and while it is running the speed climbs past the ordinary ceiling.
+  let boosted = applyBoost(drive(30, 60))
+
+  for (let i = 0; i < 90; i++) boosted = stepRun(boosted, 1000 / 60, { trackLength: TRACK })
+  assert.ok(boosted.speed > SPEED_CAP, `boosted speed ${boosted.speed.toFixed(0)} never passed the plain cap`)
+  assert.ok(boosted.speed <= SPEED_CAP * BOOST_FACTOR + 1e-9)
+})
+
+check('a second boost taken mid-boost extends it rather than being swallowed', () => {
+  let state = applyBoost(createRunState())
+
+  for (let i = 0; i < 60; i++) state = stepRun(state, 1000 / 60, { trackLength: TRACK })
+
+  const midway = state.boostMsRemaining
+
+  assert.ok(midway < BOOST_MS && midway > 0)
+  state = applyBoost(state)
+  assert.equal(state.boostMsRemaining, BOOST_MS, 'a refresh did not restore the full duration')
+})
+
+check('coins accumulate and are never fractional', () => {
+  let state = createRunState()
+
+  for (let i = 0; i < 7; i++) state = earnCoin(state)
+  assert.equal(state.coins, 7)
+  assert.equal(state.coins, Math.floor(state.coins))
+})
+
+check('every mutator is pure', () => {
+  // The whole module is values in, values out — which is what makes the run testable here at all,
+  // and what stops a scene from half-applying a change.
+  const original = createRunState()
+  const snapshot = { ...original }
+
+  takeHit(original)
+  applyBoost(original)
+  earnCoin(original)
+  addShield(original)
+  assert.deepEqual({ ...original }, snapshot)
 })
 
 console.log(`${passed} checks passed`)

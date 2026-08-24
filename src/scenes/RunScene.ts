@@ -2,17 +2,30 @@ import * as Phaser from 'phaser'
 import { bindAction, bindSteering, type Steering } from '../platform/input'
 import { bindLayout } from '../ui/layout'
 import { WorldView } from '../run/WorldView'
-import { createRunState, runSeconds, stepRun, type RunState } from '../run/runState'
+import {
+  addShield,
+  applyBoost,
+  createRunState,
+  earnCoin,
+  isRunOver,
+  runSeconds,
+  stepRun,
+  takeHit,
+  type RunState,
+} from '../run/runState'
 import { createPlayerState, isOffRoad, jump, playerScreenFraction, stepPlayer, type PlayerState } from '../run/playerMotion'
 import { PlayerView } from '../run/PlayerView'
 import { createSquashState, squashAt, squashOnLanding, squashOnLaunch, type SquashState } from '../run/squash'
 import { addFreeze, isFrozen, type Freezable } from '../run/hitstop'
 import { hits, placeRunObstacles, type Obstacle } from '../run/obstacles'
 import { ObstacleSprites } from '../run/ObstacleSprites'
+import { placePickups, reaches, type Pickup } from '../run/pickups'
+import { PickupSprites } from '../run/PickupSprites'
+import { Hud } from '../run/Hud'
+import { createRng } from '../race/rng'
 import {
   HITSTOP_MS,
   HIT_INVULNERABLE_MS,
-  HIT_SPEED_LOSS,
   JUMP_LAUNCH_V,
   KEYBOARD_POINT_SPEED,
   LANDING_HITSTOP_MS,
@@ -22,6 +35,7 @@ import {
   SPEED_BASE,
 } from '../run/constants'
 import { SEGMENT_LENGTH } from '../road/constants'
+import { streakDetuneCents, STREAK_STEPS } from '../audio/sfx'
 import { wrapZ } from '../road/project'
 import { playSfx } from '../audio/audio'
 import { SFX } from '../audio/sfx'
@@ -70,13 +84,25 @@ export class RunScene extends Phaser.Scene {
    * obstacle id, holding the lap number, so each obstacle is live again next time round.
    */
   private resolvedOnLap!: Map<number, number>
+  /**
+   * The pickups, and the same segment index the obstacles get.
+   *
+   * `taken` is a plain boolean here where the obstacles need a per-lap key: a collected pickup is
+   * gone for the rest of the run, which is what makes a stretch already cleared feel cleared.
+   */
+  private pickups!: Pickup[]
+  private pickupsBySegment!: Map<number, Pickup[]>
+  private pickupSprites!: PickupSprites
+  private hud!: Hud
   /** Where the snail was along the track last frame, for the swept collision test. */
   private previousPlayerZ = 0
   private invulnerableUntil = 0
   /** One number a whole run is reproducible from: the scenery scatter and the obstacle layout. */
   private runSeed = 0
-  /** How many times this run has been hit. The HUD and the run's end are chunk 5's. */
+  /** How many times this run has been hit. Reported by the DEV hook; the HUD reads `run.lives`. */
   private hitCount = 0
+  /** Coins taken in a row, for the rising collection tone. Reset by anything that is not a coin. */
+  private streak = 0
   /**
    * The player's own hitstop deadline — `hitstop.ts`'s `Freezable`, on the snail and nothing else.
    *
@@ -99,6 +125,7 @@ export class RunScene extends Phaser.Scene {
     this.resolvedOnLap = new Map()
     this.invulnerableUntil = 0
     this.hitCount = 0
+    this.streak = 0
 
     // The ground, the scenery, the sky and the camera that rides through them — all of it in
     // `WorldView`, which `MainMenu` builds the same way. Two scenes drawing the same world from
@@ -117,16 +144,30 @@ export class RunScene extends Phaser.Scene {
     // one number.
     this.obstacles = placeRunObstacles(this.runSeed, this.world.trackLength)
     this.obstaclesBySegment = indexBySegment(this.obstacles, this.world.track.length)
+    // Laid *after* the obstacles and against them — see `sideAwayFrom`. A pickup in the gap the
+    // player was already threading costs nothing, and a pickup that costs nothing is scenery.
+    this.pickups = placePickups({
+      rng: createRng(this.runSeed ^ 0x5eed),
+      fromZ: SEGMENT_LENGTH * 20,
+      toZ: this.world.trackLength,
+      trackLength: this.world.trackLength,
+      obstacles: this.obstacles,
+    })
+    this.pickupsBySegment = indexBySegment(this.pickups, this.world.track.length)
     this.previousPlayerZ = PLAYER_Z
 
     // Built after the world, because they draw over it and the display list is the draw order.
     this.obstacleSprites = new ObstacleSprites(this)
+    this.pickupSprites = new PickupSprites(this)
     this.playerView = new PlayerView(this)
+    // Screen-space, so it goes on `uiCamera` and is hidden from the world camera.
+    this.hud = new Hud(this)
 
     // World/UI split per CLAUDE.md "Responsive Layout". Nothing screen-space exists yet; the
     // snail is a *world* object and belongs on `cameras.main` with the road.
     this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height)
     this.uiCamera.ignore(this.worldObjects())
+    this.cameras.main.ignore(this.hud.gameObjects)
 
     // Steering is an *absolute* axis — a runner steers to a place, not in a direction — so it is
     // `bindSteering` rather than `bindHeldAction`. See `platform/input.ts` for why that shape had
@@ -152,6 +193,8 @@ export class RunScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.playerView.destroy()
       this.obstacleSprites.destroy()
+      this.pickupSprites.destroy()
+      this.hud.destroy()
       this.world.destroy()
     })
 
@@ -240,6 +283,59 @@ export class RunScene extends Phaser.Scene {
   }
 
   /**
+   * Collects anything the snail passed through this frame.
+   *
+   * Swept over the same interval as the obstacles and for the same reason. A pickup is *taken*
+   * rather than resolved-per-lap: it is gone for the rest of the run, which is what makes a stretch
+   * the player has already cleared feel cleared.
+   */
+  private collectPickups(fromZ: number, toZ: number): void {
+    const first = Math.floor(fromZ / SEGMENT_LENGTH) - 1
+    const last = Math.floor(toZ / SEGMENT_LENGTH)
+    const segmentCount = this.world.track.length
+
+    for (let index = first; index <= last; index++) {
+      const here = this.pickupsBySegment.get(((index % segmentCount) + segmentCount) % segmentCount)
+
+      if (!here) continue
+
+      for (const pickup of here) {
+        if (pickup.taken || toZ < pickup.z || fromZ > pickup.z + SEGMENT_LENGTH) continue
+        if (!reaches(this.player, pickup)) continue
+
+        pickup.taken = true
+        if (pickup.kind === 'boost') this.run = applyBoost(this.run)
+        else if (pickup.kind === 'shield') this.run = addShield(this.run)
+        else this.run = earnCoin(this.run)
+        // The streak ladder: each coin in a row sounds one interval higher, so the player can hear
+        // how many they have taken without looking away from the road. Reset by a gap.
+        playSfx(pickup.kind === 'coin' ? SFX.STREAK : SFX.PICKUP, { detune: this.streakDetune(pickup.kind) })
+      }
+    }
+  }
+
+  /**
+   * How far to detune the next collection sound, in cents.
+   *
+   * Only coins climb; a boost or a shield is a *different* event and resets the run of them, which
+   * is what stops the ladder from encoding "how many things did I touch" instead of "how many coins
+   * in a row did I get".
+   */
+  private streakDetune(kind: string): number {
+    if (kind !== 'coin') {
+      this.streak = 0
+
+      return 0
+    }
+
+    const step = Math.min(this.streak, STREAK_STEPS - 1)
+
+    this.streak++
+
+    return streakDetuneCents(step)
+  }
+
+  /**
    * What a hit costs: speed, a moment of the snail's own time, and a window of not being hit again.
    *
    * **Speed, not a life.** The punishment is measured in the same unit as the reward, which is what
@@ -248,11 +344,28 @@ export class RunScene extends Phaser.Scene {
    */
   private takeHit(now: number): void {
     this.hitCount++
+    this.streak = 0
     this.invulnerableUntil = now + HIT_INVULNERABLE_MS
     addFreeze(this.playerFreeze, now, HITSTOP_MS)
-    this.run = { ...this.run, speed: Math.max(SPEED_BASE * 0.4, this.run.speed - HIT_SPEED_LOSS) }
+    // The whole penalty is one call into the pure module — speed, shields and lives together, so
+    // there is no half-applied state a scene could leave behind.
+    this.run = takeHit(this.run)
     this.cameras.main.shake(180, 0.008)
     playSfx(SFX.HIT)
+
+    if (isRunOver(this.run)) this.endRun()
+  }
+
+  /**
+   * Ends the run and hands over to the result screen.
+   *
+   * **Paused, not stopped.** The result panel is drawn over a frozen road rather than over black:
+   * the world is what the player was just in, and cutting to an empty background makes the run
+   * feel deleted rather than finished. Same overlay shape as `Settings` and `Shop`.
+   */
+  private endRun(): void {
+    this.scene.pause()
+    this.scene.launch('RunOver', { distance: this.run.distance, coins: this.run.coins })
   }
 
   /**
@@ -272,7 +385,12 @@ export class RunScene extends Phaser.Scene {
 
   /** Everything that belongs to `cameras.main` and must be hidden from `uiCamera`. */
   private worldObjects(): Phaser.GameObjects.GameObject[] {
-    return [...this.world.gameObjects, ...this.obstacleSprites.gameObjects, ...this.playerView.gameObjects]
+    return [
+      ...this.world.gameObjects,
+      ...this.obstacleSprites.gameObjects,
+      ...this.pickupSprites.gameObjects,
+      ...this.playerView.gameObjects,
+    ]
   }
 
   layout(width: number, height: number): void {
@@ -280,6 +398,7 @@ export class RunScene extends Phaser.Scene {
     // is the camera model; a Phaser zoom on top of it would fight the horizon.
     this.uiCamera.setViewport(0, 0, width, height)
     this.world.layout(width, height)
+    this.hud.layout(width, height)
   }
 
   update(time: number, delta: number): void {
@@ -306,10 +425,13 @@ export class RunScene extends Phaser.Scene {
     const lap = Math.floor((this.run.distance + PLAYER_Z) / this.world.trackLength)
 
     if (playerZ >= this.previousPlayerZ) {
+      this.collectPickups(this.previousPlayerZ, playerZ)
       this.resolveObstacles(this.previousPlayerZ, playerZ, lap, time)
     } else {
       // The frame crossed the loop seam. Two calls rather than one wrapped comparison: the second
       // is a different lap, and an obstacle straddling the seam must be live in both.
+      this.collectPickups(this.previousPlayerZ, this.world.trackLength)
+      this.collectPickups(0, playerZ)
       this.resolveObstacles(this.previousPlayerZ, this.world.trackLength, lap - 1, time)
       this.resolveObstacles(0, playerZ, lap, time)
     }
@@ -347,6 +469,16 @@ export class RunScene extends Phaser.Scene {
       width,
       height,
     )
+    this.pickupSprites.render(
+      this.pickupsBySegment,
+      this.world.track,
+      this.world.baseIndex,
+      this.world.clipY,
+      width,
+      height,
+      time,
+    )
+    this.hud.update(this.run, width)
     // After the world, never before: it reads this frame's segment projections out of the mesh
     // pass, exactly as `RoadSprites` does.
     this.playerView.render(
@@ -369,15 +501,15 @@ export class RunScene extends Phaser.Scene {
  * `Segment.sprites` gives the scenery, built here rather than on the segment because `src/road/`
  * does not know obstacles exist and is not going to be taught.
  */
-function indexBySegment(obstacles: readonly Obstacle[], segmentCount: number): Map<number, Obstacle[]> {
-  const index = new Map<number, Obstacle[]>()
+function indexBySegment<T extends { z: number }>(items: readonly T[], segmentCount: number): Map<number, T[]> {
+  const index = new Map<number, T[]>()
 
-  for (const obstacle of obstacles) {
-    const key = Math.floor(obstacle.z / SEGMENT_LENGTH) % segmentCount
+  for (const item of items) {
+    const key = Math.floor(item.z / SEGMENT_LENGTH) % segmentCount
     const list = index.get(key)
 
-    if (list) list.push(obstacle)
-    else index.set(key, [obstacle])
+    if (list) list.push(item)
+    else index.set(key, [item])
   }
 
   return index

@@ -3,6 +3,7 @@ import { Boot } from './scenes/Boot'
 import { Preloader } from './scenes/Preloader'
 import { MainMenu } from './scenes/MainMenu'
 import { RunScene } from './scenes/RunScene'
+import { RunOver } from './scenes/RunOver'
 import { Settings } from './scenes/Settings'
 import { Shop } from './scenes/Shop'
 
@@ -22,5 +23,5 @@ export const GameConfig: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [Boot, Preloader, MainMenu, RunScene, Settings, Shop],
+  scene: [Boot, Preloader, MainMenu, RunScene, RunOver, Settings, Shop],
 }

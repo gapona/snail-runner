@@ -21,7 +21,15 @@
 import { runFixedSteps } from '../race/fixedStep'
 import { FIXED_STEP_MS } from '../race/constants'
 import { wrapZ } from '../road/project'
-import { SPEED_ACCEL, SPEED_BASE, SPEED_CAP } from './constants'
+import {
+  BOOST_FACTOR,
+  BOOST_MS,
+  HIT_SPEED_LOSS,
+  RUN_LIVES,
+  SPEED_ACCEL,
+  SPEED_BASE,
+  SPEED_CAP,
+} from './constants'
 
 export interface RunState {
   /** Where the camera is on the closed track, in world units, always `[0, trackLength)`. */
@@ -40,18 +48,37 @@ export interface RunState {
    * to live in the state. Callers treat it as opaque.
    */
   stepRemainderMs: number
+  /** Hits left before the run ends. */
+  lives: number
+  /** One-hit absorbers picked up along the way. Spent before a life is. */
+  shields: number
+  /** Coins collected this run. Banked into the save when the run ends. */
+  coins: number
+  /**
+   * How much boost is left, in **simulated** milliseconds.
+   *
+   * Counted down inside the fixed tick rather than against a `Date.now()` deadline, for the same
+   * reason everything else here is: a wall-clock deadline gives a backgrounded tab a boost that
+   * expires while nothing is being drawn, and gives a 144Hz phone the same boost over a different
+   * number of frames. Ticking it here makes its duration a property of the simulation.
+   */
+  boostMsRemaining: number
+  /** Set once the last life is gone. Nothing else in this module writes it. */
+  over: boolean
 }
 
 export interface RunStepOptions {
   /** Length of the closed circuit, in world units — `WorldView.trackLength`. */
   trackLength: number
   /**
-   * The ceiling the speed is currently chasing. Defaults to `SPEED_CAP`.
+   * The ceiling the speed is currently chasing. Defaults to `SPEED_CAP`, times `BOOST_FACTOR`
+   * while a boost is running.
    *
-   * **A parameter rather than a constant read inside**, because the boost pickup (chunk 5) is
-   * exactly "the ceiling is higher for three seconds" and the fall-back afterwards has to use the
-   * same curve in the other direction. A boost implemented as an impulse on `speed` instead would
-   * be worth almost nothing taken just after a hit, which is when the player most needs it.
+   * **A parameter rather than a constant read inside**, so a caller can override it — but the
+   * boost does not use that: it is state, ticked down here, precisely so its duration is
+   * frame-rate independent. What the parameter is for is the difficulty curve (chunk 6) and the
+   * tests. A boost implemented as an impulse on `speed` instead of a raised ceiling would be worth
+   * almost nothing taken just after a hit, which is exactly when the player most needs it.
    */
   speedCap?: number
   /**
@@ -67,7 +94,70 @@ export interface RunStepOptions {
 
 /** A run at the start line, at `SPEED_BASE`, having travelled nothing. */
 export function createRunState(): RunState {
-  return { z: 0, distance: 0, speed: SPEED_BASE, ticks: 0, stepRemainderMs: 0 }
+  return {
+    z: 0,
+    distance: 0,
+    speed: SPEED_BASE,
+    ticks: 0,
+    stepRemainderMs: 0,
+    lives: RUN_LIVES,
+    shields: 0,
+    coins: 0,
+    boostMsRemaining: 0,
+    over: false,
+  }
+}
+
+/** Whether the run has ended. A separate reader so nothing has to know the shape of the flag. */
+export function isRunOver(state: RunState): boolean {
+  return state.over
+}
+
+/**
+ * What hitting something costs.
+ *
+ * **Speed, not a life — until there is no shield left, and then both.** That ordering is the whole
+ * economy: the reward for playing well is speed, and the punishment for playing badly is measured
+ * in the same unit, so a run is one currency rather than a score with a health bar bolted to it.
+ * The three lives are the ceiling on carelessness, not the medium of exchange.
+ *
+ * The speed floor is not decoration: a hit at the starting speed would otherwise take the run
+ * below zero, and a run at zero speed has ended without saying so.
+ *
+ * A shield is spent *instead of* a life and does not save the speed. Absorbing everything would
+ * make it the only pickup worth having.
+ */
+export function takeHit(state: RunState): RunState {
+  if (state.over) return state
+
+  const speed = Math.max(SPEED_BASE * 0.4, state.speed - HIT_SPEED_LOSS)
+
+  if (state.shields > 0) return { ...state, speed, shields: state.shields - 1 }
+
+  const lives = state.lives - 1
+
+  return { ...state, speed, lives, over: lives <= 0 }
+}
+
+/** Grants a one-hit absorber. */
+export function addShield(state: RunState): RunState {
+  return { ...state, shields: state.shields + 1 }
+}
+
+/**
+ * Starts (or refreshes) a boost.
+ *
+ * **Refreshes to the full duration rather than adding to it.** Stacking would let a lucky stretch
+ * of pickups bank a boost that outlives the stretch that earned it, and the pickup would stop
+ * being about the moment it was taken in.
+ */
+export function applyBoost(state: RunState): RunState {
+  return { ...state, boostMsRemaining: BOOST_MS }
+}
+
+/** Banks one coin. */
+export function earnCoin(state: RunState): RunState {
+  return { ...state, coins: state.coins + 1 }
 }
 
 /**
@@ -96,14 +186,20 @@ export function runSeconds(state: RunState): number {
  * so the outside form would be wrong by the integral of the change.
  */
 export function stepRun(state: RunState, dtMs: number, options: RunStepOptions): RunState {
-  const cap = options.speedCap ?? SPEED_CAP
+  const base = options.speedCap ?? SPEED_CAP
   const drag = options.drag ?? 0
 
   let speed = state.speed
   let distance = state.distance
   let ticks = state.ticks
+  let boostMsRemaining = state.boostMsRemaining
 
   const remainder = runFixedSteps(state.stepRemainderMs, dtMs, (dtSec) => {
+    // The boost is counted down in the same tick it raises the ceiling in, so the last tick of a
+    // boost is still boosted and the first tick after it is not — no off-by-one frame either way.
+    const cap = boostMsRemaining > 0 ? base * BOOST_FACTOR : base
+
+    boostMsRemaining = Math.max(0, boostMsRemaining - dtSec * 1000)
     speed += (cap - speed) * SPEED_ACCEL * dtSec
     if (drag > 0) speed -= speed * drag * dtSec
     // Nothing may push the run backwards: the ground scrolls one way, and a negative speed would
@@ -114,11 +210,13 @@ export function stepRun(state: RunState, dtMs: number, options: RunStepOptions):
   })
 
   return {
+    ...state,
     // The only place the track's closure is applied. `distance` above is deliberately left alone.
     z: wrapZ(distance, options.trackLength),
     distance,
     speed,
     ticks,
+    boostMsRemaining,
     stepRemainderMs: remainder,
   }
 }

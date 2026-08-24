@@ -78,6 +78,12 @@ const en = {
   // RACER` described a racer, which this game stopped being at the pivot.
   gameTitle: 'SNAIL RUNNER',
   play: 'Play',
+  /** The run's own screen: what a run produced and the two things to do next. */
+  runOver: 'Run over',
+  newBest: 'New best!',
+  best: 'Best',
+  menu: 'Menu',
+  doubleCoins: '🎬 Double coins',
   waveIncoming: 'Wave {n} of {total} in {seconds}',
   // The endless run: no total, because there is not one. See `WaveBanner.announce`.
   waveEndless: 'Endless',
@@ -200,6 +206,11 @@ const es: Record<StringKey, string> = {
   // it, and both hold the same word on purpose.
   gameTitle: 'SNAIL RUNNER',
   play: 'Jugar',
+  runOver: 'Fin del recorrido',
+  newBest: '¡Nuevo récord!',
+  best: 'Mejor',
+  menu: 'Menú',
+  doubleCoins: '🎬 Duplicar monedas',
   waveIncoming: 'Oleada {n} de {total} en {seconds}',
   waveEndless: 'Sin fin',
   levelEndless: 'Sin fin',
