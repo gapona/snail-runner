@@ -99,6 +99,8 @@ export class RunScene extends Phaser.Scene {
   private invulnerableUntil = 0
   /** One number a whole run is reproducible from: the scenery scatter and the obstacle layout. */
   private runSeed = 0
+  /** Which lap the current obstacle layout was generated for. See `layLap`. */
+  private laidLap = 0
   /** How many times this run has been hit. Reported by the DEV hook; the HUD reads `run.lives`. */
   private hitCount = 0
   /** Coins taken in a row, for the rising collection tone. Reset by anything that is not a coin. */
@@ -142,18 +144,7 @@ export class RunScene extends Phaser.Scene {
     // The obstacles, laid along the finished track and *proved passable* before they are used —
     // see `obstacles.ts`. Seeded from the same draw as the scenery so a run is reproducible from
     // one number.
-    this.obstacles = placeRunObstacles(this.runSeed, this.world.trackLength)
-    this.obstaclesBySegment = indexBySegment(this.obstacles, this.world.track.length)
-    // Laid *after* the obstacles and against them — see `sideAwayFrom`. A pickup in the gap the
-    // player was already threading costs nothing, and a pickup that costs nothing is scenery.
-    this.pickups = placePickups({
-      rng: createRng(this.runSeed ^ 0x5eed),
-      fromZ: SEGMENT_LENGTH * 20,
-      toZ: this.world.trackLength,
-      trackLength: this.world.trackLength,
-      obstacles: this.obstacles,
-    })
-    this.pickupsBySegment = indexBySegment(this.pickups, this.world.track.length)
+    this.layLap(0)
     this.previousPlayerZ = PLAYER_Z
 
     // Built after the world, because they draw over it and the display list is the draw order.
@@ -280,6 +271,34 @@ export class RunScene extends Phaser.Scene {
         return
       }
     }
+  }
+
+  /**
+   * Lays out one lap of obstacles and pickups, at the difficulty the run has reached.
+   *
+   * **Called again every time the run wraps, and that is not an optimisation.** The renderer and
+   * the collision both index by *segment*, so a layout generated across a distance longer than the
+   * lap would put two obstacles on the same piece of ground. Regenerating per lap keeps one
+   * obstacle per place and lets `difficultyAt` see how far the run has actually come — see
+   * `placeRunObstacles`.
+   */
+  private layLap(lapOffset: number): void {
+    this.obstacles = placeRunObstacles(this.runSeed, this.world.trackLength, lapOffset)
+    this.obstaclesBySegment = indexBySegment(this.obstacles, this.world.track.length)
+    // Laid *after* the obstacles and against them — see `sideAwayFrom`. A pickup in the gap the
+    // player was already threading costs nothing, and a pickup that costs nothing is scenery.
+    this.pickups = placePickups({
+      rng: createRng((this.runSeed ^ 0x5eed) + Math.round(lapOffset / SEGMENT_LENGTH)),
+      fromZ: lapOffset === 0 ? SEGMENT_LENGTH * 20 : 0,
+      toZ: this.world.trackLength,
+      trackLength: this.world.trackLength,
+      obstacles: this.obstacles,
+    })
+    this.pickupsBySegment = indexBySegment(this.pickups, this.world.track.length)
+    // A fresh set of ids means the old lap's resolutions mean nothing, and keeping them would
+    // disarm whatever happened to reuse a number.
+    this.resolvedOnLap.clear()
+    this.laidLap = Math.floor(lapOffset / this.world.trackLength)
   }
 
   /**
@@ -423,6 +442,9 @@ export class RunScene extends Phaser.Scene {
     // the player actually saw. The snail's own z is the camera's plus the constant it lives at.
     const playerZ = wrapZ(this.run.z + PLAYER_Z, this.world.trackLength)
     const lap = Math.floor((this.run.distance + PLAYER_Z) / this.world.trackLength)
+
+    // A new lap needs a new layout, at whatever difficulty the run has reached — see `layLap`.
+    if (lap !== this.laidLap) this.layLap(lap * this.world.trackLength)
 
     if (playerZ >= this.previousPlayerZ) {
       this.collectPickups(this.previousPlayerZ, playerZ)

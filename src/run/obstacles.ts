@@ -26,7 +26,9 @@
  */
 import { createRng } from '../race/rng'
 import { SEGMENT_LENGTH } from '../road/constants'
+import { difficultyAt, DIFFICULTY_TAU_Z } from './difficulty'
 import {
+  BOOST_FACTOR,
   JUMP_AIR_MS,
   JUMP_APEX,
   OBSTACLE_BANDS,
@@ -91,6 +93,18 @@ export function hits(body: Body, obstacle: Pick<Obstacle, 'offsetX' | 'halfWidth
 
   return body.y < obstacle.yHigh && obstacle.yLow < body.y + PLAYER_BODY_H
 }
+
+/**
+ * The fastest the game can ever go, in world units per second.
+ *
+ * **`SPEED_CAP` is not that number, and treating it as one was a real hole.** A boost multiplies
+ * the ceiling by `BOOST_FACTOR`, so the actual top speed is 5760 units/s, not 3600. The first
+ * version of the floor below was solved at `SPEED_CAP`, which meant that during a boost — a state
+ * the player *chooses*, by taking a pickup — the reaction budget silently fell to 281ms against a
+ * 450ms floor. The game would have been telling the truth about its difficulty curve and lying
+ * about the one moment the player felt fastest.
+ */
+export const MAX_ATTAINABLE_SPEED = SPEED_CAP * BOOST_FACTOR
 
 export interface ObstacleRow {
   z: number
@@ -163,11 +177,11 @@ export function passableLine(row: readonly Obstacle[]): Line | null {
 /**
  * How far the snail travels while airborne at top speed, in world units.
  *
- * The window a jump commits to. At `SPEED_BASE` it is 4.5 segments and at `SPEED_CAP` eleven, and
- * the proof has to assume the worst of the two — a layout that only works slowly is a layout that
- * breaks later in the same run.
+ * The window a jump commits to. At `SPEED_BASE` it is 4.5 segments and at `MAX_ATTAINABLE_SPEED`
+ * eighteen, and the proof has to assume the worst — a layout that only works slowly is a layout
+ * that breaks the first time the player takes a boost.
  */
-export const FLIGHT_LENGTH_Z = (JUMP_AIR_MS / 1000) * SPEED_CAP
+export const FLIGHT_LENGTH_Z = (JUMP_AIR_MS / 1000) * MAX_ATTAINABLE_SPEED
 
 /**
  * Whether a whole stretch can be got through.
@@ -220,15 +234,17 @@ export interface PlacementOptions {
   overheadShare: number
 }
 
+
 /**
  * The least distance between two rows, in world units.
  *
- * **`REACTION_MS` at `SPEED_CAP`, and it is the same floor for the same reason.** Two rows closer
- * together than the time it takes to read one are not two decisions, they are one decision the
- * player was not shown. Everything the difficulty curve is allowed to raise (density, the share of
- * each class) leaves this alone — see `REACTION_MS`.
+ * **`REACTION_MS` at the fastest the game can go**, which is `MAX_ATTAINABLE_SPEED` and not
+ * `SPEED_CAP` — see above. Two rows closer together than the time it takes to read one are not two
+ * decisions, they are one decision the player was not shown. Everything the difficulty curve is
+ * allowed to raise (density, the share of each class) leaves this alone — see `REACTION_MS`, and
+ * `difficulty.ts` for the curve that is bounded by it.
  */
-export const MIN_ROW_GAP_Z = (REACTION_MS / 1000) * SPEED_CAP
+export const MIN_ROW_GAP_Z = (REACTION_MS / 1000) * MAX_ATTAINABLE_SPEED
 
 /** How many obstacles one row may hold. More than three cannot leave a gap on this road. */
 const MAX_PER_ROW = 3
@@ -312,19 +328,37 @@ function clamp01(value: number): number {
 }
 
 /**
- * A stretch of obstacles for one run, from a seed.
+ * One lap's worth of obstacles, with the difficulty rising along it.
  *
- * Convenience over `placeObstacles` for the scene, which has a seed and a track length and no
- * opinion about anything else. `difficulty.ts` (chunk 6) is what turns distance into the shares
- * and the density; until then this is the flat middle of the range.
+ * **The track loops and the difficulty does not, and that is the whole problem this solves.** The
+ * obvious version — lay obstacles across the *distance* the run will travel — puts two of them on
+ * the same piece of ground the moment the distance passes the lap length, because the renderer and
+ * the collision both index by segment. So a lap is generated at a time, in bands, and the scene
+ * regenerates when the run wraps (`lapOffset` is how far the run had already come at the start of
+ * this lap).
+ *
+ * That the whole curve fits inside one lap is what makes this work rather than merely function:
+ * `DIFFICULTY_TAU_Z` is 90 000 units against a 286 800-unit lap, so a run is at 96% of the
+ * ceiling by the time it first wraps and every later lap is generated at the saturated end. The
+ * seam is not a difficulty step because there is nothing left to step to.
  */
-export function placeRunObstacles(seed: number, trackLength: number): Obstacle[] {
-  return placeObstacles({
-    rng: createRng(seed),
-    fromZ: SEGMENT_LENGTH * 30,
-    toZ: trackLength,
-    density: 0.45,
-    blockingShare: 0.22,
-    overheadShare: 0.16,
-  })
+export function placeRunObstacles(seed: number, trackLength: number, lapOffset = 0): Obstacle[] {
+  const rng = createRng(seed + Math.round(lapOffset / SEGMENT_LENGTH))
+  const placed: Obstacle[] = []
+  const bandCount = Math.max(1, Math.ceil(trackLength / DIFFICULTY_TAU_Z))
+  const bandLength = trackLength / bandCount
+
+  for (let band = 0; band < bandCount; band++) {
+    // The first stretch of the very first lap is left clear: a player dropped straight into a row
+    // has been given a reaction test, not a game.
+    const fromZ = band === 0 && lapOffset === 0 ? SEGMENT_LENGTH * 30 : band * bandLength
+    const toZ = (band + 1) * bandLength
+    // Sampled at the *middle* of the band, so a band is neither uniformly at its start's
+    // difficulty nor at its end's — sampling at an edge would make every boundary a visible step.
+    const difficulty = difficultyAt(lapOffset + (fromZ + toZ) / 2)
+
+    placed.push(...placeObstacles({ rng, fromZ, toZ, ...difficulty }))
+  }
+
+  return placed
 }

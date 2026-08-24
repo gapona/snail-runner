@@ -18,11 +18,13 @@ import assert from 'node:assert/strict'
 import {
   createObstacle,
   hits,
+  MAX_ATTAINABLE_SPEED,
   obstacleRows,
   passableLine,
   placeObstacles,
   provePassable,
 } from '../src/run/obstacles.ts'
+import { difficultyAt, difficultyProgress, DIFFICULTY_TAU_Z } from '../src/run/difficulty.ts'
 import {
   JUMP_APEX,
   OBSTACLE_BANDS,
@@ -235,7 +237,7 @@ check('rows are never closer together than the reaction budget allows', () => {
     overheadShare: 0.25,
   })
   const rows = obstacleRows(obstacles)
-  const minGap = (REACTION_MS / 1000) * SPEED_CAP
+  const minGap = (REACTION_MS / 1000) * MAX_ATTAINABLE_SPEED
   let worst = Infinity
 
   for (let i = 1; i < rows.length; i++) worst = Math.min(worst, rows[i].z - rows[i - 1].z)
@@ -251,14 +253,15 @@ check('rows are never closer together than the reaction budget allows', () => {
 
 console.log('readability')
 
-check('every class is readable for at least REACTION_MS before impact at SPEED_CAP', () => {
+check('every class is readable for at least REACTION_MS before impact, at the fastest the game goes', () => {
   // **Distance is never the binding constraint; apparent size is.** The draw distance is 300
-  // segments, which at top speed is 16.7 seconds of warning -- so what has to be checked is
-  // whether the thing is big enough on the frame to be *seen* that far out, not whether it is
-  // drawn at all. Measured through the projection itself, at the shortest viewport the game
-  // supports.
+  // segments, which even at boosted top speed is ten seconds of warning -- so what has to be
+  // checked is whether the thing is big enough on the frame to be *seen* that far out, not whether
+  // it is drawn at all. Measured through the projection itself, at the shortest viewport the game
+  // supports, and at `MAX_ATTAINABLE_SPEED` rather than `SPEED_CAP`: a boosted player is further
+  // from the obstacle when the budget starts, so this is the harder case.
   const screenHeight = 390 // a landscape phone: the least vertical resolution to read anything in
-  const distance = (REACTION_MS / 1000) * SPEED_CAP
+  const distance = (REACTION_MS / 1000) * MAX_ATTAINABLE_SPEED
   const scale = CAMERA_DEPTH / distance
   const MIN_READABLE_PX = 8
 
@@ -275,7 +278,7 @@ check('every class is readable for at least REACTION_MS before impact at SPEED_C
 })
 
 check('an obstacle is one segment deep, so crossing it is an instant rather than a state', () => {
-  const crossingMs = (OBSTACLE_DEPTH / SPEED_CAP) * 1000
+  const crossingMs = (OBSTACLE_DEPTH / MAX_ATTAINABLE_SPEED) * 1000
 
   assert.equal(OBSTACLE_DEPTH, SEGMENT_LENGTH)
   assert.ok(crossingMs < 100, `crossing takes ${crossingMs.toFixed(0)}ms — long enough to need contact resolution`)
@@ -300,6 +303,97 @@ check('nothing is ever placed where the snail cannot reach it or avoid it', () =
     assert.ok(obstacle.yHigh > obstacle.yLow, 'an obstacle with no height')
     assert.ok(obstacle.yLow < PLAYER_BODY_H + JUMP_APEX, 'an obstacle above anything the snail can reach')
   }
+})
+
+console.log('the difficulty curve')
+
+check('every knob rises with distance and saturates, and none of them is the floor', () => {
+  const samples = [0, 30_000, 90_000, 180_000, 360_000, 900_000]
+  let previous = difficultyAt(0)
+
+  for (const distance of samples.slice(1)) {
+    const here = difficultyAt(distance)
+
+    assert.ok(here.density >= previous.density, 'density went down')
+    assert.ok(here.blockingShare >= previous.blockingShare, 'the unjumpable share went down')
+    assert.ok(here.overheadShare >= previous.overheadShare, 'the overhead share went down')
+    previous = here
+  }
+
+  // Saturating, not ramping: an endless game must not have a distance past which the road stops
+  // responding to the player.
+  const far = difficultyAt(10_000_000)
+
+  assert.ok(far.density < 1 && far.blockingShare < 0.5 && far.overheadShare < 0.4)
+  assert.ok(difficultyProgress(DIFFICULTY_TAU_Z) > 0.62 && difficultyProgress(DIFFICULTY_TAU_Z) < 0.64)
+})
+
+check('500 simulated runs, and the reaction budget never falls below REACTION_MS', () => {
+  // **The check the whole curve is bounded by.** Every knob is allowed to move; the time the player
+  // gets to read a row is not. Measured at the fastest the game can actually go -- which is
+  // `MAX_ATTAINABLE_SPEED`, not `SPEED_CAP`, because a boost is a state the player chooses.
+  //
+  // Printed as a table because the numbers are the point: a curve nobody can see is a curve nobody
+  // can tune.
+  const bands = [0, 45_000, 90_000, 180_000, 360_000, 720_000]
+  const worstPerBand = new Map(bands.map((z) => [z, { gap: Infinity, rows: 0, obstacles: 0, blocking: 0, overhead: 0 }]))
+  const floorMs = REACTION_MS
+
+  for (let seed = 1; seed <= 500; seed++) {
+    for (const bandStart of bands) {
+      const difficulty = difficultyAt(bandStart + DIFFICULTY_TAU_Z / 2)
+      const obstacles = placeObstacles({
+        rng: createRng(seed * 31 + bandStart),
+        fromZ: bandStart,
+        toZ: bandStart + DIFFICULTY_TAU_Z,
+        ...difficulty,
+      })
+      const rows = obstacleRows(obstacles)
+      const record = worstPerBand.get(bandStart)
+
+      record.rows += rows.length
+      record.obstacles += obstacles.length
+      for (const obstacle of obstacles) {
+        if (obstacle.kind === 'blocking') record.blocking++
+        if (obstacle.kind === 'overhead') record.overhead++
+      }
+      for (let i = 1; i < rows.length; i++) record.gap = Math.min(record.gap, rows[i].z - rows[i - 1].z)
+
+      assert.ok(provePassable(obstacles), `seed ${seed} at ${bandStart} produced an impassable stretch`)
+    }
+  }
+
+  console.log('      distance  density  blocking  overhead   rows/90k   min gap   reaction budget')
+  for (const bandStart of bands) {
+    const record = worstPerBand.get(bandStart)
+    const difficulty = difficultyAt(bandStart + DIFFICULTY_TAU_Z / 2)
+    const budgetMs = (record.gap / MAX_ATTAINABLE_SPEED) * 1000
+
+    console.log(
+      `      ${String(Math.round(bandStart / 100)).padStart(7)}m` +
+        `${difficulty.density.toFixed(2).padStart(9)}` +
+        `${(record.blocking / Math.max(1, record.obstacles)).toFixed(2).padStart(10)}` +
+        `${(record.overhead / Math.max(1, record.obstacles)).toFixed(2).padStart(10)}` +
+        `${(record.rows / 500).toFixed(1).padStart(11)}` +
+        `${(record.gap / SEGMENT_LENGTH).toFixed(1).padStart(10)}seg` +
+        `${budgetMs.toFixed(0).padStart(15)}ms`,
+    )
+
+    assert.ok(
+      budgetMs >= floorMs,
+      `at ${Math.round(bandStart / 100)}m the player gets ${budgetMs.toFixed(0)}ms to read a row, under the ${floorMs}ms floor`,
+    )
+  }
+
+  // ...and the road really does get busier, which is the other half of the claim.
+  const early = worstPerBand.get(bands[0])
+  const late = worstPerBand.get(bands[bands.length - 1])
+
+  assert.ok(late.rows > early.rows * 1.3, `the road barely got busier: ${early.rows} rows early, ${late.rows} late`)
+  assert.ok(
+    late.blocking / late.obstacles > early.blocking / early.obstacles,
+    'the unjumpable share did not actually rise in the generated output',
+  )
 })
 
 console.log(`${passed} checks passed`)
