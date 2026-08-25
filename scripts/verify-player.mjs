@@ -30,12 +30,23 @@ import {
   PLAYER_STIFFNESS,
   PLAYER_Z,
   ROAD_EDGE,
+  BOOST_FACTOR,
+  SPEED_BASE,
+  SPEED_CAP,
   halfWidthsAtLane,
   playerResponse,
 } from '../src/run/constants.ts'
 import { FIXED_STEP_MS } from '../src/race/constants.ts'
 import { billboardRectInto, createBillboardRect } from '../src/road/billboard.ts'
 import { playerGroundInto } from '../src/run/playerProjection.ts'
+import {
+  slimeFade,
+  slimeIntensity,
+  SLIME_MAX_POINTS,
+  SLIME_NEAR_CULL_Z,
+  SLIME_SPACING_Z,
+  stepSlime,
+} from '../src/run/slime.ts'
 import { createScreenPoint, projectInto } from '../src/road/project.ts'
 import { CAMERA_DEPTH, CAMERA_HEIGHT, ROAD_WIDTH, SEGMENT_LENGTH } from '../src/road/constants.ts'
 
@@ -72,6 +83,9 @@ function biggestJump(values, base) {
 
   return (worst / base) * 100
 }
+
+/** A track long enough that nothing in the slime checks wraps by accident. */
+const TRACK = 286_800
 
 console.log('src/run/playerMotion.ts -- the fixed timestep')
 
@@ -479,6 +493,113 @@ check('the interpolation is continuous across a segment boundary, which is what 
     Math.abs(after - before) / before < 1e-6,
     `the scale jumps by ${(((after - before) / before) * 100).toFixed(2)}% across a segment boundary`,
   )
+})
+
+console.log('the slime trail')
+
+check('slime is laid by distance travelled, not by frames', () => {
+  // The same rule the glide cycle follows. A trail spaced by *time* would thin out exactly when
+  // the run got fast, which is backwards for something whose job is to express speed.
+  const points = []
+  const lay = (steps, dz) => {
+    for (let i = 0; i < steps; i++) {
+      const distance = points.length === 0 ? i * dz : i * dz
+      stepSlime(points, distance, i * dz, 0, SPEED_BASE, TRACK)
+    }
+  }
+
+  lay(200, 15)
+  // 200 steps of 15 units is 3000 travelled; at 60 units apart that is 50 points, minus whatever
+  // the cull has taken. What must not happen is one per step.
+  assert.ok(points.length < 60, `laid ${points.length} points over 3000 units — one per frame, not one per ${SLIME_SPACING_Z}`)
+  assert.ok(points.length > 20, `laid only ${points.length} points over 3000 units`)
+})
+
+check('a long frame lays one point, not a burst', () => {
+  // A stalled tab hands back a multi-second delta. Laying one blob per `SLIME_SPACING_Z` of the
+  // *jump* would dump a dozen at once on the frame it recovers; comparing against the last laid
+  // position rather than a stored timestamp is what prevents it.
+  const points = []
+
+  stepSlime(points, 0, 0, 0, SPEED_CAP, TRACK)
+  stepSlime(points, 40_000, 40_000, 0, SPEED_CAP, TRACK)
+
+  assert.equal(points.length, 1, `a 40 000-unit frame laid ${points.length} points`)
+})
+
+check('points are dropped once they pass the camera, so the trail is bounded', () => {
+  const points = []
+
+  for (let i = 0; i < 400; i++) stepSlime(points, i * 30, i * 30, 0, SPEED_CAP, TRACK)
+
+  assert.ok(points.length <= SLIME_MAX_POINTS, `the trail grew to ${points.length} points`)
+  // And what is left is the band between the camera and the snail — nothing behind.
+  for (const point of points) {
+    const ahead = point.z - (399 * 30)
+
+    assert.ok(ahead > -1e-6 && ahead <= PLAYER_Z + SLIME_SPACING_Z + 1e-6, `a point sits ${ahead.toFixed(0)} ahead`)
+  }
+})
+
+check('the trail records the line the player took, not the centreline', () => {
+  // The whole reason it earns its place: everything else in the frame says what is coming, this is
+  // the only thing that says what you just did.
+  const points = []
+
+  for (let i = 0; i < 40; i++) stepSlime(points, i * 60, i * 60, Math.sin(i / 4) * 0.6, SPEED_BASE, TRACK)
+
+  const offsets = points.map((p) => p.offsetX)
+
+  assert.ok(Math.max(...offsets) > 0.3 && Math.min(...offsets) < -0.3, 'the trail came out straight through a weave')
+})
+
+check('width and strength both rise with speed, and a boost pushes past the ceiling', () => {
+  assert.equal(slimeIntensity(SPEED_BASE), 0)
+  assert.ok(Math.abs(slimeIntensity(SPEED_CAP) - 1) < 1e-9)
+  // Clamped *above* 1, not at it: the trail is the clearest place in the frame to show the player
+  // going faster than the game's own cap.
+  assert.ok(slimeIntensity(SPEED_CAP * BOOST_FACTOR) > 1, 'a boost does not read as faster than the cap')
+  assert.ok(slimeIntensity(SPEED_CAP * 10) <= 1.25, 'the intensity is unbounded')
+
+  const slow = []
+  const fast = []
+
+  stepSlime(slow, 0, 0, 0, SPEED_BASE, TRACK)
+  stepSlime(fast, 0, 0, 0, SPEED_CAP, TRACK)
+  assert.ok(fast[0].halfWidth > slow[0].halfWidth * 1.5, 'the trail barely widens with speed')
+  assert.ok(fast[0].strength > slow[0].strength * 1.5, 'the trail barely brightens with speed')
+  console.log(
+    `    at ${SPEED_BASE}u/s: ${slow[0].halfWidth.toFixed(3)} wide at ${slow[0].strength.toFixed(2)} strength; ` +
+      `at ${SPEED_CAP}: ${fast[0].halfWidth.toFixed(3)} at ${fast[0].strength.toFixed(2)}`,
+  )
+})
+
+check('the drying gradient falls across the band that is actually on screen', () => {
+  // **The regression this replaces.** The first version ramped over the closest 55% of the trail --
+  // and that band projects entirely *below the frame*, so it dimmed the part nobody sees and left
+  // the visible ribbon flat. It read as painted road marking rather than as something wet.
+  //
+  // The visible band is roughly `ahead` 1100 to `PLAYER_Z`, so the gradient has to be measurable
+  // across it.
+  const atSnail = slimeFade(PLAYER_Z)
+  const atFrameEdge = slimeFade(PLAYER_Z * 0.56)
+
+  assert.ok(atSnail > 0.99, `the newest slime is only at ${atSnail.toFixed(2)} of its laid strength`)
+  assert.ok(
+    atFrameEdge < atSnail * 0.92,
+    `across the visible band the fade only moves from ${atSnail.toFixed(2)} to ${atFrameEdge.toFixed(2)} — flat`,
+  )
+  console.log(`    on-screen fade: ${atSnail.toFixed(2)} under the snail to ${atFrameEdge.toFixed(2)} at the frame's edge`)
+})
+
+check('nothing is drawn nearer than the cull, where the projection blows up', () => {
+  // Not a look decision: projected width goes as `1 / ahead`, and a point at `ahead = 164` measured
+  // 668 pixels wide entirely below the frame. The fade reaching zero at the cull is what keeps it
+  // from blinking out rather than fading out.
+  assert.equal(slimeFade(SLIME_NEAR_CULL_Z), 0)
+  assert.equal(slimeFade(SLIME_NEAR_CULL_Z - 1), 0)
+  assert.equal(slimeFade(0), 0)
+  assert.ok(slimeFade(SLIME_NEAR_CULL_Z + 1) > 0, 'the fade does not resume above the cull')
 })
 
 console.log(`${passed} checks passed`)

@@ -32,6 +32,7 @@ import {
   lightnessOf,
   OBSTACLE_MATERIALS,
   saturationOf,
+  PICKUP_COLORS,
   SNAIL_BODY,
   SNAIL_SHELL,
 } from '../src/run/artPalette.ts'
@@ -539,6 +540,26 @@ check('the snail is the one thing aimed away from the scenery, and by a wide mar
     `    snail ${mean(snail.map(lightnessOf)).toFixed(0)} lightness / ${snailSat.toFixed(0)}% saturation ` +
       `against obstacles at ${mean(obstacle.map(lightnessOf)).toFixed(0)} / ${obstacleSat.toFixed(0)}%`,
   )
+})
+
+check('a pickup is lit like the creature, not like the rock it is lying beside', () => {
+  // **The whole colour rule of the game in one assertion.** Everything is aimed at the scenery's
+  // muted tone except the snail and the things the player is steering it towards; a pickup that
+  // measured like a rock would be a reward the eye has to hunt for.
+  const mean = (values) => values.reduce((sum, v) => sum + v, 0) / values.length
+  const pickups = Object.values(PICKUP_COLORS).flatMap((c) => Object.values(c))
+  const obstacles = Object.values(OBSTACLE_MATERIALS).flatMap((m) => Object.values(m))
+
+  assert.ok(
+    mean(pickups.map(saturationOf)) > mean(obstacles.map(saturationOf)) * 3,
+    'the pickups are not meaningfully more saturated than the obstacles',
+  )
+  // Each kind still has its own three ordered bands, like every other material here.
+  for (const [kind, colors] of Object.entries(PICKUP_COLORS)) {
+    assert.ok(lightnessOf(colors.light) > lightnessOf(colors.mid), `${kind}'s bands are not ordered`)
+    assert.ok(lightnessOf(colors.mid) > lightnessOf(colors.dark), `${kind}'s bands are not ordered`)
+  }
+  console.log(`    pickups average ${mean(pickups.map(saturationOf)).toFixed(0)}% saturation against obstacles at ${mean(obstacles.map(saturationOf)).toFixed(0)}%`)
 })
 
 check('the ink is not pure black, which verify:mattes would reject', () => {

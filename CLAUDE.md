@@ -98,9 +98,9 @@ is the same question in both games.
 
 ### Reading the rest of this document
 
-**The runner's own chapters are the ten between "## UI Kit" and "## Road Renderer"** — The Run,
-The Snail, The Jump, Obstacles, Draw Order, Pickups, The Art, The Difficulty Curve, The End Of A
-Run, The HUD. Those describe this game.
+**The runner's own chapters are the eleven between "## UI Kit" and "## Road Renderer"** — The Run,
+The Snail, The Jump, Obstacles, Draw Order, Pickups, The Slime Trail, The Art, The Difficulty
+Curve, The End Of A Run, The HUD. Those describe this game.
 
 Below them, everything about the road, the billboards, the biomes, the themes, the interface kit,
 the save layer, the platform layer, the build guards and the scroll patterns is **current and
@@ -802,6 +802,57 @@ resource does not have one.
   because "how many did I just get without looking away" is the same question in both games. Anything
   that is not a coin resets the run.
 
+## The Slime Trail
+
+`src/run/slime.ts` holds the world-space points; `SlimeTrail.ts` draws them. **It is the only thing
+in the frame that tells the player what they just did** — everything else is about what is coming —
+and it is also the speed gauge that is not in the HUD.
+
+- **It records the line, not the centreline.** Slime is laid at the snail's own `offsetX`, so on a
+  bend it curves with the road and a clean line through a row of obstacles is visible behind them
+  as a clean line.
+- **Laid by distance, not by time** — the same rule the glide cycle follows. A time-spaced trail
+  thins out exactly when the run gets fast, which is backwards for something whose job is speed.
+- **Width and strength both rise with speed**, and `slimeIntensity` clamps *above* 1 rather than at
+  it: a boost pushes past `SPEED_CAP`, and this is the clearest place in the frame to show the
+  player going faster than the game's own ceiling. Measured: 0.028 wide at 0.32 strength at
+  `SPEED_BASE` against 0.060 at 0.82 at `SPEED_CAP`.
+- **Where it sits on screen is a consequence of the geometry, and a lucky one.** The camera is
+  `PLAYER_Z` *behind* the snail, so slime flows towards the viewer and passes the camera about a
+  second later — occupying the near band under the snail, which a run deliberately leaves empty.
+
+### ⚠ A ribbon of quads, not a pool of billboards
+
+A trail made of billboarded blobs is a row of vertical stamps: each faces the camera, so it reads
+as stickers standing on the tarmac rather than as a mark *on* it. Filling a quad between each pair
+of consecutive points means the near end is genuinely wider than the far end, because both edges
+come out of the road's own projection — the same thing `DecalMesh` does for the track's baked
+marks. It is also cheaper: one `Graphics` and ~54 quads against 40 pooled `Image`s.
+
+Depth is flat at `ROAD_MESH_DEPTH + 0.5`: a mark on the ground is under anything standing on the
+ground at *every* distance, so unlike obstacles and pickups this does **not** join `worldDepth`'s
+distance sort.
+
+### ⚠ Two ramps, because two questions — and the first version only had one
+
+`slimeFade` was written as a single "slime dries" gradient over the closest 55% of the trail. Then
+the projected widths were measured, and that band turned out to be **entirely below the frame**:
+everything nearer than about 1100 units projects off the bottom. So the ramp dimmed the part nobody
+sees and left the visible ribbon flat, which read as painted road marking rather than as something
+wet.
+
+It is now two ramps with different jobs:
+
+- **`drying`** scaled against the whole of `PLAYER_Z`, so the gradient falls across the band that is
+  actually on screen: 1.00 under the snail to 0.78 at the frame's edge.
+- **`cullRamp`**, a guard rather than a look. Projected width goes as `1 / ahead`, so a point at
+  `ahead = 164` measured **668 pixels wide** — entirely below the frame, and pure wasted fill.
+  `SLIME_NEAR_CULL_Z` drops them at 150 and the ramp takes them out over the next 300 so they fade
+  rather than blink.
+
+The strengths were raised in the same pass (0.22/0.72 to 0.32/0.82) for the same reason: they are
+the numbers for the part the player can see, not for the whole trail.
+
 ## The Art
 
 **One decision for the whole project: full-colour, smoothed, never pixel art.** `config.ts` sets
@@ -867,6 +918,22 @@ deformation rides on top for the jump.
   390x844 — the narrowest viewport this game supports — the snail is **23x15px** and still reads.
 - **The shell carries bands *and* a spiral**, doing different jobs: the bands survive the downscale
   to a phone, the spiral is what makes it a shell rather than a target at 100px on a desktop.
+
+### The pickups
+
+**A pickup is a thing the player is meant to want, so it is lit like the creature and not like the
+rock.** That is the whole colour rule of this game: everything is aimed at the scenery's muted tone
+except the snail and the things you steer it towards. Measured, the pickups average **69%
+saturation against the obstacles' 13%** — squarely in the snail's family.
+
+Three silhouettes, because colour is always the second cue: a **stack of chevrons** (the only shape
+with a direction), a **plate** (the only closed symmetrical outline), a **ring** (the only shape
+with a hole). Checked at the sizes the game delivers — 13px on a portrait phone, 26px mid, 64px on
+a desktop — and the coin's hole survives the smallest of them, which was the one at risk.
+
+All three sit on **one shared dark backing disc**. A pickup has to separate from grey road, green
+grass and pale sand, and the eight biomes make every one of those the background at some point; one
+shape does that everywhere, where three per-biome variants would be three things to keep in step.
 
 ### The obstacles
 

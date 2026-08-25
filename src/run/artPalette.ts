@@ -69,3 +69,19 @@ export const OBSTACLE_MATERIALS = {
   blocking: { light: 0x939aa1, mid: 0x6a7078, dark: 0x3c4147 },
   overhead: { light: 0x8c847a, mid: 0x6b645b, dark: 0x3e3a34 },
 } as const
+
+/**
+ * The pickups: bright, saturated, and in the snail's family rather than the scenery's.
+ *
+ * **A pickup is a thing the player is meant to want, so it is lit like the creature and not like
+ * the rock.** That is the whole colour rule of this game stated in one place: everything is muted
+ * except the snail and the things you steer it towards.
+ *
+ * Three easy hues — cyan, green, gold — but colour is the second cue. The silhouettes carry the
+ * read: a directional stack of chevrons, a closed plate, a ring with a hole. See `pickupArt.ts`.
+ */
+export const PICKUP_COLORS = {
+  boost: { light: 0x7fe6ff, mid: 0x2fbde8, dark: 0x116d8c },
+  shield: { light: 0x9df2a1, mid: 0x4fc663, dark: 0x1f6b34 },
+  coin: { light: 0xffd964, mid: 0xf0b024, dark: 0x8f5f0e },
+} as const

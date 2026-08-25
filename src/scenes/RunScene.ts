@@ -22,6 +22,8 @@ import { ObstacleSprites } from '../run/ObstacleSprites'
 import { placePickups, reaches, type Pickup } from '../run/pickups'
 import { PickupSprites } from '../run/PickupSprites'
 import { Hud } from '../run/Hud'
+import { stepSlime, type SlimePoint } from '../run/slime'
+import { SlimeTrail } from '../run/SlimeTrail'
 import { createRng } from '../race/rng'
 import {
   HITSTOP_MS,
@@ -94,6 +96,14 @@ export class RunScene extends Phaser.Scene {
   private pickupsBySegment!: Map<number, Pickup[]>
   private pickupSprites!: PickupSprites
   private hud!: Hud
+  /**
+   * The slime trail's world-space points, and the ribbon that draws them.
+   *
+   * A plain array mutated in place by `stepSlime`, like `debris.ts`'s chunks — the rest of
+   * `src/run/` is pure because the rest of it is state a scene replaces, and a pool is not.
+   */
+  private slime!: SlimePoint[]
+  private slimeTrail!: SlimeTrail
   /** Where the snail was along the track last frame, for the swept collision test. */
   private previousPlayerZ = 0
   private invulnerableUntil = 0
@@ -125,6 +135,7 @@ export class RunScene extends Phaser.Scene {
     this.squash = createSquashState()
     this.playerFreeze = { frozenUntil: 0 }
     this.resolvedOnLap = new Map()
+    this.slime = []
     this.invulnerableUntil = 0
     this.hitCount = 0
     this.streak = 0
@@ -148,6 +159,8 @@ export class RunScene extends Phaser.Scene {
     this.previousPlayerZ = PLAYER_Z
 
     // Built after the world, because they draw over it and the display list is the draw order.
+    // The trail goes first of the three: it lies *on* the road, under everything standing on it.
+    this.slimeTrail = new SlimeTrail(this)
     this.obstacleSprites = new ObstacleSprites(this)
     this.pickupSprites = new PickupSprites(this)
     this.playerView = new PlayerView(this)
@@ -183,6 +196,7 @@ export class RunScene extends Phaser.Scene {
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.playerView.destroy()
+      this.slimeTrail.destroy()
       this.obstacleSprites.destroy()
       this.pickupSprites.destroy()
       this.hud.destroy()
@@ -213,6 +227,7 @@ export class RunScene extends Phaser.Scene {
       screen: () => ({ x: this.playerView.screenX, y: this.playerView.screenY }),
       seconds: () => runSeconds(this.run),
       obstacles: () => this.obstacles.length,
+      slime: () => ({ points: this.slime.length, quads: this.slimeTrail.usedLastFrame }),
       drawn: () => ({ used: this.obstacleSprites.usedLastFrame, wanted: this.obstacleSprites.wantedLastFrame }),
       hits: () => this.hitCount,
     }
@@ -406,6 +421,7 @@ export class RunScene extends Phaser.Scene {
   private worldObjects(): Phaser.GameObjects.GameObject[] {
     return [
       ...this.world.gameObjects,
+      this.slimeTrail.gameObject,
       ...this.obstacleSprites.gameObjects,
       ...this.pickupSprites.gameObjects,
       ...this.playerView.gameObjects,
@@ -474,6 +490,11 @@ export class RunScene extends Phaser.Scene {
     // run already integrated the same quantity, under a fixed timestep, and letting the world
     // integrate it again over the raw frame delta would give two answers to "how far have we come"
     // — with the score reading one of them and the road drawing the other.
+    // **Laid before the world is drawn and from the snail's *current* line**, so the newest blob
+    // is under the snail this frame rather than one frame behind it — at top speed a frame is 60
+    // world units, which is a whole blob's spacing.
+    stepSlime(this.slime, this.run.distance, this.run.z, this.player.offsetX, this.run.speed, this.world.trackLength)
+
     this.world.setSpeed(0)
     this.world.cameraZ = this.run.z
     // Still called, with the real delta and a zero speed: `advance` also eases the camera's lean,
@@ -483,6 +504,9 @@ export class RunScene extends Phaser.Scene {
     // this runs, and the lean is what decides where the sprite goes.
     this.world.advance(delta, playerScreenFraction(this.player.offsetX))
     this.world.render(width, height)
+    // After the world, before everything that stands on the road: it reads this frame's segment
+    // projections out of the mesh pass exactly as the sprite pools do.
+    this.slimeTrail.render(this.slime, this.world.track, this.world.baseIndex, this.run.z, width)
     this.obstacleSprites.render(
       this.obstaclesBySegment,
       this.world.track,
