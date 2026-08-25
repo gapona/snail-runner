@@ -19,6 +19,7 @@ import {
   createObstacle,
   hits,
   MAX_ATTAINABLE_SPEED,
+  MIN_ROW_GAP_Z,
   obstacleRows,
   passableLine,
   placeObstacles,
@@ -42,6 +43,7 @@ import {
   OBSTACLE_DEPTH,
   PLAYER_BODY_H,
   PLAYER_HALF_WIDTHS,
+  HIT_INVULNERABLE_Z,
   PLAYER_Z,
   REACTION_MS,
   ROAD_EDGE,
@@ -260,6 +262,30 @@ check('rows are never closer together than the reaction budget allows', () => {
   )
   console.log(
     `    at maximum density the closest two rows are ${(worst / SEGMENT_LENGTH).toFixed(1)} segments (${((worst / SPEED_CAP) * 1000).toFixed(0)}ms at top speed)`,
+  )
+})
+
+check('the grace period after a hit always ends before the next row arrives', () => {
+  // **⚠ This was a duration, and a duration is the wrong unit for it.** The road is laid out in
+  // distance, so 900ms covered a different number of rows at every speed:
+  //
+  //   SPEED_BASE   6.5 segments   0.50 rows
+  //   SPEED_CAP   16.2 segments   1.25 rows   <- the next row passed straight through you
+  //   boosted     25.9 segments   2.00 rows   <- two of them did
+  //
+  // Reported as "some obstacles do not deal damage", and that is exactly what it looked like from
+  // the outside. As a distance it is speed-independent by construction; this is the assertion that
+  // keeps it inside the placer's own floor if either number is ever tuned.
+  assert.ok(
+    HIT_INVULNERABLE_Z < MIN_ROW_GAP_Z,
+    `grace covers ${(HIT_INVULNERABLE_Z / MIN_ROW_GAP_Z).toFixed(2)} of a row gap — the next row would be a ghost`,
+  )
+  // ...and long enough to be worth having: a wall is eight rocks at one z, and the grace has to
+  // outlast the rest of the row you just hit rather than charging you eight times for one mistake.
+  assert.ok(HIT_INVULNERABLE_Z > OBSTACLE_DEPTH * 2, `grace of ${HIT_INVULNERABLE_Z.toFixed(0)} units barely outlasts one obstacle`)
+  console.log(
+    `    grace runs ${(HIT_INVULNERABLE_Z / SEGMENT_LENGTH).toFixed(1)} segments against a ${(MIN_ROW_GAP_Z / SEGMENT_LENGTH).toFixed(1)}-segment row gap ` +
+      `— ${((HIT_INVULNERABLE_Z / MAX_ATTAINABLE_SPEED) * 1000).toFixed(0)}ms boosted, ${((HIT_INVULNERABLE_Z / SPEED_CAP) * 1000).toFixed(0)}ms at the plain cap`,
   )
 })
 

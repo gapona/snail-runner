@@ -28,7 +28,7 @@ import { createRng } from '../race/rng'
 import { SEGMENT_LENGTH } from '../road/constants'
 import { difficultyAt, DIFFICULTY_TAU_Z } from './difficulty'
 import {
-  BOOST_FACTOR,
+  MAX_ATTAINABLE_SPEED,
   JUMP_AIR_MS,
   JUMP_APEX,
   OBSTACLE_BANDS,
@@ -37,7 +37,6 @@ import {
   PLAYER_HALF_WIDTHS,
   REACTION_MS,
   ROAD_EDGE,
-  SPEED_CAP,
   type ObstacleKind,
 } from './constants'
 
@@ -95,17 +94,9 @@ export function hits(body: Body, obstacle: Pick<Obstacle, 'offsetX' | 'halfWidth
   return body.y < obstacle.yHigh && obstacle.yLow < body.y + PLAYER_BODY_H
 }
 
-/**
- * The fastest the game can ever go, in world units per second.
- *
- * **`SPEED_CAP` is not that number, and treating it as one was a real hole.** A boost multiplies
- * the ceiling by `BOOST_FACTOR`, so the actual top speed is 5760 units/s, not 3600. The first
- * version of the floor below was solved at `SPEED_CAP`, which meant that during a boost — a state
- * the player *chooses*, by taking a pickup — the reaction budget silently fell to 281ms against a
- * 450ms floor. The game would have been telling the truth about its difficulty curve and lying
- * about the one moment the player felt fastest.
- */
-export const MAX_ATTAINABLE_SPEED = SPEED_CAP * BOOST_FACTOR
+
+/** Re-exported so the placer's own floor and the suites read it from one place. */
+export { MAX_ATTAINABLE_SPEED }
 
 export interface ObstacleRow {
   z: number

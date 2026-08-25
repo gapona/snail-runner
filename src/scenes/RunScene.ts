@@ -27,7 +27,7 @@ import { SlimeTrail } from '../run/SlimeTrail'
 import { createRng } from '../race/rng'
 import {
   HITSTOP_MS,
-  HIT_INVULNERABLE_MS,
+  HIT_INVULNERABLE_Z,
   JUMP_LAUNCH_V,
   KEYBOARD_POINT_SPEED,
   LANDING_HITSTOP_MS,
@@ -106,7 +106,13 @@ export class RunScene extends Phaser.Scene {
   private slimeTrail!: SlimeTrail
   /** Where the snail was along the track last frame, for the swept collision test. */
   private previousPlayerZ = 0
-  private invulnerableUntil = 0
+  /**
+   * How far the run must travel before the snail can be hit again — a **distance**, not a deadline.
+   *
+   * See `HIT_INVULNERABLE_Z`: as a duration this covered one whole row at `SPEED_CAP` and two under
+   * a boost, so after any hit the next rows passed straight through.
+   */
+  private invulnerableUntilDistance = 0
   /** One number a whole run is reproducible from: the scenery scatter and the obstacle layout. */
   private runSeed = 0
   /** Which lap the current obstacle layout was generated for. See `layLap`. */
@@ -136,7 +142,7 @@ export class RunScene extends Phaser.Scene {
     this.playerFreeze = { frozenUntil: 0 }
     this.resolvedOnLap = new Map()
     this.slime = []
-    this.invulnerableUntil = 0
+    this.invulnerableUntilDistance = 0
     this.hitCount = 0
     this.streak = 0
 
@@ -230,6 +236,7 @@ export class RunScene extends Phaser.Scene {
       slime: () => ({ points: this.slime.length, quads: this.slimeTrail.usedLastFrame }),
       drawn: () => ({ used: this.obstacleSprites.usedLastFrame, wanted: this.obstacleSprites.wantedLastFrame }),
       hits: () => this.hitCount,
+      invulnerable: () => this.isInvulnerable(),
     }
   }
 
@@ -258,7 +265,7 @@ export class RunScene extends Phaser.Scene {
    * every obstacle permanently after one lap.
    */
   private resolveObstacles(fromZ: number, toZ: number, lap: number, now: number): void {
-    if (now < this.invulnerableUntil) return
+    if (this.isInvulnerable()) return
 
     // Only the segments the sweep actually touched, through the same index the renderer uses. The
     // alternative — walking the run's whole obstacle list every frame — is a couple of thousand
@@ -274,13 +281,28 @@ export class RunScene extends Phaser.Scene {
 
       for (const obstacle of here) {
         if (this.resolvedOnLap.get(obstacle.id) === lap) continue
-        // The swept interval against the obstacle's own depth. Both are unwrapped within one lap;
-        // the caller splits a frame that crosses the seam into two calls.
-        if (toZ < obstacle.z || fromZ > obstacle.z + OBSTACLE_DEPTH) continue
 
-        this.resolvedOnLap.set(obstacle.id, lap)
+        // Not there yet.
+        if (toZ < obstacle.z) continue
+
+        // **Past it. Only now is it settled** — see below for why it is not settled before that.
+        if (fromZ > obstacle.z + OBSTACLE_DEPTH) {
+          this.resolvedOnLap.set(obstacle.id, lap)
+          continue
+        }
+
+        // **⚠ Inside it, so it is tested again every frame until it is behind us.** The first
+        // version marked an obstacle resolved on the frame the sweep first *touched* its near edge
+        // and never looked again — one instant, at the moment of contact. But an obstacle is 200
+        // units deep, which is 55ms of crossing at the cap, and the snail can slide sideways into
+        // it during that. Measured by driving deliberately into 28 rows: four of them registered
+        // nothing at all with the snail visibly inside the rock.
+        //
+        // Being inside it at *any* point while passing is what the player sees, so that is what the
+        // test is now.
         if (!hits(this.player, obstacle)) continue
 
+        this.resolvedOnLap.set(obstacle.id, lap)
         this.takeHit(now)
 
         return
@@ -379,7 +401,7 @@ export class RunScene extends Phaser.Scene {
   private takeHit(now: number): void {
     this.hitCount++
     this.streak = 0
-    this.invulnerableUntil = now + HIT_INVULNERABLE_MS
+    this.invulnerableUntilDistance = this.run.distance + HIT_INVULNERABLE_Z
     addFreeze(this.playerFreeze, now, HITSTOP_MS)
     // The whole penalty is one call into the pure module — speed, shields and lives together, so
     // there is no half-applied state a scene could leave behind.
@@ -388,6 +410,11 @@ export class RunScene extends Phaser.Scene {
     playSfx(SFX.HIT)
 
     if (isRunOver(this.run)) this.endRun()
+  }
+
+  /** Whether the snail is still inside the grace distance from its last hit. */
+  private isInvulnerable(): boolean {
+    return this.run.distance < this.invulnerableUntilDistance
   }
 
   /**
@@ -536,6 +563,7 @@ export class RunScene extends Phaser.Scene {
       height,
       squashAt(this.squash, time, this.player.vy / JUMP_LAUNCH_V),
       this.run.distance,
+      { invulnerable: this.isInvulnerable(), now: time },
     )
   }
 }

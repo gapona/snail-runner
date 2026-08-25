@@ -31,6 +31,24 @@ const SHADOW_ALPHA = 0.38
 const SHADOW_MIN_SCALE = 0.45
 
 /**
+ * The invulnerability blink: how fast, and how far down it dips.
+ *
+ * **Grace the player cannot see is indistinguishable from a broken hitbox.** Before this the snail
+ * looked identical whether it could be hit or not, so driving through a rock unharmed read as the
+ * game failing rather than as mercy it had been given — which is exactly how it was reported.
+ *
+ * It never goes fully transparent: the snail is the thing being steered, and a mascot that
+ * disappears for 50ms at a time is one the player loses track of at the moment they most need it.
+ * 0.35 is dim enough to be unmistakable and solid enough to stay steerable.
+ *
+ * Blinked on a wall clock rather than on distance, unlike everything else about the grace period —
+ * the *window* is a distance because the road is, but a blink is something an eye reads, and an eye
+ * reads in milliseconds.
+ */
+const BLINK_PERIOD_MS = 110
+const BLINK_DIM = 0.35
+
+/**
  * How far ahead of the camera the snail is, in segments — 9.83, not a whole number.
  *
  * **That it lands between two segments is the point.** The snail's depth has to place it after the
@@ -123,6 +141,7 @@ export class PlayerView {
     screenHeight: number,
     squash = 1,
     distance = 0,
+    look: { invulnerable: boolean; now: number } = { invulnerable: false, now: 0 },
   ): void {
     const trackLength = trackLengthOf(track.length)
     const worldZ = wrapZ(cameraZ + PLAYER_Z, trackLength)
@@ -217,6 +236,12 @@ export class PlayerView {
     // Squash and stretch is volume-preserving: wider when flatter. Applied here rather than baked
     // into the billboard size so the collision footprint never changes with the animation.
     this.sprite.setDisplaySize(this.rect.w / squash, this.rect.h * squash)
+    // The shadow blinks with the snail: a solid shadow under a flickering creature reads as the
+    // sprite failing to draw rather than as the creature being briefly untouchable.
+    const blink = look.invulnerable && Math.floor(look.now / BLINK_PERIOD_MS) % 2 === 1 ? BLINK_DIM : 1
+
+    this.sprite.setAlpha(blink)
+    this.shadow.setAlpha(SHADOW_ALPHA * blink)
 
     this.screenX = this.rect.x
     this.screenY = this.rect.y

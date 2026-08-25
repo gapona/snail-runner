@@ -593,6 +593,28 @@ this module, which is what makes `npm run verify:run-speed` able to test the gam
 - **The boost is state ticked down inside the fixed step, not a `Date.now()` deadline.** A wall-clock
   deadline expires while a backgrounded tab draws nothing, and gives a 144Hz phone a different number
   of boosted frames than a 60Hz one.
+- **⚠ The grace period after a hit is measured in world units, not milliseconds.** It was 900ms,
+  and a duration is the wrong unit for something the road is laid out against: rows sit at least
+  `REACTION_MS` apart *at top speed*, so a fixed number of seconds covers a different number of
+  rows depending on how fast the run is going.
+
+  ```
+  speed          travelled in 900ms   rows skipped
+  SPEED_BASE            6.5 segments          0.50
+  SPEED_CAP            16.2 segments          1.25   <- the next row passes through you
+  boosted              25.9 segments          2.00   <- two of them do
+  ```
+
+  Reported as "some obstacles do not deal damage", and from the outside that is exactly what it
+  was. `HIT_INVULNERABLE_Z` is 55% of the tightest row gap, so it always ends before the next row
+  arrives at every speed the game can reach — `verify:obstacles` asserts that against the placer's
+  own floor. What it is *for* is the rest of the row you just hit: a wall is eight rocks, and being
+  charged eight times for one mistake is not a difficulty setting.
+- **⚠ And grace the player cannot see is indistinguishable from a broken hitbox.** The snail looked
+  identical whether it could be hit or not, which is half of why the above read as a bug rather
+  than as mercy. It now blinks (`PlayerView`, 110ms, down to alpha 0.35 and never to zero — it is
+  the thing being steered), and the shadow blinks with it so the pair does not read as the sprite
+  failing to draw.
 - **A hit costs speed *and* a life, in that order**, and a shield is spent instead of the life but
   never instead of the speed. That is the economy: the reward for playing well and the punishment for
   playing badly are denominated in the same unit, so a run is one currency rather than a score with a
@@ -723,6 +745,14 @@ and `rail/Enemies.ts` had, and for the same reason: the model runs under Node.
 - **Collisions are swept, not sampled.** At top speed a frame covers 60 units against a 200-deep
   obstacle, so a point test works right up until the frame a phone drops. Resolution is keyed by
   `(id, lap)` because the track loops — a boolean would disarm every obstacle after one lap.
+- **⚠ An obstacle stays live for the whole crossing, not just the frame contact begins.** The first
+  version marked one resolved as soon as the sweep touched its near edge and never looked again —
+  one instant, at the moment of contact. But 200 units is 55ms of crossing at the cap, and the snail
+  can slide sideways into a rock during it. Measured by driving deliberately into 28 rows: **four
+  registered nothing with the snail visibly inside them.** Being inside it at any point while
+  passing is what the player sees, so that is what the test is; an obstacle is only marked resolved
+  once the sweep is past its far edge.
+- **⚠ The grace period after a hit is a distance, not a duration.** See "The Run".
 - **⚠ `MAX_ATTAINABLE_SPEED`, not `SPEED_CAP`.** Both the row-spacing floor and the flight window are
   solved at the fastest the game can actually go, which is `SPEED_CAP * BOOST_FACTOR`. Solved at
   `SPEED_CAP` — as the first version was — the reaction budget silently fell to 281ms against a 450ms

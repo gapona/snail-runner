@@ -164,15 +164,24 @@ export const BOOST_FACTOR = 1.6
 export const BOOST_MS = 3000
 
 /**
- * What a hit costs, in world units per second, and how long the run is unhittable afterwards.
+ * What a hit costs, in world units per second.
  *
  * **A hit is a speed loss, not a death**, which is what makes speed the game's actual resource:
  * the punishment is measured in the same unit as the reward. Three hits end the run
  * (`RUN_LIVES`), so the ceiling on carelessness is still hard.
  */
 export const HIT_SPEED_LOSS = MAX_SPEED * 0.1
-export const HIT_INVULNERABLE_MS = 900
 export const RUN_LIVES = 3
+
+/**
+ * The fastest the game can ever go, in world units per second.
+ *
+ * **`SPEED_CAP` is not that number**: a boost multiplies the ceiling, so the real top speed is 5760.
+ * Anything that has to hold at every speed — the obstacle placer's row spacing, the jump's flight
+ * window, the grace period below — is solved against this rather than against the plain cap.
+ */
+export const MAX_ATTAINABLE_SPEED = SPEED_CAP * BOOST_FACTOR
+
 
 /* ------------------------------------------------------------------ *
  * The jump
@@ -280,6 +289,34 @@ export type ObstacleKind = keyof typeof OBSTACLE_BANDS
  * to decide *which* of dodge-or-jump the obstacle wants.
  */
 export const REACTION_MS = 450
+
+/**
+ * How far the run travels unhittable after a hit, in **world units**.
+ *
+ * **⚠ This was 900 milliseconds, and a duration is the wrong unit for it.** The road is laid out in
+ * distance — rows sit at least `REACTION_MS` apart *at the top speed* — so a fixed number of
+ * seconds covers a different number of rows depending on how fast the run happens to be going.
+ * Measured against the shipped placer:
+ *
+ * ```
+ * speed          travelled in 900ms   rows skipped
+ * SPEED_BASE            6.5 segments          0.50
+ * SPEED_CAP            16.2 segments          1.25   <- the next row passes through you
+ * boosted              25.9 segments          2.00   <- two of them do
+ * ```
+ *
+ * So after any hit at speed the next row or two were ghosts, which is exactly what "some obstacles
+ * do not deal damage" looks like from the outside — and with no visual telling the player they were
+ * invulnerable, it reads as a broken hitbox rather than as mercy.
+ *
+ * As a distance it is speed-independent by construction, and **55% of the tightest row gap** means
+ * it always ends before the next row arrives, at every speed the game can reach.
+ * `verify:obstacles` asserts that against the placer's own floor so the two cannot drift apart.
+ *
+ * What it is for is the rest of the row you just hit — a wall is eight rocks, and being charged
+ * eight times for one mistake is not a difficulty setting.
+ */
+export const HIT_INVULNERABLE_Z = (REACTION_MS / 1000) * MAX_ATTAINABLE_SPEED * 0.55
 
 /* ------------------------------------------------------------------ *
  * Feel: the spring, the camera, the hitstop
