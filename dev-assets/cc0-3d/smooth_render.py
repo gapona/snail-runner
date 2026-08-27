@@ -84,6 +84,12 @@ OUT_LONG = 1024
 # own grey first. This is the parent project's original argument, arrived at from the other side.
 KD_DESAT = 0.55
 
+# **A pickup keeps its colour.** `KD_DESAT` is there so a biome tint has authority over a verge
+# prop; nothing tints a pickup, and a pickup that has been pulled toward grey is a pickup that has
+# given up the one job it has. Small but not zero: the kit's own fruit is a little louder than this
+# world's palette, and the shadow and rim contract does the separating rather than the chroma.
+FOOD_DESAT = 0.12
+
 # Lambert is compressed into `[AMBIENT, 1]` rather than run to black. A shadow side that goes to
 # zero is what makes a render read as dramatic; the reference's fill light is strong, and this is
 # that fill. It is also what holds the ink share down — at AMBIENT 0.18 the darkest band of a
@@ -132,12 +138,43 @@ def vertex_normals(verts: np.ndarray, faces) -> np.ndarray:
     return acc / lengths
 
 
+def load_obj_uv(text: str):
+    """`load_obj`, plus the texture coordinates it discards.
+
+    **⚠ The Nature Kit paints with per-material `Kd` and the Food Kit paints with one texture
+    atlas.** Every Food Kit material is literally `newmtl colormap / Kd 1 1 1 / map_Kd colormap.png`,
+    so a loader that reads only `Kd` renders the whole kit white -- which is exactly what the first
+    strawberry came back as. The atlas is a palette sheet rather than a picture: each material owns
+    a flat patch of it, so one sample per face at the UV centroid recovers the colour exactly, with
+    no per-pixel texturing and no change to the rasteriser.
+    """
+    verts: list[list[float]] = []
+    uvs: list[list[float]] = []
+    faces = []
+    for line in text.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] == "v":
+            verts.append([float(parts[1]), float(parts[2]), float(parts[3])])
+        elif parts[0] == "vt":
+            uvs.append([float(parts[1]), float(parts[2])])
+        elif parts[0] == "f":
+            idx = [int(p.split("/")[0]) - 1 for p in parts[1:]]
+            tex = [(int(p.split("/")[1]) - 1) if len(p.split("/")) > 1 and p.split("/")[1] else -1 for p in parts[1:]]
+            for i in range(1, len(idx) - 1):
+                faces.append(([idx[0], idx[i], idx[i + 1]], [tex[0], tex[i], tex[i + 1]]))
+    return np.asarray(verts, dtype=np.float64), np.asarray(uvs, dtype=np.float64), faces
+
+
 def render(
     obj_text: str,
     mtl_text: str,
     yaw_deg: float = 28.0,
     pitch_deg: float = 6.0,
     repeat: int = 1,
+    atlas: Image.Image | None = None,
+    desat: float | None = None,
 ) -> Image.Image:
     """One model, or `repeat` copies of it in a row.
 
@@ -150,8 +187,25 @@ def render(
     The copies are staggered in Z as well as X so they occlude each other slightly rather than
     reading as one flat repeated stamp — the same reason `drawWall` overlaps them.
     """
-    verts, faces = load_obj(obj_text)
-    kd = load_mtl(mtl_text)
+    if atlas is not None:
+        verts, uvs, uv_faces = load_obj_uv(obj_text)
+        sheet = np.asarray(atlas.convert("RGB"), dtype=np.float32) / 255.0
+        kd = {}
+        faces = []
+        for i, (tri, tex) in enumerate(uv_faces):
+            key = f"atlas#{i}"
+            if len(uvs) and all(t >= 0 for t in tex):
+                u, w = uvs[tex].mean(axis=0)
+                x = int(np.clip(u * (sheet.shape[1] - 1), 0, sheet.shape[1] - 1))
+                y = int(np.clip((1.0 - w) * (sheet.shape[0] - 1), 0, sheet.shape[0] - 1))
+                kd[key] = tuple(sheet[y, x])
+            else:
+                kd[key] = (0.6, 0.6, 0.6)
+            faces.append((tri, key))
+    else:
+        verts, faces = load_obj(obj_text)
+        kd = load_mtl(mtl_text)
+
     v = rotate(verts, np.radians(yaw_deg), np.radians(pitch_deg))
 
     if repeat > 1:
@@ -215,8 +269,14 @@ def render(
         p = np.array([[px[a], py[a]], [px[b], py[b]], [px[c], py[c]]])
 
         base = np.array(kd.get(material, (0.6, 0.6, 0.6)), dtype=np.float32)
-        if KD_DESAT:
-            base = base + (float(base.mean()) - base) * KD_DESAT
+        # **⚠ A pickup is NOT desaturated the way a decor prop is, and the reason is the tint.**
+        # `KD_DESAT` exists because a verge prop is multiplied by its biome's colour at draw time
+        # and a multiply cannot argue with the saturation it is handed. A pickup carries no biome
+        # tint -- it must read the same in every biome -- so pulling it toward grey would just make
+        # it duller than the world it is meant to stand out from.
+        pull = KD_DESAT if desat is None else desat
+        if pull:
+            base = base + (float(base.mean()) - base) * pull
 
         x0, x1 = max(0, int(p[:, 0].min())), min(W - 1, int(np.ceil(p[:, 0].max())))
         y0, y1 = max(0, int(p[:, 1].min())), min(H - 1, int(np.ceil(p[:, 1].max())))
@@ -292,8 +352,20 @@ def main() -> None:
                 continue
             obj = z.read(names[model]).decode("utf-8", "replace")
             mtl_name = names[model].rsplit("/", 1)[0] + "/" + obj.split("mtllib ")[1].split("\n")[0].strip()
+            names_dir = names[model].rsplit("/", 1)[0]
             mtl = z.read(mtl_name).decode("utf-8", "replace") if mtl_name in z.namelist() else ""
-            img = render(obj, mtl, yaw_deg=yaw, repeat=rep)
+            # A kit that paints with a texture atlas hands the renderer its sheet; one that paints
+            # with per-material `Kd` does not. See `load_obj_uv`.
+            atlas = None
+            desat = None
+            if "map_Kd" in mtl:
+                sheet = names_dir + "/Textures/" + mtl.split("map_Kd ")[1].splitlines()[0].strip().split("/")[-1]
+                if sheet in z.namelist():
+                    from io import BytesIO
+
+                    atlas = Image.open(BytesIO(z.read(sheet)))
+                    desat = FOOD_DESAT
+            img = render(obj, mtl, yaw_deg=yaw, repeat=rep, atlas=atlas, desat=desat)
             path = out_dir / f"{slot}.png"
             img.save(path)
             print(f"  {slot:16s} <- {model:24s} x{rep}  {img.width}x{img.height}  aspect {img.width / img.height:.2f}")

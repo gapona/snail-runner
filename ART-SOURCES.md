@@ -193,3 +193,26 @@ The ship, the enemies, the boss, the scenery and the road palette are all genera
 `CanvasTexture` at boot from polygon coordinates in `src/road/decor.ts`, `src/rail/enemyArt.ts`
 and `src/road/palette.ts`. No file, no provenance question, and they recolour with the theme —
 which is exactly why the sky plates are the only raster art in the game.
+
+## Kenney Food Kit (CC0) — pickups and fruit
+
+Same licence, same pipeline and same camera as the Nature Kit rows above: downloaded to
+`dev-assets/cc0-3d/food-kit.zip`, rendered by `dev-assets/cc0-3d/smooth_render.py` at the identical
+yaw, pitch and light rig the verge and the obstacles use. That is the only reason the fruit does not
+read as a sticker laid over the game.
+
+**⚠ One change to the renderer was unavoidable and is worth knowing.** The Nature Kit paints with
+per-material `Kd`; the Food Kit paints with a single texture atlas and every material is literally
+`Kd 1 1 1` plus `map_Kd colormap.png`. A loader that reads only `Kd` renders the whole kit **white**,
+which is what the first strawberry came back as. `load_obj_uv` keeps the texture coordinates and
+samples the sheet once per face at the UV centroid — the atlas is a palette rather than a picture,
+so one sample recovers the flat colour exactly, with no per-pixel texturing and no change to the
+rasteriser. `FOOD_DESAT` is 0.12 rather than `KD_DESAT`'s 0.55: a verge prop is multiplied by its
+biome's tint and must be pulled toward grey first, and nothing tints a pickup.
+
+| file | model | source | licence | added |
+|---|---|---|---|---|
+| `public/assets/pickup/pickup-fruit-grapes.png` | `grapes` | Kenney Food Kit, https://kenney.nl/assets/food-kit | CC0 | 2026-08-27 |
+| `public/assets/pickup/pickup-fruit-banana.png` | `banana` | Kenney Food Kit, https://kenney.nl/assets/food-kit | CC0 | 2026-08-27 |
+| `public/assets/pickup/pickup-fruit-melon.png` | `watermelon` | Kenney Food Kit, https://kenney.nl/assets/food-kit | CC0 | 2026-08-27 |
+| `public/assets/pickup/pickup-fruit-pear.png` | `pear` | Kenney Food Kit, https://kenney.nl/assets/food-kit | CC0 | 2026-08-27 |

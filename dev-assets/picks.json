@@ -5,7 +5,6 @@
   "obs_low_2": "obs_low_2_lp",
   "obs_block_0": "obs_block_0_lp",
   "obs_block_1": "obs_block_1_lp",
-  "pick_boost": "pick_boost_v10",
   "pick_shield": "pick_shield_v5",
   "pick_coin": "pick_coin_v10",
   "for_pine": "for_pine_lp",
@@ -60,5 +59,10 @@
   "rid_scree": "rid_scree_lp",
   "mtn_peaks": "mtn_peaks_lp",
   "mtn_hills": "mtn_hills_lp",
-  "mtn_crags": "mtn_crags_lp"
+  "mtn_crags": "mtn_crags_lp",
+  "fruit_grapes": "fruit_grapes",
+  "fruit_banana": "fruit_banana",
+  "fruit_melon": "fruit_melon",
+  "fruit_pear": "fruit_pear",
+  "pick_boost": "pick_boost"
 }

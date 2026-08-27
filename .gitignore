@@ -21,3 +21,6 @@ dev-assets/cc0-3d/*.zip
 # Python bytecode from the sprite build scripts
 __pycache__/
 *.pyc
+
+# The Food Kit is 4.6MB and one curl away — see ART-SOURCES.md
+dev-assets/cc0-3d/food-kit.zip

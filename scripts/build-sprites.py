@@ -68,7 +68,7 @@ from collections import deque
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -83,6 +83,9 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCES = [
     ROOT / "dev-assets" / "generated",
     ROOT / "dev-assets" / "lowpoly",
+    # The Food Kit renders, which go straight from the renderer's output rather than through a
+    # pick round: there is one render per fruit and no variants to choose between.
+    ROOT / "dev-assets" / "cc0-3d" / "out-food",
 ]
 ASSETS = ROOT / "public" / "assets"
 
@@ -495,35 +498,69 @@ PICKUP_KEYS = {
     "pick_boost": "pickup-boost",
     "pick_shield": "pickup-shield",
     "pick_coin": "pickup-coin",
+    # **Four fruits, not the five the plan asks for, and the fifth is written down rather than
+    # fudged.** They are chosen by SILHOUETTE and not by species -- a bunch, an arc, a circle and a
+    # teardrop -- and the missing one is the plan's wedge. Three candidates were rendered and all
+    # three failed on shape: `watermelon` is a whole melon and reads as a second circle,
+    # `cheese-cut` comes out at 4.97:1, a flat sliver rather than a wedge, and `carrot` at 0.48
+    # reads as a stick at the 24px a pickup is judged at. Same call `coast` and `dunes` got when a
+    # prop slot had no good answer in the kit: ship what reads, name what does not.
+    #
+    # **⚠ And two obvious picks are ruled out by the threat reservation rather than by shape.**
+    # Strawberry and apple are both warm red, `threat_guard` rotates reserved pixels out at build
+    # time, and a rotated strawberry comes back brown -- which is not a strawberry. A red fruit is
+    # not available in this game at all, and that is a property of the palette, not of the kit.
+    "fruit_grapes": "pickup-fruit-grapes",
+    "fruit_banana": "pickup-fruit-banana",
+    "fruit_melon": "pickup-fruit-melon",
+    "fruit_pear": "pickup-fruit-pear",
 }
 
-# The shared backing disc, as fractions of the delivered canvas. Colour and alpha are the
-# procedural `pickupArt.ts` disc's own, so art-backed and drawn pickups sit on the same plate.
-DISC_RADIUS = 0.49
-# **Tuned by looking at it in the running game, and the first values were wrong by a lot.** At
-# alpha 205 over a 0.72 glyph fit, a coin passing the camera read as a dark hole in the road with
-# something small inside it: the plate was the object and the glyph was its decoration, which is
-# the exact inversion of what the plate is for. A backing disc's whole job is to be the thing you
-# do NOT look at.
-DISC_FILL = (26, 28, 26, 140)
-DISC_RIM = (250, 250, 245, 215)
-DISC_RIM_WIDTH = 0.03
-# How much of the disc the glyph is allowed to cover. Under 1 by a real margin either way: the
-# plate only does its job if a ring of it survives all the way round the glyph at the 13px a
-# portrait phone delivers, and the glyph only does its job if it is what the eye lands on.
-GLYPH_FIT = 0.86
+# ── The readability contract, after the backing disc ────────────────────────
+#
+# **⚠ The dark disc is gone, and it could only go once something replaced what it was doing.** It
+# was never decoration: a pickup has to separate from grey road, green grass and pale sand, and the
+# nine biomes make every one of those the background at some point. One dark plate did that
+# everywhere. Removing it without a replacement loses the pickup on sand, which is the failure to
+# avoid rather than the tidy-up to celebrate.
+#
+# What replaces it, in three parts:
+#
+#   RIM LIGHT      a bright outline round the silhouette, its width **a fraction of the sprite's
+#                  own height** rather than a pixel count. A constant-pixel outline is drawn at one
+#                  size and displayed at fifty: at 13px on a portrait phone it swallows the glyph
+#                  and at 300px passing the camera it is a hairline. A fraction is the same
+#                  proportion at every distance, which is the only thing that survives a billboard.
+#   THE SHADOW     already exists, already projected, already sized by height -- see `shadows.ts`.
+#                  It is what separates the object from the ground it floats over.
+#   THE SILHOUETTE closed and compact, which is what the fruit set was chosen on.
+RIM_WIDTH = 0.045
+# Warm white rather than pure: a neutral rim on a warm biome reads as a cut-out edge, and this has
+# to read as light catching a contour.
+RIM_COLOUR = (255, 250, 235, 230)
+# How much of the canvas the glyph fills. Higher than it was under the disc, which had to leave a
+# ring of itself showing all the way round.
+GLYPH_FIT = 0.94
+
+
+def _rim(glyph: Image.Image, width_px: int) -> Image.Image:
+    """A bright outline around whatever is opaque in `glyph`, as its own RGBA layer.
+
+    Dilating the alpha and subtracting the original is the whole of it -- a morphological outline
+    rather than a stroke, so it follows a bunch of grapes as exactly as it follows a disc. Done on
+    the alpha alone, so a dark fruit and a light one get the same ring.
+    """
+    alpha = glyph.getchannel("A")
+    grown = alpha.filter(ImageFilter.MaxFilter(max(3, width_px * 2 + 1)))
+    ring = ImageChops.subtract(grown, alpha)
+    out = Image.new("RGBA", glyph.size, RIM_COLOUR[:3] + (0,))
+    out.putalpha(ring.point(lambda v: min(255, round(v * RIM_COLOUR[3] / 255))))
+
+    return out
 
 
 def build_pickups(report: list) -> None:
-    """The three pickups, each composited onto ONE shared dark backing disc.
-
-    **The disc is drawn here rather than rendered, and that is the whole reason it exists.** A
-    pickup has to separate from grey road, green grass and pale sand, and the nine biomes make
-    every one of those the background at some point; one dark plate does that everywhere. Its job
-    is therefore to be IDENTICAL on all three, which three independently rendered discs cannot be —
-    the generation round that asked for it in the prompt returned none at all, and would have
-    returned three different ones if it had. Drawing it costs nothing and gets it exactly right.
-    """
+    """Every pickup and every fruit, on the rim-light contract rather than a backing disc."""
     out_dir = ASSETS / "pickup"
     out_dir.mkdir(parents=True, exist_ok=True)
     size = LONG_SIDE["pickup"]
@@ -534,21 +571,10 @@ def build_pickups(report: list) -> None:
             report.append((slot, "SKIPPED — no pick"))
             continue
 
+        # A pickup keeps its colour: nothing tints it, and it has to read the same in every biome.
         glyph, meta = process(Image.open(src), round(size * GLYPH_FIT), desaturate=0.0)
 
-        # Supersampled 4x, then reduced: the disc's rim is a circle a couple of pixels wide at
-        # 128px, and `ImageDraw.ellipse` has no antialiasing of its own.
-        ss = 4
-        plate = Image.new("RGBA", (size * ss, size * ss), (0, 0, 0, 0))
-        d = ImageDraw.Draw(plate)
-        r = DISC_RADIUS * size * ss
-        cx = cy = size * ss / 2
-        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=DISC_FILL,
-                  outline=DISC_RIM, width=max(1, round(DISC_RIM_WIDTH * size * ss)))
-        plate = plate.resize((size, size), Image.LANCZOS)
-
-        # The glyph is fitted to the disc's inner circle by its own longest side, so a tall shape
-        # and a wide one both end up inside the ring rather than one of them overflowing it.
+        canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
         fit = round(size * GLYPH_FIT)
         scale = fit / max(glyph.size)
         if scale < 1:
@@ -556,10 +582,17 @@ def build_pickups(report: list) -> None:
                 (max(1, round(glyph.width * scale)), max(1, round(glyph.height * scale))),
                 Image.LANCZOS,
             )
-        plate.alpha_composite(glyph, ((size - glyph.width) // 2, (size - glyph.height) // 2))
+
+        # Width from the glyph's own height, which is what makes it a proportion of the drawn
+        # object rather than of the file.
+        rim = _rim(glyph, max(1, round(glyph.height * RIM_WIDTH)))
+        at = ((size - glyph.width) // 2, (size - glyph.height) // 2)
+
+        canvas.alpha_composite(rim, at)
+        canvas.alpha_composite(glyph, at)
 
         dst = out_dir / f"{key}.png"
-        plate.save(dst, "PNG", optimize=True)
+        canvas.save(dst, "PNG", optimize=True)
         report.append((key, f"{dst.stat().st_size // 1024}KB {size}x{size} "
                             f"glyph {glyph.width}x{glyph.height} threat {meta['threatMoved']}"))
 
