@@ -179,29 +179,36 @@ check('two ways of drawing the arc by hand are both rejected', () => {
   console.log(`    45 units low: ${takenSag}/${count} collected; apex 50% high: ${takenEye}/${count}`)
 })
 
-check('the speed band an arc survives is measured rather than assumed', () => {
-  // **⚠ An arc in world space is a function of the run speed and the placer cannot know it.** The
-  // heights are right in TIME and the positions are laid for one speed, so flying it faster or
-  // slower slides the snail along its own arc relative to the chain. This does not assert a band —
-  // it prints one, because the trampoline chunk is what gets to decide whether the speed at a
-  // launch is pinned, and it needs this number to decide with.
-  const points = chainPoints({
-    kind: 'arc',
-    pickup: 'coin',
-    count: 5,
-    fromZ: 0,
-    offsetX: 0,
-    launchV: JUMP_LAUNCH_V,
-    speed: ARC_REFERENCE_SPEED,
-  })
+check('⚠ laid for the speed it is flown at, an arc is collected whole at every speed', () => {
+  // **An arc in world space is a function of the run speed, and no placer can know it.** The heights
+  // are right in TIME; the positions those heights sit at are `speed * t`. Laid at one speed and
+  // flown at another, the snail slides along its own arc relative to the chain.
+  //
+  // Reported as coins not always being collected off a ramp, with Fever correctly guessed as the
+  // cause: a Fever entered between the approach and the ramp changes the speed by 60%. The scene
+  // therefore lays the chain again AT THE MOMENT OF LAUNCH, where the speed is a fact rather than a
+  // prediction -- which is what this asserts, and the mismatch below is what it is worth.
   const rows = []
+  const mismatched = []
 
   for (const speed of [SPEED_BASE, SPEED_CAP * 0.75, SPEED_CAP, SPEED_CAP * 1.25, MAX_ATTAINABLE_SPEED]) {
-    rows.push(`${speed.toFixed(0)}u/s ${flyThrough(points, speed).size}/${points.length}`)
-  }
-  console.log(`    collected by speed: ${rows.join(', ')}`)
+    const spec = { kind: 'arc', pickup: 'coin', count: 5, fromZ: 0, offsetX: 0, launchV: JUMP_LAUNCH_V, speed }
+    const matched = flyThrough(chainPoints(spec), speed).size
+    // The same chain laid for the reference speed and flown at this one -- the arrangement before
+    // the launch-time relay, kept as the control.
+    const laidElsewhere = chainPoints({ ...spec, speed: ARC_REFERENCE_SPEED })
 
-  assert.equal(flyThrough(points, ARC_REFERENCE_SPEED).size, points.length, 'the reference speed itself failed')
+    rows.push(`${speed.toFixed(0)}u/s ${matched}/5`)
+    mismatched.push(flyThrough(laidElsewhere, speed).size)
+    assert.equal(matched, 5, `an arc laid for ${speed.toFixed(0)}u/s and flown at it collected ${matched}/5`)
+  }
+
+  console.log(`    laid for the speed it is flown at: ${rows.join(', ')}`)
+  console.log(`    laid for ${ARC_REFERENCE_SPEED}u/s and flown at each: ${mismatched.map((n) => n + '/5').join(', ')}`)
+  assert.ok(
+    Math.min(...mismatched) < 5,
+    'a chain laid for the wrong speed collected everything, so this check is measuring nothing',
+  )
 })
 
 console.log('lines and waves')

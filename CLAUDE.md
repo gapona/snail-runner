@@ -1287,11 +1287,35 @@ with the old reasoning kept on it, so the next person to shrink it finds out why
 at Fever speed and **0 of 5** at the speed a run starts at — because the heights are right in *time*
 and the positions are `speed * t`.
 
-`RunScene.relayArcs` re-lays each ramp's chain **once, from the run's real speed**, when the ramp
-comes within `ARC_RELAY_Z` (90 segments, under two seconds of road). `SPEED_ACCEL` has a 5.9-second
-time constant, so the speed then is within a couple of percent of the speed at the ramp, and the
-chain is far enough out that nothing is seen moving. The alternative — pinning the horizontal speed
-through the flight — would have let the ramp overrule the run's whole speed economy for a second.
+**⚠ And re-laying it once on the approach was not enough, which a player found.** Reported as coins
+not always being collected off a ramp, with Fever correctly guessed as the reason: a Fever entered
+between the approach and the ramp raises the speed by 60% in a fraction of a second, and nothing
+had re-laid the chain since.
+
+So it is laid **twice**. Once on the approach — every frame while the ramp is between
+`ARC_RELAY_NEAR_Z` and `ARC_RELAY_Z`, far enough out that nothing is seen moving and near enough
+that the speed is settled — and then again **at the moment of launch**, where the flight's speed is
+a fact rather than a prediction. Inside `ARC_RELAY_NEAR_Z` the chain is left alone: the player is
+lining up on it, and coins sliding under that approach are worse than coins laid for a speed a
+second out of date.
+
+Measured, over the whole speed range:
+
+| flown at | laid for the same speed | laid for `SPEED_CAP` |
+|---|---|---|
+| 1440 (`SPEED_BASE`) | **5 of 5** | 0 of 5 |
+| 2700 | **5 of 5** | 3 of 5 |
+| 3600 (`SPEED_CAP`) | **5 of 5** | 5 of 5 |
+| 4500 | **5 of 5** | 4 of 5 |
+| 5760 (`MAX_ATTAINABLE_SPEED`) | **5 of 5** | 3 of 5 |
+
+The right-hand column is the arrangement that shipped and is kept as the check's control, so the
+assertion is shown to be measuring something. Live: a ramp taken at Fever speed now collects all
+five where it collected three.
+
+The alternative — pinning the horizontal speed through the flight — would have let the ramp overrule
+the run's whole speed economy for a second, and would have read as the ramp slowing you down in the
+one moment you are fastest.
 
 `movePickup` keeps the segment index in step when a pickup moves; a pickup moved without it is drawn
 in one place and collected in another, which is the same class of defect as `formations.ts`'s own

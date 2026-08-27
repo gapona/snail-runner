@@ -30,7 +30,7 @@ import { addFreeze, isFrozen, type Freezable } from '../run/hitstop'
 import { hits, placeRunObstacles, type Obstacle } from '../run/obstacles'
 import { ObstacleSprites } from '../run/ObstacleSprites'
 import { reaches, type Pickup } from '../run/pickups'
-import { ARC_RELAY_Z, chainPoints, placeFormations } from '../run/formations'
+import { ARC_RELAY_NEAR_Z, ARC_RELAY_Z, chainPoints, placeFormations } from '../run/formations'
 import {
   placeRamps,
   RAMP_AIR_CONTROL,
@@ -565,6 +565,9 @@ export class RunScene extends Phaser.Scene {
         if (!ridesOver(this.player, ramp)) continue
 
         this.player = launch(this.player, RAMP_LAUNCH_V, RAMP_SPINS, RAMP_AIR_CONTROL)
+        // The chain is laid for the speed this flight is actually flown at, which is knowable here
+        // and nowhere earlier. See `layArc`.
+        this.layArc(ramp, this.run.speed)
         squashOnLaunch(this.squash, this.time.now)
         playSfx(SFX.JUMP, { detune: -400 })
 
@@ -592,31 +595,50 @@ export class RunScene extends Phaser.Scene {
    */
   private relayArcs(playerZ: number): void {
     for (const ramp of this.lap.liveRamps()) {
-      if (this.arcRelaid.has(ramp)) continue
-
       const ahead = wrapZ(ramp.z - playerZ, this.world.trackLength)
 
-      if (ahead > ARC_RELAY_Z) continue
+      // **Only while it is far enough away that nothing is seen moving.** Inside this the chain is
+      // left alone: the player is lining up on it, and coins sliding under an approach are worse
+      // than coins laid for a speed a second out of date. The launch itself puts it right — see
+      // `layArc`.
+      if (ahead > ARC_RELAY_Z || ahead < ARC_RELAY_NEAR_Z) continue
 
-      this.arcRelaid.add(ramp)
+      this.layArc(ramp, this.run.speed)
+    }
+  }
 
-      const mine = this.lap.livePickups().filter((pickup) => pickup.arcOf === ramp.id)
+  /**
+   * Lays one ramp's arc for a given speed.
+   *
+   * **⚠ An arc in world space is a function of the run speed, and no placer can know it.** The
+   * heights come from the flight solver and are right in *time*; the positions those heights sit at
+   * are `speed * t`. `verify:formations` measured what the mismatch costs: a chain laid at
+   * `SPEED_CAP` is collected 5 of 5 at the cap, **3 of 5 at Fever speed and 0 of 5 at the speed a
+   * run starts at**. Reported as coins not always being collected off a ramp, with Fever correctly
+   * guessed as the reason — a Fever entered between the approach and the ramp changes the speed by
+   * 60% and nothing had re-laid the chain.
+   *
+   * So it is laid twice: once on the approach, far enough out that the shift is invisible, and once
+   * **at the moment of launch**, where the speed is known exactly rather than predicted. The chain
+   * belongs to the flight it is collected in, and that is the only instant that flight is a fact.
+   */
+  private layArc(ramp: Ramp, speed: number): void {
+    const mine = this.lap.livePickups().filter((pickup) => pickup.arcOf === ramp.id)
 
-      if (mine.length === 0) continue
+    if (mine.length === 0) return
 
-      const points = chainPoints({
-        kind: 'arc',
-        pickup: 'coin',
-        count: mine.length,
-        fromZ: ramp.z,
-        offsetX: ramp.offsetX,
-        launchV: RAMP_LAUNCH_V,
-        speed: this.run.speed,
-      })
+    const points = chainPoints({
+      kind: 'arc',
+      pickup: 'coin',
+      count: mine.length,
+      fromZ: ramp.z,
+      offsetX: ramp.offsetX,
+      launchV: RAMP_LAUNCH_V,
+      speed,
+    })
 
-      for (let i = 0; i < mine.length; i++) {
-        this.lap.movePickup(mine[i], wrapZ(points[i].z, this.world.trackLength), points[i].offsetX, points[i].y)
-      }
+    for (let i = 0; i < mine.length; i++) {
+      this.lap.movePickup(mine[i], wrapZ(points[i].z, this.world.trackLength), points[i].offsetX, points[i].y)
     }
   }
 

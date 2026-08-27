@@ -123,6 +123,17 @@ export const ARC_COUNT = 5
  */
 export const ARC_RELAY_Z = SEGMENT_LENGTH * 90
 
+/**
+ * How close a ramp may get before its arc stops being re-laid, in world units.
+ *
+ * 40 segments — beyond the far end of the chain itself, which reaches `speed * flightDuration` =
+ * 21 to 34 segments past the ramp. Inside this the player is lining up on the chain and coins
+ * sliding under that approach would be worse than coins laid for a speed a second out of date; the
+ * launch itself is what puts it right, at the one instant the flight's speed is a fact rather than
+ * a prediction.
+ */
+export const ARC_RELAY_NEAR_Z = SEGMENT_LENGTH * 40
+
 /** Milliseconds of chain rhythm, in world units at the fastest the game can go. */
 export function chainSpacingZ(gapMs: number): number {
   return (gapMs / 1000) * MAX_ATTAINABLE_SPEED
