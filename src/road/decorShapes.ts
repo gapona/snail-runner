@@ -56,7 +56,6 @@ export const DECOR_TEXTURES: readonly DecorTexture[] = [
   { key: 'decor-wet_stump', width: 126, height: 80 },
   { key: 'decor-wet_lily', width: 127, height: 46 },
   { key: 'decor-wet_willow', width: 87, height: 150 },
-  { key: 'decor-wet_log', width: 127, height: 52 },
   { key: 'decor-wet_cattail', width: 135, height: 140 },
   { key: 'decor-for_pine', width: 58, height: 190 },
   { key: 'decor-for_birch', width: 73, height: 175 },
@@ -86,9 +85,10 @@ export const DECOR_TEXTURES: readonly DecorTexture[] = [
   { key: 'decor-cry_pillar', width: 139, height: 170 },
   { key: 'decor-cry_slab', width: 76, height: 52 },
 
-  // `coast`, four props rather than six, for the same reason `crystal` has five: `coa_drift` came
-  // back as a cartoon bone and `coa_shell` inside a drawn rectangular frame, and both are being
-  // re-rendered rather than shipped. See `DECOR_PICKS` in `scripts/build-sprites.py`.
+  // `coast`, four props rather than six. `coa_shell` is a large glossy spiral -- the mascot's own
+  // silhouette, which the player must never have to search for -- and `coa_drift` is the hollow-log
+  // render that `wet_log` and `obstacle-overhead-0` were both pulled for. See `PULLED_ART` in
+  // `src/run/obstacleArt.ts` for what that render actually fails at.
   { key: 'decor-coa_stack', width: 141, height: 150 },
   { key: 'decor-coa_kelp', width: 105, height: 130 },
   { key: 'decor-coa_palm', width: 134, height: 190 },

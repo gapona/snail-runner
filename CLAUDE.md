@@ -1387,14 +1387,25 @@ holding a destroyed texture. **Zero bytes**, and verified live across all seven 
 - Depth sits between sky layer 0 and layer 1, so the haze bands pass in **front** of it. A sun with
   the haze behind it is a lamp stuck on the glass.
 
-### ⚠ `decor-wet_log` is pulled, and the species is not the problem
+### ⚠ Every hollow-log render has now been pulled, and the bore is what fails
 
-Reported by pointing at it. The Kenney model (`log_large`) is hollow and the render squares the bore
-off into a dark rectangle in the end face, so at the size a verge prop is read the object is a brown
-box with a black doorway in it — a crate or a pipe. `decor-coa_drift` is the same subject with a
-hexagonal bore and reads as a log, which is what says the failure is this render rather than the
-choice of model. Its key keeps the procedural silhouette, the same call `ash_mound` and `dune_spire`
-got.
+Reported by pointing at it, three times, at three different assets. The Kenney model (`log_large`)
+is hollow and the render squares the bore off into a dark rectangle in the end face, so at the size
+one of these is read the object is a brown box with a black doorway in it — a crate or a pipe.
+
+**`decor-coa_drift` was kept the first time on the reasoning that a *hexagonal* bore reads as a log
+where a square one does not. That was wrong, and a player settled it.** The third rejection was
+`obstacle-overhead-0`, which is the same render standing across the road as the class you run
+under; the report was a photograph of two of them.
+
+All three are gone: no PNG, and for the two decor keys no entry in `DECOR_TEXTURES` and no place in
+a biome's prop list either. **`obstacle-overhead-0` keeps its key** — `overhead` is a mandatory
+class and its procedural silhouette carries the whole read anyway, a bar in the air with empty road
+drawn under it — and `Preloader` iterates `OBSTACLE_ART_KEYS` rather than every key, because a
+deliberate gap must not spend a loader 404 on every boot. See `PULLED_ART`.
+
+**The rule this leaves: the fix is a solid end face, not a different bore shape.** Anything
+re-rendered from a hollow model needs the bore capped before it is picked, whatever polygon it is.
 
 ### What the numeric gates still cannot see
 

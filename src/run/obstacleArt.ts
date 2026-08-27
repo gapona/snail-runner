@@ -103,6 +103,32 @@ export const OBSTACLE_TEXTURE_KEYS: readonly string[] = (
   Object.keys(OBSTACLE_VARIANTS) as ObstacleKind[]
 ).flatMap((kind) => Array.from({ length: OBSTACLE_VARIANTS[kind] }, (_, i) => obstacleTextureKey(kind, i)))
 
+/**
+ * Keys whose rendered art is pulled, and which therefore ship no PNG.
+ *
+ * **⚠ `overhead-0` was a hollow log with the bore squared off into a dark rectangle in its end
+ * face**, and at the size an obstacle is read that is not a log: it is a brown box with a black
+ * doorway in it, i.e. a crate or a pipe. Reported by pointing at a row of them lying across the
+ * road. It is the third time this exact render has been rejected — `decor-wet_log` went first, and
+ * `decor-coa_drift` was kept on the reasoning that a *hexagonal* bore reads as a log where a square
+ * one does not. That reasoning is now measured against a player and was wrong: the bore's shape is
+ * not what fails, the bore is.
+ *
+ * The key stays and falls back to the procedural silhouette — `overhead` is a mandatory class (it
+ * is the one that punishes being airborne, see `OBSTACLE_BANDS`) and its silhouette carries the
+ * whole read anyway: a bar in the air with empty road drawn under it. Same call `ash_mound` and
+ * `dune_spire` got, and it is why `createObstacleTextures` draws only what is missing.
+ *
+ * `Preloader` iterates `OBSTACLE_ART_KEYS` rather than every key, so a pulled render is not a
+ * 404 on every boot — a loader error is a real signal and must not be spent on a deliberate gap.
+ */
+const PULLED_ART = new Set<string>(['obstacle-overhead-0'])
+
+/** The keys that actually have a PNG to load. */
+export const OBSTACLE_ART_KEYS: readonly string[] = OBSTACLE_TEXTURE_KEYS.filter(
+  (key) => !PULLED_ART.has(key),
+)
+
 /** Which of the keys above this module drew itself, as opposed to the loader having filled them. */
 const generated = new Set<string>()
 

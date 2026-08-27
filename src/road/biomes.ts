@@ -362,11 +362,11 @@ export const BIOMES: readonly Biome[] = [
   {
     id: 'wetland',
     ground: [0x2c6a5e, 0x307163],
-    // **`decor-wet_log` is pulled, and its key keeps the procedural silhouette.** The Kenney model
-    // (`log_large`) is hollow, and the render squares the hollow off into a dark rectangle in the
-    // end face — so at the size a verge prop is read the object is a brown box with a black
-    // doorway in it, i.e. a crate or a pipe. `decor-coa_drift` is the same subject with a
-    // hexagonal bore and reads as a log, so the species is not the problem, this render is.
+    // **`decor-wet_log` is pulled and gone: no key, no PNG.** The Kenney model (`log_large`) is
+    // hollow and the render squares the bore off into a dark rectangle in the end face, so at the
+    // size a verge prop is read the object is a brown box with a black doorway in it. Every
+    // hollow-log render in this project has now been rejected the same way — see `PULLED_ART` in
+    // `src/run/obstacleArt.ts`, which is where the third one is written up.
     props: ['decor-wet_reeds', 'decor-wet_reeds', 'decor-wet_stump', 'decor-wet_lily', 'decor-wet_willow', 'decor-wet_cattail', 'decor-wet_cattail'],
     /** green water rather than green leaf: cooler and less saturated than forest. */
     decorTint: 0x8fd0bc,
@@ -425,13 +425,14 @@ export const BIOMES: readonly Biome[] = [
     // relationship to its own theme's asphalt rather than an absolute that a dark theme breaks.
     ground: [0xc9b483, 0xd1bd8d],
     // Five props, not six, and the missing one is a deliberate omission rather than a pending
-    // render. `coa_drift` is back — it shipped once as a cartoon bone and the regeneration negates
-    // `bone, skull, antler` by name. **`coa_shell` is not, and will not be:** a large glossy
+    // render. **`coa_drift` is pulled again**, and not for the cartoon bone it first shipped as:
+    // the re-render is the hollow log, kept once on the reasoning that a hexagonal bore reads as a
+    // log where a square one does not. A player pointed at it. The bore's shape is not what fails. **`coa_shell` is not, and will not be:** a large glossy
     // spiral shell is the mascot's own silhouette, and at the 20-60px a verge prop is read at,
     // scattering snail shells along the roadside makes the player search for the one object this
     // whole art direction exists to keep them from searching for. The render is fine; the subject
     // is wrong for this game. See "The Regeneration: A Glossy World" in CLAUDE.md.
-    props: ['decor-coa_stack', 'decor-coa_stack', 'decor-coa_kelp', 'decor-coa_palm', 'decor-coa_reef', 'decor-coa_reef', 'decor-coa_drift'],
+    props: ['decor-coa_stack', 'decor-coa_stack', 'decor-coa_kelp', 'decor-coa_palm', 'decor-coa_reef', 'decor-coa_reef'],
     /** pale sea light. */
     decorTint: 0xa4cfe8,
     decals: ['scatter', 'scatter', 'puddle', 'stones', 'stain'],

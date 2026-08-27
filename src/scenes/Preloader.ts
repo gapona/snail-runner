@@ -3,7 +3,7 @@ import { renderSfxUris } from '../audio/sfx'
 import { skyPlateKey, SKYLINE_TEXTURE } from '../road/Backdrop'
 import { DECOR_TEXTURES } from '../road/decorShapes'
 import { themeIds } from '../road/themes'
-import { OBSTACLE_TEXTURE_KEYS } from '../run/obstacleArt'
+import { OBSTACLE_ART_KEYS } from '../run/obstacleArt'
 import { PICKUP_TEXTURES } from '../run/pickupArt'
 import { SNAIL_FRAMES, snailFrameKey } from '../run/snailArt'
 import { bindLayout } from '../ui/layout'
@@ -89,7 +89,9 @@ export class Preloader extends Phaser.Scene {
     for (let i = 0; i < SNAIL_FRAMES; i++) {
       this.load.image(snailFrameKey(i), `assets/snail/${snailFrameKey(i)}.png`)
     }
-    for (const key of OBSTACLE_TEXTURE_KEYS) this.load.image(key, `assets/obstacle/${key}.png`)
+    // `OBSTACLE_ART_KEYS`, not every key: a pulled render has no PNG, and asking for one would
+    // spend a loader error on a deliberate gap. See `PULLED_ART`.
+    for (const key of OBSTACLE_ART_KEYS) this.load.image(key, `assets/obstacle/${key}.png`)
     for (const key of Object.values(PICKUP_TEXTURES)) {
       this.load.image(key, `assets/pickup/${key}.png`)
     }

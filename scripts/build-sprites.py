@@ -456,7 +456,12 @@ OBSTACLE_KEYS = {
     "obs_low_2": "obstacle-low-2",
     "obs_block_0": "obstacle-blocking-0",
     "obs_block_1": "obstacle-blocking-1",
-    "obs_over_0": "obstacle-overhead-0",
+    # `obs_over_0` is PULLED. The render is a hollow log with the bore squared off into a dark
+    # rectangle in its end face, which at obstacle size is a crate with a doorway rather than a
+    # log -- reported by a player pointing at a row of them across the road. The class falls back
+    # to its procedural silhouette; see `PULLED_ART` in src/run/obstacleArt.ts. Re-render before
+    # putting it back, and the fix is a solid end face, not a different bore shape: `coa_drift`
+    # was kept once on the reasoning that a hexagonal bore reads as a log, and it does not.
 }
 
 
@@ -777,12 +782,14 @@ SKYLINE_HAZE = (206, 216, 228, 255)
 BIOME_SLOTS = {
     "forest": ["for_pine", "for_birch", "for_fern", "for_mushroom", "for_bramble", "for_boulder"],
     "dunes": ["dune_rock", "dune_grass", "dune_cactus", "dune_bone", "dune_shrub", "dune_spire"],
-    "wetland": ["wet_reeds", "wet_stump", "wet_lily", "wet_willow", "wet_log", "wet_cattail"],
+    # `wet_log` pulled: same hollow-log render as `obs_over_0`, same failure.
+    "wetland": ["wet_reeds", "wet_stump", "wet_lily", "wet_willow", "wet_cattail"],
     "ridge": ["rid_scree", "rid_monolith", "rid_arch", "rid_cairn", "rid_lichen", "rid_snag"],
     "ashen": ["ash_stump", "ash_slab", "ash_spar", "ash_vent", "ash_scrub", "ash_mound"],
     "fungal": ["fun_tall", "fun_dome", "fun_cluster", "fun_pair", "fun_wide"],
     "crystal": ["cry_cluster", "cry_geode", "cry_bloom", "cry_pillar", "cry_slab", "cry_shard"],
-    "coast": ["coa_stack", "coa_kelp", "coa_palm", "coa_reef", "coa_drift", "coa_shell"],
+    # `coa_drift` pulled for the same reason -- a hexagonal bore is still a bore.
+    "coast": ["coa_stack", "coa_kelp", "coa_palm", "coa_reef", "coa_shell"],
     "ruins": ["rui_rubble", "rui_column", "rui_wall", "rui_arch", "rui_statue", "rui_obelisk"],
 }
 
