@@ -21,7 +21,8 @@ import { createSquashState, squashAt, squashOnLanding, squashOnLaunch, type Squa
 import { addFreeze, isFrozen, type Freezable } from '../run/hitstop'
 import { hits, placeRunObstacles, type Obstacle } from '../run/obstacles'
 import { ObstacleSprites } from '../run/ObstacleSprites'
-import { placePickups, reaches, type Pickup } from '../run/pickups'
+import { reaches, type Pickup } from '../run/pickups'
+import { placeFormations } from '../run/formations'
 import {
   feverClearanceUnits,
   feverInvulnerable,
@@ -386,7 +387,7 @@ export class RunScene extends Phaser.Scene {
     this.obstaclesBySegment = indexBySegment(this.obstacles, this.world.track.length)
     // Laid *after* the obstacles and against them — see `sideAwayFrom`. A pickup in the gap the
     // player was already threading costs nothing, and a pickup that costs nothing is scenery.
-    this.pickups = placePickups({
+    this.pickups = placeFormations({
       rng: createRng((this.runSeed ^ 0x5eed) + Math.round(lapOffset / SEGMENT_LENGTH)),
       fromZ: lapOffset === 0 ? SEGMENT_LENGTH * 20 : 0,
       toZ: this.world.trackLength,

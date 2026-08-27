@@ -119,6 +119,15 @@ export interface Pickup {
   z: number
   offsetX: number
   kind: PickupKind
+  /**
+   * How high off the road this one floats, in world units.
+   *
+   * **Per pickup rather than the constant it used to be, and `formations.ts` is why.** A `line` or
+   * a `wave` sits at `PICKUP_HEIGHT` like everything always did; an `arc` follows the snail's own
+   * flight, so every pickup in it is at a different height and there is no single number that could
+   * describe the chain.
+   */
+  y: number
   /** Set when collected, so the sprite pool can stop drawing it. Reset per lap by the scene. */
   taken: boolean
 }
@@ -170,39 +179,6 @@ export function chooseKind(rng: () => number): PickupKind {
   return 'coin'
 }
 
-export interface PickupPlacementOptions {
-  rng: () => number
-  fromZ: number
-  toZ: number
-  trackLength: number
-  /** The obstacles already laid, which the placement deliberately works against. */
-  obstacles: readonly Obstacle[]
-}
-
-/**
- * Lays pickups along a stretch.
- *
- * **No passability proof, and that is not an omission.** A pickup cannot make a stretch
- * impassable — it has no collision, only a collection box — so there is nothing to prove. What
- * there *is* to get right is that it is never free, which is `sideAwayFrom`'s job.
- */
-export function placePickups(options: PickupPlacementOptions): Pickup[] {
-  const { rng, fromZ, toZ, trackLength, obstacles } = options
-  const pickups: Pickup[] = []
-  let id = 0
-  let seededSide = rng() < 0.5 ? -1 : 1
-
-  for (let z = fromZ; z < toZ; z += PICKUP_SPACING_Z * (0.8 + rng() * 0.6)) {
-    const side = sideAwayFrom(obstacles, z, trackLength, seededSide)
-    const reach = PICKUP_OFFSET.min + rng() * (PICKUP_OFFSET.max - PICKUP_OFFSET.min)
-
-    seededSide = side
-    pickups.push({ id: id++, z, offsetX: side * reach, kind: chooseKind(rng), taken: false })
-  }
-
-  return pickups
-}
-
 /**
  * Whether the snail is close enough to collect this pickup.
  *
@@ -214,5 +190,20 @@ export function reaches(body: { offsetX: number; y: number }, pickup: Pickup): b
   if (pickup.taken) return false
   if (Math.abs(body.offsetX - pickup.offsetX) >= PICKUP_HALF_WIDTHS + PLAYER_HALF_WIDTHS) return false
 
-  return body.y < PICKUP_HEIGHT + PICKUP_HALF_WIDTHS * 100 && PICKUP_HEIGHT < body.y + PLAYER_BODY_H
+  return body.y < pickup.y + PICKUP_REACH_UNDERFOOT && pickup.y < body.y + PLAYER_BODY_H
 }
+
+/**
+ * How far *below the snail's feet* a pickup may still be taken, in world units.
+ *
+ * **The vertical window is lopsided, and which way round it is lopsided is not obvious.** The
+ * snail's body occupies `[y, y + PLAYER_BODY_H]`, so a pickup may sit anywhere up to 180 units
+ * **above** its feet and be swept up by its shell — and only 16 below them, which is this. An arc
+ * laid slightly high is therefore collected and one laid slightly low is missed, which is the
+ * opposite of the first guess: `formations.ts` shipped a 45-unit safety sag on that guess and
+ * `verify:formations` collected 0 of 3.
+ *
+ * `PICKUP_HEIGHT` is that centre — half of `PLAYER_BODY_H` — which is why a ground pickup and an
+ * airborne one use the same offset and neither needed a constant of its own.
+ */
+export const PICKUP_REACH_UNDERFOOT = PICKUP_HALF_WIDTHS * 100

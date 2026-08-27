@@ -18,7 +18,8 @@
     "verify:ui": "node --import ./scripts/register-ts-loader.mjs scripts/verify-ui.mjs",
     "verify:mattes": "node scripts/verify-mattes.mjs",
     "verify:sightline": "node --import ./scripts/register-ts-loader.mjs scripts/verify-sightline.mjs",
-    "verify:fever": "node --import ./scripts/register-ts-loader.mjs scripts/verify-fever.mjs"
+    "verify:fever": "node --import ./scripts/register-ts-loader.mjs scripts/verify-fever.mjs",
+    "verify:formations": "node --import ./scripts/register-ts-loader.mjs scripts/verify-formations.mjs"
   },
   "dependencies": {
     "phaser": "^4.2.0"

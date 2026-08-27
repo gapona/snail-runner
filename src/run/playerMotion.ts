@@ -187,6 +187,28 @@ export function jump(state: PlayerState): PlayerState {
 }
 
 /**
+ * How high a flight launched at `launchV` is after `seconds`, in world units.
+ *
+ * **The closed form of the same constant-acceleration arc the tick integrates**, and it is exported
+ * so that anything wanting to know where the snail *will be* asks this rather than working it out
+ * again. `formations.ts` lays a pickup arc with it: a chain of coins whose heights were computed
+ * independently of the flight is a chain the player can visibly aim at and cannot reach, which
+ * reads as the game lying rather than as a miss.
+ *
+ * The tick applies `y += v*dt - g*dt^2/2` per step and this is that summed exactly, so the two
+ * agree to floating point rather than approximately — `verify:formations` asserts it against the
+ * real `stepPlayer` rather than trusting the algebra.
+ */
+export function flightHeight(launchV: number, seconds: number): number {
+  return launchV * seconds - 0.5 * JUMP_GRAVITY * seconds * seconds
+}
+
+/** How long a flight launched at `launchV` lasts before it is back on the ground, in seconds. */
+export function flightDuration(launchV: number): number {
+  return (2 * launchV) / JUMP_GRAVITY
+}
+
+/**
  * Advances the snail by `dtMs` of wall-clock time and returns a new state.
  *
  * **A spring, not a teleport.** Snapping to the pointer every frame reads as a cursor; the spring

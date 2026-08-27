@@ -9,7 +9,7 @@ import { billboardAppear, billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, SPRITE
 import type { Segment } from '../road/track'
 import { createPickupTextures, PICKUP_TEXTURES, pickupTexture } from './pickupArt'
 import { WORLD_LAYER, worldDepth } from './worldDepth'
-import { PICKUP_DRAW_SIZE, PICKUP_HEIGHT, type Pickup } from './pickups'
+import { PICKUP_DRAW_SIZE, type Pickup } from './pickups'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowScale } from './shadows'
 
 /**
@@ -122,7 +122,7 @@ export class PickupSprites {
           this.rect,
           ground,
           pickup.offsetX,
-          PICKUP_HEIGHT + bob,
+          pickup.y + bob,
           PICKUP_DRAW_SIZE / SPRITE_SCALE,
           PICKUP_DRAW_SIZE / SPRITE_SCALE,
           screenWidth,
@@ -147,7 +147,7 @@ export class PickupSprites {
           screenHeight,
         )
 
-        this.place(this.slots[used], pickupTexture(pickup), rect, visible, n, shadowRect, PICKUP_HEIGHT + bob)
+        this.place(this.slots[used], pickupTexture(pickup), rect, visible, n, shadowRect, pickup.y + bob)
         if (import.meta.env.DEV) {
           this.shadowMarks.push({ x: shadowRect.x, y: shadowRect.y, owner: `pickup#${pickup.id}` })
         }

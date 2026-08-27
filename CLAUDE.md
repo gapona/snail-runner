@@ -98,8 +98,8 @@ is the same question in both games.
 
 ### Reading the rest of this document
 
-**The runner's own chapters are the twelve between "## UI Kit" and "## Road Renderer"** — The Run,
-The Snail, The Jump, Obstacles, Draw Order, Pickups, Fever, The Slime Trail, The Art, The
+**The runner's own chapters are the thirteen between "## UI Kit" and "## Road Renderer"** — The Run,
+The Snail, The Jump, Obstacles, Draw Order, Pickups, Chains, Fever, The Slime Trail, The Art, The
 Difficulty Curve, The End Of A Run, The HUD. Those describe this game.
 
 Below them, everything about the road, the billboards, the biomes, the themes, the interface kit,
@@ -138,6 +138,10 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
 - `npm run verify:jump` — the same module's vertical: air time and apex invariant to frame rate,
   the apex within 1% of `JUMP_APEX`, and **the three obstacle classes separated by arithmetic
   rather than by a flag**. See "The Jump".
+- `npm run verify:formations` — `src/run/formations.ts`: pickups laid in chains. **The arc is the
+  flight solver's** — the closed form and the stepped tick are asserted to agree — a chain is
+  homogeneous, nothing is laid inside an obstacle (shown rejecting a road with no gap in it), and
+  the speed band an arc survives is printed rather than assumed. See "Chains, Not Scatter".
 - `npm run verify:fever` — `src/run/fever.ts`: the gauge does not drain, the guard outlives the
   speed, and **in 200 simulated exits over the real placer's output the first obstacle a player can
   be hit by arrives no sooner than `REACTION_MS`** — shown failing first against the same simulation
@@ -847,6 +851,104 @@ reports it by visibly dragging every pickup on screen onto the snail's line.
 **Fruit ships as four rendered PNGs under one kind** — grapes, banana, melon, pear — chosen by
 `pickupTexture` from the pickup's own id, so a lap deals the same fruit twice and a screenshot is
 reproducible. Four *kinds* would have put four rows in the weight table for one decision.
+
+## Chains, Not Scatter
+
+`src/run/formations.ts` (pure, `npm run verify:formations`). The placer used to draw one pickup
+every `PICKUP_SPACING_Z` and roll its kind independently — a road with things on it, not a line the
+player can see from a distance and decide to take. **A chain is a decision made once, at range, and
+then held**, which is the same shape an obstacle row already had and for the same reason: what the
+player reads ahead is what the game is about.
+
+Three shapes: `line` (one lane, on the ground), `wave` (a sine across the road, 8–12 pickups a
+period — the one that actually steers), and `arc` (the snail's own flight path, off a launch).
+
+### ⚠ The arc is computed by the flight solver, and that is the whole of it
+
+`playerMotion.ts` now exports `flightHeight`/`flightDuration` — the closed form of the arc the fixed
+tick integrates — and `arcPoints` calls it. **An arc laid by hand is an arc the player can see, aim
+at, hit the launch perfectly and still miss**, with no way to learn what they did wrong, so it reads
+as the game lying. Laid by the solver, hitting the launch collects the chain by construction, and
+the chain teaches what a launch is for without a word of text. Same argument as a recording driver
+calling the game's own solver rather than reimplementing its rules.
+
+`verify:formations` asserts the two forms agree — the stepped `stepPlayer` and the closed form come
+out **7.6e-13 units apart over a 700ms flight** — rather than trusting the algebra, because if they
+ever drift every other assertion in the file is measuring a fiction.
+
+### ⚠ The collection window is lopsided the opposite way from the obvious guess
+
+The snail's body is `[y, y + PLAYER_BODY_H]`, so `reaches` takes a pickup up to **180 units above**
+the feet and only `PICKUP_REACH_UNDERFOOT` (16) below them. The first version had that backwards and
+laid the arc 45 units *under* the trajectory as a safety margin — a fifth of a body height, looks
+like nothing, and collected **0 of 3**.
+
+The arc is laid at `flightHeight + PICKUP_HEIGHT`: the body's **centre**, which is exactly where a
+ground pickup sits relative to a grounded snail. One offset for both cases, and the tolerance becomes
+symmetric at ±90 units instead of +180/−16 — which is what the arc needs, because the speed it is
+flown at is not the speed it was laid for.
+
+### ⚠ An arc in world space is a function of the run speed, and the placer cannot know it
+
+The heights are right in **time**; the positions those heights sit at are `speed * t`. Laid for one
+speed and flown at another, the chain is on the trajectory in time and off it in space. Measured
+over the shipped arc, laid at `ARC_REFERENCE_SPEED = SPEED_CAP`:
+
+| speed | collected |
+|---|---|
+| 1440 (`SPEED_BASE`) | 0 of 5 |
+| 2700 | 3 of 5 |
+| 3600 (`SPEED_CAP`) | **5 of 5** |
+| 4500 | 4 of 5 |
+| 5760 (`MAX_ATTAINABLE_SPEED`) | 3 of 5 |
+
+**This is printed rather than asserted, and it is the number the trampoline chunk has to decide
+with.** Its options are to pin the horizontal speed through the flight, or to generate the arc when
+the launch is actually hit — which costs the player being able to see the chain and commit to it in
+advance, i.e. costs the thing the arc is for. Recorded here so that decision is taken against a
+measurement instead of a guess.
+
+`arc` is never placed today: `placeFormations` takes a `launches` list, it is empty until the
+trampoline exists, and `verify:formations` asserts both halves — nothing leaves the ground without a
+launch, and a launch produces an arc. **An arc over flat road is a chain hanging in the air**, which
+is the failure the whole module is about.
+
+### Three defects the suite found in the placer itself
+
+- **A chain that crossed the lap seam.** The scene relays the whole layout on every wrap, so a
+  wrapped tail sat on the same ground as the next lap's first chain — two chains in one place, mixed
+  kinds where they overlapped. The walk now stops rather than laying a chain that would not fit,
+  which is the rule the obstacle placer already follows.
+- **Chains that overlapped each other.** A twelve-coin chain spans 9504 units and the gap between
+  chain *starts* was 4160 at its tightest. The walk advances from the **end** of the chain just
+  laid, not from its start.
+- **Two ideas of where the road ends.** The points were checked against the obstacles and then run
+  through a `clampOffset` at `ROAD_EDGE` — stricter than `PICKUP_OFFSET` — so **12 of 2065** pickups
+  were checked in one place and laid in another, inside an obstacle. The clamp is gone;
+  `PICKUP_OFFSET` is the one rule, and what `chainPoints` returns is what ships.
+
+### The rules a chain obeys
+
+- **Homogeneous.** The kind is rolled once per chain, not per pickup: a line of coins with a fruit
+  in it is neither, and the player cannot decide whether it is worth leaving their lane for until
+  they are alongside it.
+- **A fruit chain is shorter than a coin chain** (3–5 against 6–12). Eight fruit are a whole Fever,
+  so a chain of eight would hand one over for a single decision; four is a quarter of one.
+  `shield` has no chain at all — a row of the same absorbed hit is not a row.
+- **Nothing is laid inside an obstacle**, and the check is shown to bite: a road with a wall every
+  two segments takes **0** pickups after `CHAIN_ATTEMPTS` redraws each, where without the rule it
+  would take a full lap of them. A coin a hair in front of a boulder is an invitation to drive into
+  the boulder, which is not a decision.
+- **Spacing is stated in milliseconds** and converted at `MAX_ATTAINABLE_SPEED`, the same rule the
+  obstacle rows follow. A coin chain's 150ms is 864 units — 240ms at the cap and 600ms at the start
+  of a run. Erring toward spread out rather than bunched, because a bunched chain reads as one blob
+  and the point is that it reads as a line.
+- **A wave shrinks its amplitude to fit rather than clamping each point.** A clamped sine goes flat
+  at both extremes, which is exactly where the player is being asked to commit to a direction.
+
+Live on `forest`: a seven-coin wave running −0.28 → 0.26 → −0.76 across the road, evenly spaced four
+to five segments apart, with the next chain visible behind it. 109 pickups on the lap against the
+old placer's ~100, in chains instead of singles.
 
 ## Fever, And The Second In Which It Ends
 
