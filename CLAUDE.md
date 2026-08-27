@@ -5200,9 +5200,14 @@ build-derived silhouettes.**
 ## Coming Out From Behind A Crest
 
 Reported as billboards popping out of a hill whole, with two suspected causes in the clipping.
-`scripts/verify-sightline.mjs` was written to measure both. **Neither is a defect: the clip already
-emerges crown-first and already slides rather than steps.** What the measurement found instead is
-that the whole emergence lasts three frames, and that nothing softened the arrival.
+`scripts/verify-sightline.mjs` was written to measure both, and neither is a defect: the clip
+emerges crown-first and slides rather than steps.
+
+**⚠ The real cause is below, and it is neither of them — the clip was measuring an object up to
+3.51x smaller than the one being drawn.** The first round of this work missed it because its
+harness reimplemented the sprite path without its scaling step, and everything below the next two
+headings is what the numbers looked like in that world. They are kept because they are still true
+of the clip itself.
 
 ### What was measured, and what it says
 
@@ -5259,6 +5264,61 @@ the object arrives at full contrast. The mechanism was never the problem; the co
   already been faded by. That shared curve is load-bearing — give scenery its own and a tree
   visibly leads or lags the ground it stands on.
 - This does not change the three frames and is not trying to. It changes what arrives in them.
+
+### ⚠ The cause was the drawn size, and the first round of this looked in the wrong place
+
+The clip was not wrong. **`variation.scale * tierScale` was applied inside `place`, after the clip,
+the on-screen test and the crop had all been computed from the unscaled rectangle** — so all three
+reasoned about an object up to `DECOR_TIERS.far.scale * VARIATION.scale.max` = **3.51x smaller**
+than the one that got drawn. The origin is bottom-centre, so a prop grows *upward* from its base:
+`billboardVisibleFraction` declared the little rectangle fully hidden while the real crown was most
+of the way clear of the ridge, and the sprite then arrived at once.
+
+Measured on a `ROAD_HILL.HIGH` crest, as *how much of the drawn sprite had already cleared when it
+was first drawn at all*:
+
+| tier | late by | already out when it appeared |
+|---|---|---|
+| mid ×1.00 | — | 1% |
+| mid ×1.35 | 0.3 seg | 27% |
+| near ×1.90 | 1.4 seg | 61% |
+| far ×2.60 | 1.5 seg | 62% |
+| far ×3.51 | 2.3 seg | **72%** |
+
+The fix is one line of ordering: the two scales are folded into `rect.w`/`rect.h` in `render`,
+before anything measures it, and `place` no longer scales at all. After: every tier appears at
+**0.1–0.8%** of itself. `verify:sightline` keeps the pre-fix path as a negative control and asserts
+it still produces the 72%, and that it fires where a scale-1 prop would — because the old decision
+was taken on the unscaled rect, it fired at the *same* camera position whatever the prop's size,
+which is the defect stated exactly.
+
+**Why the first round missed it: the harness reimplemented the sprite path without its scaling
+step.** Every number that round reported was true of a world where props are drawn at the size they
+project to, which is not this one. A reimplementation is only evidence for the code it actually
+mirrors, and the part it silently omitted was the part that was broken.
+
+### ⚠ And the haze shipped as a flat maximum, which put the near field back through the floor
+
+`MAX_DECOR_FOG = 0.85` alone is the transparency defect again. `billboardFog` is front-loaded
+(`t ^ FOG_CURVE`, and 0.62 is the *ground's* number): it is already at **0.245 one tenth of the way
+out**, so at a flat 0.85 a prop thirty segments away is a fifth transparent. Reported immediately,
+and correctly, as everything having gone see-through — the same defect that took the billboard
+constant from 0.30 to 0.12, at a higher setting.
+
+`DECOR_FOG_GATE = 4` is what makes the large ceiling affordable: `decorFog = MAX_DECOR_FOG *
+billboardFog ^ 4`. The ground's curve is **reshaped, not replaced** — a curve of its own would let
+a tree lead or lag the ground it stands on, while a power of the same curve stays monotone in the
+same direction with the same zero at the camera. Delivered alpha: **0.999** at a twentieth of the
+draw distance, **0.973 / 0.848 / 0.584** across the middle, **0.150** at the far edge. The near
+field is untouched to within a thousandth, and the haze is spent where the background genuinely is
+the fog colour.
+
+### Taking the acceptance on one seed
+
+`RunScene.runSeed` is `Math.random()` per run, and stubbing `Math.random` around `scene.start`
+breaks texture generation. What works is to rebuild the world in place on a chosen seed —
+`world.destroy()`, `new WorldView(scene, { decorSeed })`, then **`world.layout(w, h)`**, without
+which the backdrop keeps its constructor size and draws as a small rectangle in the corner.
 
 ### The acceptance, and how it had to be taken
 

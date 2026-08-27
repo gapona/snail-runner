@@ -707,32 +707,43 @@ export const MAX_BILLBOARD_FOG = 0.12
  * **⚠ `MAX_BILLBOARD_FOG` is a combat constant and must stay one.** It is what obstacles and
  * pickups fade by, and `verify:obstacles` measures the contrast a hazard still has at the distance
  * `REACTION_MS` is counted from — a prop that is hard to see is atmosphere, a rock that is hard to
- * see is an unfair hit. Scenery answers to no such floor, so the two numbers separate here rather
- * than one being tuned as a compromise between them.
+ * see is an unfair hit. Scenery answers to no such floor, so the two numbers separate here.
  *
- * **0.85, and the reason it is not the transparency defect this project already shipped twice is a
- * measurement.** The objection on `MAX_BILLBOARD_FOG` is exactly right and still stands: alpha is
- * not haze, because alpha blends a prop toward *whatever is behind it* rather than toward the fog.
- * What makes it haze at the far end is that at the far end those are the same colour. Measured on
- * all seven themes: the ground's palette fades to **precisely `theme.fog`** by its last row — it
- * is the colour the ramp ends on — and the sky's own horizon band sits **deltaE 0.04 to 0.18**
- * from it. So a distant prop drawn at low alpha is blended toward the fog colour by arithmetic
- * rather than by luck.
- *
- * Near props are untouched by construction: `billboardFog` is `0` at the camera and the curve is
- * shared with the ground, so a prop is faded by roughly the fraction the ground behind it has
- * already been faded by. That shared curve is load-bearing — give scenery a curve of its own and
- * a tree visibly leads or lags the ground it stands on.
- *
- * **What this does not fix, and what it is for.** A prop coming over a crest emerges correctly and
- * continuously — `verify:sightline` measures the crop sliding rather than stepping, and a taller
- * prop clearing the ridge a segment earlier than a short one. The whole emergence simply takes
- * **175 world units, 0.05s at `SPEED_CAP`, three frames at 60Hz**, because a prop that far out is
- * a few dozen pixels tall and the horizon sweeps its height quickly. Three frames of a correct
- * crop still reads as a pop when the object arrives at full contrast; it reads as emerging when it
- * arrives out of haze. This constant does not change the timing and is not trying to.
+ * **0.85 is a ceiling at the very back, NOT a strength applied along the whole curve, and shipping
+ * it as one was a real regression.** Raising this alone and leaving the ramp alone reintroduces
+ * exactly the defect that took the billboard constant from 0.30 down to 0.12: `billboardFog` is
+ * front-loaded (`t ^ FOG_CURVE`, and 0.62 is the *ground's* number), so it is already at **0.245
+ * one tenth of the way out** — at a flat 0.85 a prop thirty segments away is a fifth transparent,
+ * and it was reported as everything having gone see-through. `DECOR_FOG_GATE` is what makes the
+ * large ceiling affordable.
  */
 export const MAX_DECOR_FOG = 0.85
+
+/**
+ * How hard the decor haze is held off until the far end, as an exponent on `billboardFog`.
+ *
+ * **The ground's curve is reshaped, not replaced, and the difference matters.** Giving scenery a
+ * curve of its own would let a tree lead or lag the ground it stands on — the one artefact that
+ * makes billboards read as stickers. Raising the same curve to a power keeps it monotone in the
+ * same direction and with the same zero at the camera: a prop still fades *towards* the fog as its
+ * ground does, just later.
+ *
+ * At 4, measured against the shipped `FOG_CURVE` and `DRAW_DISTANCE`, alpha runs **0.999 at a
+ * twentieth of the draw distance, 0.973 / 0.848 / 0.584 across the middle, and 0.150 at the far
+ * edge**. So the near field is untouched to within a thousandth — which is what "put the textures
+ * back" means, mechanically — and the haze is spent where the background actually is the fog
+ * colour. That last point is what makes alpha legitimate here at all: measured on all seven
+ * themes, the ground's palette fades to **precisely `theme.fog`** in its last row and the sky's
+ * horizon band sits **deltaE 0.04 to 0.18** from it, so a distant prop at low alpha is blended
+ * toward the fog by arithmetic rather than by luck. Near the camera that is not true, and near the
+ * camera this gate has removed the fade.
+ */
+export const DECOR_FOG_GATE = 4
+
+/** How faded a billboard of scenery is at `distanceIndex`, as `0..1` of its own alpha. */
+export function decorFog(distanceIndex: number, drawDistance: number = DRAW_DISTANCE): number {
+  return MAX_DECOR_FOG * Math.pow(billboardFog(distanceIndex, drawDistance), DECOR_FOG_GATE)
+}
 
 /**
  * The V coordinate that samples the **centre** of fog row `step`.

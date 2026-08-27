@@ -13,7 +13,7 @@ import {
   billboardFog,
   DECOR_SINK_FRACTION,
   DRAW_DISTANCE,
-  MAX_DECOR_FOG,
+  decorFog,
 } from './constants'
 import { isDecorArt, type DecorTexture } from './decor'
 import { getRoadTheme } from './themes'
@@ -158,6 +158,26 @@ export class RoadSprites {
           screenWidth,
           screenHeight,
         )
+        // **The instance's own look, derived from where it stands.** Not stored on the sprite
+        // record and not rolled here: `variationFor` is a pure function of the coordinate, so the
+        // same prop on the same segment is the same object on every lap and at every screen size.
+        const variation = variationFor(segment.index, Math.sign(sprite.offsetX), sprite.key)
+
+        // **⚠ THE DRAWN SIZE IS RESOLVED HERE, BEFORE ANYTHING REASONS ABOUT THE RECTANGLE.**
+        // Both scales used to be applied inside `place`, i.e. after the clip, the on-screen test
+        // and the crop had already been computed — so all three reasoned about an object up to
+        // `DECOR_TIERS.far.scale * VARIATION.scale.max` = 3.51x smaller than the one that got
+        // drawn. The origin is bottom-centre, so a prop grows *upward* from its base: the clip
+        // declared a sprite fully hidden while its real crown was most of the way clear of the
+        // crest, and it then appeared at once. Measured on a `ROAD_HILL.HIGH` crest, the far tier
+        // was **3.0 segments late and already 72% out** by the time it was first drawn.
+        //
+        // Only `w` and `h` move. `x` and `y` are the ground point, which the scale does not touch.
+        const size = variation.scale * sprite.tierScale
+
+        rect.w *= size
+        rect.h *= size
+
         const visible = billboardVisibleFraction(rect, clip)
 
         if (!billboardOnScreen(rect, visible, screenWidth, screenHeight)) continue
@@ -169,12 +189,7 @@ export class RoadSprites {
         // calls. Breaking out early would silently report the pool as exactly big enough.
         if (used >= capacity) continue
 
-        // **The instance's own look, derived from where it stands.** Not stored on the sprite
-        // record and not rolled here: `variationFor` is a pure function of the coordinate, so the
-        // same prop on the same segment is the same object on every lap and at every screen size.
-        const variation = variationFor(segment.index, Math.sign(sprite.offsetX), sprite.key)
-
-        this.place(this.slots[used], sprite.key, rect, visible, n, tint, variation, sprite.tierScale)
+        this.place(this.slots[used], sprite.key, rect, visible, n, tint, variation)
         used++
       }
     }
@@ -217,7 +232,6 @@ export class RoadSprites {
     distanceIndex: number,
     tint: number,
     variation: DecorVariation,
-    tierScale: number,
   ): void {
     const image = slot.image
 
@@ -233,14 +247,11 @@ export class RoadSprites {
     }
 
     image.setPosition(rect.x, rect.y)
-    // **Uniform, and applied to the projected size rather than to the texture.** Scaling the two
-    // axes apart would stretch the prop; scaling the texture instead would fight the projection,
-    // which is what decides how big a thing at this distance is allowed to look.
-    // Two scales, and they multiply: the tier decides whether this is a far silhouette or a verge
-    // prop, the instance decides how this particular one differs from its neighbours.
-    const size = variation.scale * tierScale
-
-    image.setDisplaySize(rect.w * size, rect.h * size)
+    // **The rectangle is already the drawn size** — both scales were folded into it by the caller
+    // before the clip was measured, which is the whole of that fix. Nothing here may scale again:
+    // a second multiply would put the drawn size back out of step with the clip, in the other
+    // direction. Uniform either way, because scaling the two axes apart would stretch the prop.
+    image.setDisplaySize(rect.w, rect.h)
     // Mirroring costs nothing and doubles the silhouettes. `setFlipX` rather than a negative
     // scale, because a negative display size confuses the crop the hill clip applies below.
     image.setFlipX(variation.flipX)
@@ -256,9 +267,10 @@ export class RoadSprites {
     // would cost more than the assignment it skips.
     // Two independent terms: the haze it is seen through, and the fade it arrives with.
     // See `BILLBOARD_FADE_IN_FRACTION` for why they are not one number.
-    // `MAX_DECOR_FOG`, not `MAX_BILLBOARD_FOG`: that one is what obstacles and pickups fade by
-    // and it is held down by the reaction budget. Scenery is not on one.
-    image.setAlpha((1 - billboardFog(distanceIndex) * MAX_DECOR_FOG) * billboardAppear(distanceIndex))
+    // `decorFog`, not the billboard one: that is what obstacles and pickups fade by and it is
+    // held down by the reaction budget. Scenery is not on one -- but it is on a gate, so the
+    // near field keeps the alpha it always had. See `DECOR_FOG_GATE`.
+    image.setAlpha((1 - decorFog(distanceIndex)) * billboardAppear(distanceIndex))
     // Art gets its biome's colour under the theme's light; a generated silhouette already *is*
     // the theme's colour, and multiplying it again would darken it twice over.
     // The biome's colour under the theme's light, moved a little for this instance. A generated

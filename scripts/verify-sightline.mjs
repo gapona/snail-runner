@@ -20,7 +20,9 @@ import {
   ROAD_WIDTH,
   SEGMENT_LENGTH,
   SPRITE_SCALE,
+  DECOR_TIERS,
 } from '../src/road/constants.ts'
+import { VARIATION } from '../src/road/decorVariation.ts'
 import { SPEED_CAP } from '../src/run/constants.ts'
 import { createScreenPoint, projectInto } from '../src/road/project.ts'
 import { findSegment, segmentPercent, surfaceHeight, TrackBuilder } from '../src/road/track.ts'
@@ -103,8 +105,17 @@ function walk(track, cameraZ) {
   return { base, clipY, ground }
 }
 
-/** What `RoadSprites` would draw for a prop of `height` texture pixels standing on segment `n`. */
-function propAt(track, cameraZ, absoluteSegment, texturePx) {
+/**
+ * What `RoadSprites` draws for a prop standing on one segment, at one camera position.
+ *
+ * **⚠ `scale` is the whole reason this check exists in its second form.** The drawn size is
+ * `variation.scale * tierScale` times the projected rectangle, and it used to be applied inside
+ * `place` — after the clip, the on-screen test and the crop had already been computed from the
+ * unscaled rect. `preFix` reproduces that: the decision to draw is taken on the small rectangle
+ * while the sprite that appears is the big one. It is kept because a check that has never rejected
+ * anything is not evidence, and this one has to keep rejecting the arrangement it was written for.
+ */
+function propAt(track, cameraZ, absoluteSegment, texturePx, scale = 1, preFix = false) {
   const { base, clipY, ground } = walk(track, cameraZ)
   const n = absoluteSegment - base.index
 
@@ -126,13 +137,20 @@ function propAt(track, cameraZ, absoluteSegment, texturePx) {
     SCREEN.height,
   )
 
+  // The origin is bottom-centre, so a prop grows upward from its base: only `w` and `h` scale.
+  const drawn = { x: rect.x, y: rect.y, w: rect.w * scale, h: rect.h * scale }
+  // What the code decides to draw by, and what the player actually sees, are the same rectangle
+  // after the fix and two different ones before it.
+  const decidedOn = preFix ? rect : drawn
+
   return {
     clip: clipY[n],
-    /** Screen y of the base and of the crown. Smaller y is higher up the frame. */
-    baseY: rect.y,
-    topY: rect.y - rect.h,
-    height: rect.h,
-    visible: billboardVisibleFraction(rect, clipY[n]),
+    baseY: drawn.y,
+    topY: drawn.y - drawn.h,
+    height: drawn.h,
+    /** Whether the sprite is drawn at all, and how much of it was cropped away when it was. */
+    drawnAtAll: billboardVisibleFraction(decidedOn, clipY[n]) > 0,
+    visible: billboardVisibleFraction(drawn, clipY[n]),
   }
 }
 
@@ -171,10 +189,10 @@ check('a tall prop emerges crown first: there is a run of frames with its top vi
 
     if (topClear && !baseClear) {
       crownOnly += 1
-      if (prop.visible > 0) drawnInCrownOnly += 1
+      if (prop.drawnAtAll) drawnInCrownOnly += 1
     }
-    swept.push({ z, visible: prop.visible })
-    if (prop.visible > 0 && firstDrawnFraction === null) firstDrawnFraction = prop.visible
+    swept.push({ z, visible: prop.drawnAtAll ? prop.visible : 0 })
+    if (prop.drawnAtAll && firstDrawnFraction === null) firstDrawnFraction = prop.visible
   }
 
   // The LAST time it goes from hidden to whole, not the first time it is drawn at all: the prop
@@ -241,7 +259,7 @@ check('the crop is a continuous function of depth: it slides, it does not step',
   for (let z = 0; z < target * SEGMENT_LENGTH; z += step) {
     const prop = propAt(track, z, target, texturePx)
 
-    if (prop && prop.visible > 0 && prop.visible < 1) samples.push({ z, visible: prop.visible })
+    if (prop && prop.drawnAtAll && prop.visible > 0 && prop.visible < 1) samples.push({ z, visible: prop.visible })
   }
 
   assert.ok(samples.length > 40, `only ${samples.length} partially-clipped samples -- nothing to measure`)
@@ -295,7 +313,7 @@ check('a taller prop clears the crest earlier than a short one standing beside i
     for (let z = 0; z < target * SEGMENT_LENGTH; z += SEGMENT_LENGTH / 8) {
       const prop = propAt(track, z, target, texturePx)
 
-      if (prop && prop.visible > 0) return z
+      if (prop && prop.drawnAtAll) return z
     }
 
     return Infinity
@@ -313,6 +331,95 @@ check('a taller prop clears the crest earlier than a short one standing beside i
   console.log(
     `    a 96px prop clears the crest at z=${tall.toFixed(0)}, a 24px one at z=${short.toFixed(0)}: ${((short - tall) / SEGMENT_LENGTH).toFixed(1)} segments of head start`,
   )
+})
+
+
+check('every tier is clipped at the size it is DRAWN, not at the size it was projected', () => {
+  // **The defect this file was reopened for.** `variation.scale * tierScale` reaches 3.51, the
+  // origin is bottom-centre, and the scale used to be applied after the clip -- so a far-tier prop
+  // was declared fully hidden while its real crown was most of the way clear of the ridge, and
+  // then arrived all at once. Measured as: at the first camera position the prop is drawn at,
+  // how much of the drawn sprite has already cleared the crest?
+  const track = hillTrack()
+  const texturePx = 64
+  const target = 140
+  const tiers = [
+    ['mid  x1.00', 1],
+    ['mid  x1.35', DECOR_TIERS.mid.scale * VARIATION.scale.max],
+    ['near x1.90', DECOR_TIERS.near.scale * VARIATION.scale.max],
+    ['far  x2.60', DECOR_TIERS.far.scale],
+    ['far  x3.51', DECOR_TIERS.far.scale * VARIATION.scale.max],
+  ]
+
+  // Finely, because the answer is *how much has already come out on the first drawn frame* and a
+  // coarse sweep reports its own step size: the whole emergence is 175 world units, so a stride of
+  // 25 cannot resolve better than about a seventh of it.
+  const firstDraw = (scale, preFix) => {
+    let hidden = false
+
+    for (let z = 0; z < target * SEGMENT_LENGTH; z += SEGMENT_LENGTH / 64) {
+      const prop = propAt(track, z, target, texturePx, scale, preFix)
+
+      if (!prop) continue
+      if (!prop.drawnAtAll) { hidden = true; continue }
+      if (hidden) return { z, already: prop.visible }
+    }
+
+    return null
+  }
+
+  const base = firstDraw(1, false)
+
+  assert.ok(base, 'the reference prop never comes back out from behind the crest')
+
+  const rows = []
+  let worstAlready = 0
+
+  for (const [label, scale] of tiers) {
+    const fixed = firstDraw(scale, false)
+
+    assert.ok(fixed, `${label} never re-emerges`)
+    worstAlready = Math.max(worstAlready, fixed.already)
+    rows.push([label, scale, fixed, firstDraw(scale, true)])
+  }
+
+  // After the fix every tier appears as a sliver, whatever it is scaled by.
+  assert.ok(
+    worstAlready < 0.1,
+    `the worst tier is already ${(worstAlready * 100).toFixed(0)}% out when it first appears -- it is arriving, not emerging`,
+  )
+
+  // And the arrangement this replaced must still be caught, or the check is measuring nothing:
+  // the largest tier has to come out visibly late and visibly far along.
+  const biggest = rows[rows.length - 1]
+  const preFix = biggest[3]
+
+  assert.ok(preFix, 'the pre-fix path never draws the largest tier at all')
+  assert.ok(
+    preFix.already > 0.5,
+    `the pre-fix path shows only ${(preFix.already * 100).toFixed(0)}% of the largest tier on its first frame, so the negative control is not reproducing the defect`,
+  )
+  // **Late against its OWN fixed path, not against the reference prop.** The pre-fix decision is
+  // taken on the unscaled rectangle, so it fires at the same camera position for every tier -- the
+  // one a prop of scale 1 would appear at. That is exactly the defect: a prop three and a half
+  // times taller waits for the little one's cue.
+  assert.ok(
+    preFix.z > biggest[2].z,
+    'the pre-fix path is not late, so the negative control is not reproducing the defect',
+  )
+  assert.ok(
+    Math.abs(preFix.z - base.z) < SEGMENT_LENGTH / 8,
+    'the pre-fix path does not fire where a scale-1 prop would, so it is not reproducing the old decision',
+  )
+
+  console.log('    tier         pre-fix: late by   already out    now: already out')
+  for (const [label, , fixed, before] of rows) {
+    const late = before ? (before.z - fixed.z) / SEGMENT_LENGTH : 0
+
+    console.log(
+      `    ${label}   ${late.toFixed(1).padStart(9)} seg   ${((before?.already ?? 0) * 100).toFixed(0).padStart(9)}%   ${(fixed.already * 100).toFixed(1).padStart(14)}%`,
+    )
+  }
 })
 
 console.log(`${passed} checks passed`)
