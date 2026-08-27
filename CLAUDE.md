@@ -5341,6 +5341,102 @@ frames from the *same* run: the distance index is recoverable from the sprite's 
 photographed, and put back. The two frames drift by one metre, because taking a screenshot forces a
 paint and a paint runs a frame.
 
+## The Ground May Not Wear The Colour Of The Air
+
+**The rule: blue and turquoise belong to the sky. A biome's ground may not sit in that hue band,
+whatever it is called.** Measured against `day`'s horizon at hue 199, `wetland` sat at **170 degrees
+and 55% saturation** and `fungal` at **171 and 55%** — saturated turquoise fields competing with the
+air above them — with `crystal` at 238 and 31%.
+
+### ⚠ Stated as an absolute band, not as a distance from each theme's sky
+
+The first version of this rule was a minimum gap from every theme's horizon, and it is both
+unsatisfiable and the wrong question. The seven skies run from `ember`'s 40 through `verdant`'s 123
+and `day`'s 199 to `dusk`'s 326: requiring 45 degrees from all of them leaves a few narrow windows
+and forces two biomes onto the same hue. It also fights the rule the whole system rests on — **a
+biome is a place and a theme is a light, and the two are orthogonal.** Under a blue moon the ground
+goes blue *and so does everything else*; that is the light, not the ground borrowing from the air.
+
+`GROUND_AIR_HUE_BAND` is **160–235 degrees**, absolute, with the same saturation floor the threat
+reservation carries: `ruins` sits at 210 and `ridge` at 217, both inside the band and both **grey**
+at 5% and 12%, where a hue angle is numerical noise. Delivered, on `day`:
+
+| biome | hue | sat | |
+|---|---|---|---|
+| forest | 133 | 50% | clear |
+| dunes | 40 | 37% | clear |
+| wetland | 108 | 42% | clear (was 170 / 55%) |
+| ridge | 217 | 12% | in band, exempt (grey) |
+| ashen | 355 | 9% | clear |
+| fungal | 292 | 17% | clear (was 171 / 55%) |
+| crystal | 272 | 25% | clear (was 238 / 31%) |
+| coast | 42 | 24% | clear |
+| ruins | 210 | 5% | in band, exempt (grey) |
+
+### ⚠ Repainted by hue at equal RELATIVE LUMINANCE, not at equal HSL lightness
+
+A biome is recognised by its colour and separated from the road by its lightness, and those are two
+different jobs — so the repaint moves hue and holds the rest. **Holding HSL's own lightness is not
+the same thing and does not work**: a violet at L=29% is far darker than a teal at L=29%, and the
+first pass put `fungal` under the ground-visibility floor on `night`. Solved against
+`relativeLuminance` instead.
+
+### ⚠ Two rounds were then spent on the fact that HSL saturation is not chroma
+
+`FOG_SATURATION` was written as a *loss* in HSL, and the mid-distance ground came back as a
+saturated ribbon across the frame — twice, once with a linear fall and once with a square root.
+**The same `s` at a lightness of 0.6 is a far more colourful pixel than at 0.29**, so a fill whose
+lightness is being lifted toward the sky gets louder even while its `s` falls.
+
+`fogBlendFill` does the ground's fade in **OKLCh**: hue kept, lightness lerped, and **chroma scaled
+directly**, so `FOG_SATURATION` is a statement about how colourful the pixel is rather than about a
+coordinate that happens to be called saturation. `fogBlend` stays for anything with a silhouette,
+where holding saturation is right and the lightness lift is small — and where it does not apply
+anyway, because a billboard fades by alpha.
+
+**The mode split is by what the surface is, and this is a correction to the previous round's rule.**
+Holding saturation while lightness rises is correct for a *silhouette* — a distant conifer that
+keeps its green reads as a green tree far away. It is wrong for a **solid fill**: the ground is one
+unbroken expanse from the verge to the horizon, and a fill that keeps its colour while getting
+lighter does not recede, it comes out as a coloured pancake pasted against the sky.
+
+### The surface dissolves into the sky rather than ending on one row
+
+`GROUND_HORIZON_BLEND = 0.25`, cubed. The ground used to end at `theme.fog` while the sky began at
+`sky.bottom` — two different colours meeting on one row, which reads as an artefact whatever they
+are. Over the last quarter of the ramp the surface blends the rest of the way, and **the last row
+is exactly the sky**, asserted per biome per theme.
+
+- The **ease is cubed and not for looks**: a linear ramp holds the surface part-way into the sky for
+  several rows, and on `dusk` — whose horizon is a pink already close to the reserved band — those
+  middle rows landed inside it.
+- The dissolve is in **OKLab**: an sRGB lerp from a sandy ground to a pink horizon detours through a
+  saturated red, which put `dunes` and `coast` one row inside the reservation.
+- `GROUND_FOG_TOWARD_SKY = 0.7`: the ground's fade **target** is mostly the sky rather than the fog
+  colour, because the ground is what runs to the horizon and meets the air there. Fading to the fog
+  alone left `dusk`'s verge eleven points of lightness *darker* than the air one row short of the
+  horizon — receding into something darker than what it recedes against.
+
+### ⚠ A check was sweeping a blend the renderer had stopped performing
+
+The threat reservation is swept over every fog blend of every ground colour, and that sweep was
+written against `blendColor` — an sRGB lerp — while the bake had moved to an HSL fade, then an OKLCh
+one, with a saturation term and an OKLab dissolve. It went on rejecting a colour that no longer
+reaches the screen and passing ones that do.
+
+`paletteColour.ts`'s `surfaceColour` is now the one place the chain lives, and both the renderer and
+every check call it. **A reservation swept over the wrong arithmetic is not a reservation.**
+
+### What is still loud, stated rather than hidden
+
+`crystal` at 25% and `wetland` at 42% are multiplied by `PALETTE_SATURATION.ground = 1.5`, and the
+back-loaded `FOG_CURVE` means a biome a hundred segments ahead is at **fog row 0** — no fade at all.
+So a distant biome's ground arrives at full strength, and on a crest it fills a lot of frame. That
+is the trade the previous round asked for (colour in the near and middle field) meeting this one's
+(no field competing with the sky), and where the two disagree is the authored saturation of each
+biome. `fungal` needed three passes down — 49% to 30% to 17% — before it stopped reading as a
+ribbon.
+
 ## The Middle Distance Was Pale, And The Fog Was Why
 
 Colour only — no geometry, no outlines, no silhouettes touched.

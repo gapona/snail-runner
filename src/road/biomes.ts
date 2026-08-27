@@ -404,7 +404,14 @@ export const BIOMES: readonly Biome[] = [
   },
   {
     id: 'wetland',
-    ground: [0x2c6a5e, 0x307163],
+    // **⚠ Repainted from a teal `0x2c6a5e`, which sat 30 degrees from the sky's own hue at 55%
+    // saturation** -- a saturated turquoise field competing with the air above it. See
+    // `MIN_GROUND_SKY_HUE_GAP`. Moved by HUE ALONE, at equal **relative luminance** -- a biome is
+    // recognised by its colour and separated from the road by its lightness, and those are two
+    // different jobs. **⚠ Matching HSL's own lightness is not the same thing and does not work**:
+    // a violet at L=29% is far darker than a teal at L=29%, and the first pass at this repaint put
+    // `fungal` under the visibility floor on `night`. Solved against `relativeLuminance` instead.
+    ground: [0x3f6b34, 0x437138],
     // **`decor-wet_log` is pulled and gone: no key, no PNG.** The Kenney model (`log_large`) is
     // hollow and the render squares the bore off into a dark rectangle in the end face, so at the
     // size a verge prop is read the object is a brown box with a black doorway in it. Every
@@ -440,7 +447,16 @@ export const BIOMES: readonly Biome[] = [
     // `wetland` own the green end and `crystal` the violet, and a biome that reads as one of those
     // at a glance is a biome the player has already been to.
     id: 'fungal',
-    ground: [0x2c6a5f, 0x307064],
+    // Repainted from the same teal `wetland` carried, and for the same reason. Sent to violet
+    // rather than to green so a spore forest still reads as one and does not become a second
+    // wetland -- the props' own tint is already the cool green of spore light.
+    //
+    // **⚠ And then taken down from 49% saturation to 26%, which the first pass got wrong.** The
+    // teal's own saturation was carried over with the hue, and `PALETTE_SATURATION.ground` then
+    // multiplies it by 1.5: on screen it came out as a magenta ribbon laid across the frame,
+    // visible from the biome before it. That is the reported defect again in a different hue --
+    // a large flat field cannot carry the saturation a prop can.
+    ground: [0x725876, 0x795c7d],
     props: ['decor-fun_tall', 'decor-fun_dome', 'decor-fun_dome', 'decor-fun_cluster', 'decor-fun_cluster', 'decor-fun_pair', 'decor-fun_wide'],
     /** Pale mint. Light on purpose — the product of a biome tint and a theme tint is what actually
      *  lands on a prop, and two dark factors crush it to a silhouette; `verify:road` holds every
@@ -450,7 +466,10 @@ export const BIOMES: readonly Biome[] = [
   },
   {
     id: 'crystal',
-    ground: [0x6165ad, 0x696cb1],
+    // Repainted from `0x6165ad`: 38 degrees from the sky at 31% saturation, which is inside the
+    // air's family for a ground that bright. Pushed round to violet, keeping its lightness -- it
+    // is still the palest ground in the game after `coast`, which is what a crystal field is.
+    ground: [0x7c6096, 0x84669d],
     // Six now. `cry_shard` was rejected once for pointing downwards, which a bottom-anchored
     // billboard cannot use; the regeneration re-briefed it as a spike growing UP from a rock base
     // and negates `pointing down, hanging, stalactite, icicle` by name. Listed twice each where a

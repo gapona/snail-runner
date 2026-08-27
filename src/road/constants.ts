@@ -433,14 +433,81 @@ export const FOG_CURVE = 3
 export const PALETTE_SATURATION = { road: 1.18, rumble: 1.32, ground: 1.5 } as const
 
 /**
- * How much saturation the fog *adds* over the length of the ramp, as a fraction.
+ * What the fog does to saturation, per family of surface.
  *
- * Slightly above zero rather than exactly zero: aerial perspective takes contrast away, and a
- * colour that keeps its saturation while losing lightness reads as having lost a little. A small
- * gain compensates, and it is what makes a far conifer the same green as the near one rather than
- * a paler version of it. See `fogBlend`.
+ * **⚠ This is a correction to the rule that replaced the RGB lerp, and the correction is that the
+ * rule was right about only half of what it was applied to.** Holding saturation while lightness
+ * rises is correct for anything with a *silhouette*: a distant conifer that keeps its green reads
+ * as a green tree far away, and one that loses it reads as grey. It is wrong for a **solid fill**.
+ * The ground is one unbroken expanse from the verge to the horizon, and a fill that keeps full
+ * saturation while getting lighter does not recede at all — it comes out as a coloured pancake
+ * pasted against the sky, which is what was reported.
+ *
+ * So the two are split, and the split is by what the surface *is* rather than by taste:
+ *
+ * - **Decor holds its saturation and needs no entry here**, because it does not fade through this
+ *   function at all: a billboard fades by *alpha* (`decorFog`), toward whatever is behind it, and
+ *   at the far end that is the fog colour. Its hue and saturation are never touched.
+ * - **The ground keeps only a small share of its chroma at the far end.** Stated as *what is kept*
+ *   rather than as a loss, and measured in **OKLCh** — see `fogBlendFill` for the two rounds spent
+ *   discovering that HSL's saturation is not chroma, and that a fill whose lightness is being
+ *   lifted gets louder even while its `s` falls.
+ * - **The road keeps most of its**, because it starts near-neutral: there is little to take away
+ *   and the road is what the player reads obstacles against.
  */
-export const FOG_SATURATION_GAIN = 0.22
+export const FOG_SATURATION = { ground: 0.12, road: 0.55 } as const
+
+/**
+ * Over what share of the fog rows the surface additionally dissolves into the sky.
+ *
+ * **⚠ The ground used to end at `theme.fog` and the sky began at `sky.bottom`, and those are two
+ * different colours meeting on one row.** However good either is, a hard horizontal edge across
+ * the frame reads as an artefact — the same defect, in a different place, as the cut-off cloud
+ * lobes and the banded vignette. Over the last quarter of the ramp the surface blends the rest of
+ * the way to the sky it meets, so the last row *is* the sky and there is no edge to see.
+ *
+ * A share of the rows rather than a count, so it survives `FOG_STEPS` changing — which it has, in
+ * both directions.
+ */
+export const GROUND_HORIZON_BLEND = 0.25
+
+/**
+ * How far the ground's fade target is moved from the fog colour toward the sky, as `0..1`.
+ *
+ * `theme.fog` is the colour the far field as a whole sits in. The ground, though, runs all the way
+ * to the horizon and meets the *sky* there, which on a sunset theme is much lighter than the fog.
+ * Fading to the fog alone left `dusk`'s verge eleven points of lightness **darker** than the air
+ * one row short of the horizon — receding into something darker than what it recedes against,
+ * which is the inverse of aerial perspective. The road keeps the fog target: what the player reads
+ * running to the horizon is the verge.
+ */
+export const GROUND_FOG_TOWARD_SKY = 0.7
+
+/**
+ * The band of hue that belongs to the air, which a biome's ground may not enter.
+ *
+ * **⚠ Blue and turquoise are the colours of AIR, and ground may not borrow them.** Measured on the
+ * shipped palettes against `day`'s horizon at hue 199: `wetland` sat at **170 degrees and 55%
+ * saturation** and `fungal` at **171 and 55%** — saturated turquoise fields competing with the sky
+ * above them — and `crystal` at 238 and 31%. All three are repainted **by hue alone**, at equal
+ * relative luminance, because a biome is recognised by its colour and separated from the road by
+ * its lightness and those are two different jobs.
+ *
+ * **⚠ Stated as an absolute band rather than as a distance from each theme's sky, and the first
+ * version was the latter.** A minimum gap from every theme's horizon is unsatisfiable and, worse,
+ * it is the wrong question: the seven skies run from `ember`'s 40 through `verdant`'s 123 and
+ * `day`'s 199 to `dusk`'s 326, so requiring 45 degrees from all of them leaves a handful of narrow
+ * windows and forces two biomes onto the same hue. It also fights the rule the whole system rests
+ * on — **a biome is a place and a theme is a light, and the two are orthogonal.** Under a blue
+ * moon the ground goes blue *and so does everything else*; that is the light, not the ground
+ * borrowing the air's colour. What is absolute is which hues read as air, and those are the cyans.
+ *
+ * The saturation floor is the same third term the threat reservation carries: `ruins` sits at hue
+ * 210 and `ridge` at 217, both inside the band, and both are *grey* — at 5% and 12% saturation a
+ * hue angle is numerical noise. A grey ground is not sky-coloured.
+ */
+export const GROUND_AIR_HUE_BAND = { from: 160, to: 235 } as const
+export const GROUND_HUE_SATURATION_FLOOR = 0.25
 
 /**
  * Which fog row a segment `n` steps from the camera samples.

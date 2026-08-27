@@ -1,8 +1,8 @@
 import * as Phaser from 'phaser'
 import { BIOMES, GROUND_SHADES_PER_BIOME, groundShadesForTheme, roadShadesForTheme } from './biomes'
-import { FOG_SATURATION_GAIN, FOG_STEPS, PALETTE_COLUMNS, PALETTE_INDEX, PALETTE_SATURATION } from './constants'
+import { FOG_STEPS, PALETTE_COLUMNS, PALETTE_INDEX } from './constants'
+import { surfaceColour } from './paletteColour'
 import { getRoadTheme } from './themes'
-import { fogBlend, fromHsl, toHsl } from './color'
 
 // `paletteU`/`paletteV` are defined in constants.ts (which imports no phaser) and re-exported
 // here so callers can treat them as part of the palette's API while `npm run verify:road` can
@@ -69,18 +69,17 @@ export function createRoadPalette(scene: Phaser.Scene, key: string): Phaser.Text
       // Saturation is lifted before the fog is applied, so the fade works on the colour that is
       // actually shipped rather than on the authored one -- and the fog itself moves lightness
       // only. See `PALETTE_SATURATION` and `fogBlend`.
-      const family = column < theme.road.length
-        ? (column === PALETTE_INDEX.RUMBLE_DARK || column === PALETTE_INDEX.RUMBLE_LIGHT
-            ? PALETTE_SATURATION.rumble
-            : PALETTE_SATURATION.road)
-        : column >= groundEnd
-        ? PALETTE_SATURATION.road
-        : PALETTE_SATURATION.ground
-      const hsl = toHsl(base)
-      const lifted = fromHsl({ h: hsl.h, s: hsl.s <= 0.01 ? hsl.s : hsl.s * family, l: hsl.l })
-      const faded = fogBlend(lifted, theme.fog, amount, FOG_SATURATION_GAIN)
+      const family = column >= theme.road.length && column < groundEnd
+        ? 'ground'
+        : column < theme.road.length &&
+            (column === PALETTE_INDEX.RUMBLE_DARK || column === PALETTE_INDEX.RUMBLE_LIGHT)
+        ? 'rumble'
+        : 'road'
+      // The whole chain -- saturation lift, HSL fade, OKLab dissolve into the sky -- lives in one
+      // pure function so the checks can sweep exactly what is baked. See `surfaceColour`.
+      const atHorizon = surfaceColour({ base, family, fog: theme.fog, sky: theme.sky.bottom, amount })
 
-      context.fillStyle = `#${faded.toString(16).padStart(6, '0')}`
+      context.fillStyle = `#${atHorizon.toString(16).padStart(6, '0')}`
       context.fillRect(column, row, 1, 1)
     }
   }

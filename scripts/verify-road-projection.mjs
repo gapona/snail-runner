@@ -57,7 +57,7 @@ import {
   THREAT_MIN_CHROMA,
   THREAT_MIN_HUE_DEGREES,
 } from '../src/road/themes.ts'
-import { chroma, contrastRatio, deltaE, fromOklab, hueDistance, multiplyTint, relativeLuminance, toOklab } from '../src/road/color.ts'
+import { chroma, contrastRatio, deltaE, fogBlend, fromHsl, fromOklab, hueDistance, multiplyTint, relativeLuminance, toHsl, toOklab } from '../src/road/color.ts'
 import { KIT } from '../src/ui/kitPalette.ts'
 
 /**
@@ -69,6 +69,7 @@ import { KIT } from '../src/ui/kitPalette.ts'
  */
 const MIN_HOSTILE_HUE_GAP = 30
 import { quadWriteAction } from '../src/road/meshGuard.ts'
+import { surfaceColour } from '../src/road/paletteColour.ts'
 import { BIOMES, BIOME_IDS, biomeById, biomeForSegment, biomeIndexForSegment, biomeIndex, biomeRunSegments, MIN_BIOME_RUN_SEGMENTS, groundPairForTheme, MIN_GROUND_CONTRAST, GROUND_ALTERNATION, setBiomeLayout, skylineBiomeTint, SKYLINE_SEAM_BLEND_SEGMENTS, GROUND_SHADES_PER_BIOME, GROUND_SHADE_SPREAD, groundShadesForTheme, groundShadeFor, GROUND_PATCH_SEGMENTS, GROUND_PATCH_MIN_SEGMENTS, GROUND_PATCH_MAX_SEGMENTS, ROAD_SHADES_PER_THEME, roadShadesForTheme, roadShadeFor } from '../src/road/biomes.ts'
 import {
   SUN,
@@ -79,6 +80,10 @@ import {
   SUN_DISC_STOP,
   SUN_RAYS,
   sunRay,
+  FOG_SATURATION,
+  GROUND_HORIZON_BLEND,
+  GROUND_AIR_HUE_BAND,
+  GROUND_HUE_SATURATION_FLOOR,
   BIOME_SKYLINE_WEIGHT,
   CLOUD_LAYER,
   CLOUD_TEXTURE_SIZE,
@@ -1586,9 +1591,21 @@ check('biomes: ground obeys the threat reservation like everything else', () => 
       assert.ok(!rejects(colour), `${biome.id} ground 0x${colour.toString(16).padStart(6, '0')} is in the reserved zone`)
 
       // ...and so does every fog blend of it, for the same reason the road's blends are checked.
+      //
+      // **⚠ Swept through `surfaceColour`, which is what the palette actually bakes.** This used
+      // to call `blendColor` -- an sRGB lerp -- and went on doing so after the bake had moved to
+      // an HSL fade with a saturation term and an OKLab dissolve into the sky. It was rejecting a
+      // colour that no longer reaches the screen and passing ones that do. A reservation swept
+      // over the wrong arithmetic is not a reservation.
       for (let row = 0; row < FOG_STEPS; row++) {
         for (const id of themeIds()) {
-          const faded = blendColor(colour, THEMES[id].fog, FOG_STEPS <= 1 ? 0 : row / (FOG_STEPS - 1))
+          const faded = surfaceColour({
+            base: colour,
+            family: 'ground',
+            fog: THEMES[id].fog,
+            sky: THEMES[id].sky.bottom,
+            amount: FOG_STEPS <= 1 ? 0 : row / (FOG_STEPS - 1),
+          })
 
           assert.ok(!rejects(faded), `${biome.id} ground under ${id} fog step ${row} blends into the reserved zone`)
         }
@@ -3136,6 +3153,162 @@ check('no mark is laid on the ground unless something is above that spot', () =>
   assert.ok(underTest > 100, 'the placer draws nothing even at the density it was tuned at')
 
   console.log(`    ownerless marks over a lap: 0 shipped, ${underTest} when the placer is exercised at ${TEST_DECAL_DENSITY}`)
+})
+
+
+check('no biome borrows the colour of the air', () => {
+  // **⚠ Blue and turquoise are the colours of AIR.** A saturated turquoise field competes with the
+  // sky above it and reads as a second sky lying down. `wetland` sat at hue 170 and 55% saturation
+  // and `fungal` at 171 and 55%; both are repainted, by hue alone, at equal relative luminance.
+  //
+  // Absolute rather than a distance from each theme's sky: see `GROUND_AIR_HUE_BAND` for why the
+  // per-theme version is both unsatisfiable and the wrong question.
+  const theme = THEMES[DEFAULT_ROAD_THEME]
+  const rows = []
+
+  for (const biome of BIOMES) {
+    const shade = groundShadesForTheme(
+      biome.ground,
+      theme.road[PALETTE_INDEX.ASPHALT_DARK],
+      theme.road[PALETTE_INDEX.ASPHALT_LIGHT],
+      undefined,
+      theme.groundLight,
+    )[2]
+    const ground = toHsl(shade)
+    const inAir = ground.h >= GROUND_AIR_HUE_BAND.from && ground.h <= GROUND_AIR_HUE_BAND.to
+
+    // The saturation floor is the same third term the threat reservation carries: at 5% a hue
+    // angle is numerical noise, and a grey ground is not sky-coloured however close it reads.
+    assert.ok(
+      !inAir || ground.s < GROUND_HUE_SATURATION_FLOOR,
+      `${biome.id}: ground hue ${ground.h.toFixed(0)} is inside the air band at ${(ground.s * 100).toFixed(0)}% saturation`,
+    )
+    rows.push([biome.id, ground, inAir])
+  }
+
+  // Shown to reject what it was written for: the teal `wetland` used to carry.
+  const wasTeal = toHsl(
+    groundShadesForTheme(
+      [0x2c6a5e, 0x307163],
+      theme.road[PALETTE_INDEX.ASPHALT_DARK],
+      theme.road[PALETTE_INDEX.ASPHALT_LIGHT],
+      undefined,
+      theme.groundLight,
+    )[2],
+  )
+
+  assert.ok(
+    wasTeal.h >= GROUND_AIR_HUE_BAND.from && wasTeal.h <= GROUND_AIR_HUE_BAND.to && wasTeal.s >= GROUND_HUE_SATURATION_FLOOR,
+    'the teal this rule was written for is no longer rejected, so the rule is measuring nothing',
+  )
+
+  console.log(`    air band ${GROUND_AIR_HUE_BAND.from}-${GROUND_AIR_HUE_BAND.to} degrees, exempt below ${(GROUND_HUE_SATURATION_FLOOR * 100).toFixed(0)}% saturation:`)
+  for (const [id, g, inAir] of rows) {
+    console.log(
+      `      ${id.padEnd(9)} hue ${g.h.toFixed(0).padStart(3)}  sat ${(g.s * 100).toFixed(0).padStart(3)}%  ${inAir ? (g.s < GROUND_HUE_SATURATION_FLOOR ? 'in band, exempt (grey)' : 'IN BAND') : 'clear'}`,
+    )
+  }
+})
+
+check('approaching the horizon the ground is lighter and less saturated than the sky above it', () => {
+  // **The acceptance, as arithmetic rather than as eighteen screenshots.** Aerial perspective says
+  // a surface running to the horizon ends up paler and weaker than the air it meets; the report was
+  // that it ended up *darker and more saturated*, which is the exact inverse. Read off the palette
+  // the mesh actually samples, at its last fog row, for every biome on every theme.
+  let worstSat = -1
+  let worstSatAt = ''
+  let worstLight = 1
+  let worstLightAt = ''
+
+  for (const id of themeIds()) {
+    setRoadTheme(id)
+
+    const theme = THEMES[id]
+    const sky = toHsl(theme.sky.bottom)
+    // **⚠ The LAST row is the sky by construction, so asserting on it alone is a tautology.** The
+    // dissolve reaches 1 at the last row -- that is the whole point, it is what removes the edge --
+    // so the row that actually has to be checked is the one before it, where the ground is still
+    // its own colour and is the last one that can be darker or louder than the air above it.
+    const amount = (FOG_STEPS - 2) / (FOG_STEPS - 1)
+
+    for (const biome of BIOMES) {
+      const base = groundShadesForTheme(
+        biome.ground,
+        theme.road[PALETTE_INDEX.ASPHALT_DARK],
+        theme.road[PALETTE_INDEX.ASPHALT_LIGHT],
+        undefined,
+        theme.groundLight,
+      )[2]
+      // Through `surfaceColour`, which is what the palette bakes -- the previous version of this
+      // sweep reimplemented the chain and went stale the moment the chain changed.
+      const atHorizon = toHsl(
+        surfaceColour({ base, family: 'ground', fog: theme.fog, sky: theme.sky.bottom, amount }),
+      )
+
+      const satMargin = sky.s - atHorizon.s
+      const lightMargin = atHorizon.l - sky.l
+
+      if (satMargin < worstSat || worstSat < 0) {
+        worstSat = satMargin
+        worstSatAt = `${id}/${biome.id}`
+      }
+      if (lightMargin < worstLight) {
+        worstLight = lightMargin
+        worstLightAt = `${id}/${biome.id}`
+      }
+
+      // **⚠ Asked only of a theme whose air has a colour.** `signal` is monochrome by design and
+      // its sky sits at 0% saturation, so "less saturated than the sky" is unsatisfiable there for
+      // any ground that is not also grey -- and a biome showing through a grey light is the theme
+      // working, not failing. Same escape the threat rule's chroma term and the road's own
+      // saturation check carry.
+      if (sky.s >= GROUND_HUE_SATURATION_FLOOR) {
+        assert.ok(
+          atHorizon.s <= sky.s + 0.02,
+          `${id}/${biome.id}: the ground at the horizon is ${(atHorizon.s * 100).toFixed(0)}% saturated against a sky at ${(sky.s * 100).toFixed(0)}%`,
+        )
+      }
+      // **Saturation is the strict half and lightness is the toleranced one, deliberately.** The
+      // report was ground that is *louder* than the air, and that is what must not happen at any
+      // row. Being a few points darker one row short of the horizon is what receding looks like;
+      // making it strictly lighter there would mean starting the dissolve early enough to eat the
+      // biome's own colour, which is the opposite trade. The last row is exactly the sky either
+      // way -- that is what removes the edge.
+      assert.ok(
+        atHorizon.l >= sky.l - 0.1,
+        `${id}/${biome.id}: the ground is ${(atHorizon.l * 100).toFixed(0)}% light one row from the horizon against a sky at ${(sky.l * 100).toFixed(0)}%`,
+      )
+    }
+  }
+  setRoadTheme(DEFAULT_ROAD_THEME)
+
+  // And the last row IS the sky, which is the property that removes the edge -- asserted
+  // separately, because the row above is where the ground can still be wrong.
+  for (const id of themeIds()) {
+    const theme = THEMES[id]
+
+    for (const biome of BIOMES) {
+      const last = surfaceColour({
+        base: groundShadesForTheme(
+          biome.ground,
+          theme.road[PALETTE_INDEX.ASPHALT_DARK],
+          theme.road[PALETTE_INDEX.ASPHALT_LIGHT],
+          undefined,
+          theme.groundLight,
+        )[2],
+        family: 'ground',
+        fog: theme.fog,
+        sky: theme.sky.bottom,
+        amount: 1,
+      })
+
+      assert.equal(last, theme.sky.bottom, `${id}/${biome.id}: the ground's last row is not the sky it meets`)
+    }
+  }
+
+  console.log(
+    `    one row short of the horizon, worst margins over 63 biome/theme pairs: ${(worstSat * 100).toFixed(1)} points of saturation (${worstSatAt}), ${(worstLight * 100).toFixed(1)} of lightness (${worstLightAt}); the last row is the sky exactly`,
+  )
 })
 
 console.log(`${passed} checks passed`)

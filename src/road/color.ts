@@ -226,7 +226,24 @@ export function fromHsl({ h, s, l }: Hsl): number {
  * defect — it is what stops the far field collapsing into one flat band — and the horizon still
  * reads as haze because lightness is what haze actually takes away.
  */
-export function fogBlend(color: number, fog: number, amount: number, saturationGain = 0): number {
+export function fogBlend(
+  color: number,
+  fog: number,
+  amount: number,
+  saturationGain = 0,
+  /**
+   * Exponent on `amount` for the saturation term only.
+   *
+   * **⚠ Below 1 for anything that loses saturation, and the reason is that HSL's `s` is not
+   * chroma.** The same `s` at a lightness of 0.6 is a far more colourful pixel than at 0.29, so a
+   * fill whose lightness is being raised gets *more* vivid unless its saturation falls faster than
+   * linearly. Shipped with a linear fall first, and the mid-distance ground came out as a bright
+   * magenta ribbon across the frame -- more saturated at forty segments than at ten, which is the
+   * inverse of what the fade is for. At 0.5 the loss is already half spent a quarter of the way
+   * out, which is where the lightness lift starts to bite.
+   */
+  saturationCurve = 1,
+): number {
   const t = Math.min(1, Math.max(0, amount))
 
   if (t <= 0) return color
@@ -237,7 +254,57 @@ export function fogBlend(color: number, fog: number, amount: number, saturationG
   return fromHsl({
     h: base.h,
     // A grey stays grey: raising the saturation of something with no hue invents one.
-    s: base.s <= 0.01 ? base.s : base.s * (1 + saturationGain * t),
+    s: base.s <= 0.01 ? base.s : base.s * (1 + saturationGain * Math.pow(t, saturationCurve)),
     l: base.l + (target.l - base.l) * t,
+  })
+}
+
+/**
+ * Blends two colours through OKLab rather than through sRGB.
+ *
+ * **⚠ An sRGB lerp takes a detour, and near the reserved threat band the detour matters.** Moving a
+ * sandy ground toward `dusk`'s pink horizon in sRGB passes through a saturated red on the way — it
+ * put `dunes` and `coast` one row inside the reservation, which `verify:road`'s pixel sweep caught.
+ * OKLab is perceptually straight: the same two ends meet through a desaturated mauve, whose chroma
+ * is below the band's own floor, so there is nothing to reject.
+ */
+export function mixOklab(a: number, b: number, amount: number): number {
+  const t = Math.min(1, Math.max(0, amount))
+  const x = toOklab(a)
+  const y = toOklab(b)
+
+  return fromOklab({ L: x.L + (y.L - x.L) * t, a: x.a + (y.a - x.a) * t, b: x.b + (y.b - x.b) * t })
+}
+
+/**
+ * Distance fog for a **solid fill**, done in OKLCh so the fade controls perceptual chroma.
+ *
+ * **⚠ HSL's `s` is not chroma, and two rounds of this were spent finding out.** The same `s` at a
+ * lightness of 0.6 is a far more colourful pixel than at 0.29 — so a fill whose lightness is being
+ * lifted toward the sky gets *louder* even while its `s` is being reduced. Shipped first with a
+ * linear fall and then with a square root, and both times the mid-distance ground came out as a
+ * saturated ribbon across the frame: more colourful at sixty segments than at ten, which is the
+ * exact inverse of what a fade is for.
+ *
+ * In OKLCh there is no mismatch to compensate for. Hue is kept, lightness lerps to the target's,
+ * and **chroma is scaled directly** — so `chromaKept` is a statement about how colourful the pixel
+ * is rather than about a coordinate that happens to be called saturation.
+ *
+ * `fogBlend` stays for anything with a silhouette, where holding saturation is the right rule and
+ * the lightness lift is small.
+ */
+export function fogBlendFill(color: number, fog: number, amount: number, chromaKept: number): number {
+  const t = Math.min(1, Math.max(0, amount))
+
+  if (t <= 0) return color
+
+  const base = toOklab(color)
+  const target = toOklab(fog)
+  const scale = 1 + (chromaKept - 1) * t
+
+  return fromOklab({
+    L: base.L + (target.L - base.L) * t,
+    a: base.a * scale,
+    b: base.b * scale,
   })
 }
