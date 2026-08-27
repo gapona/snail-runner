@@ -926,9 +926,22 @@ check('fog builds with distance, never reverses, and saturates at the draw dista
     previous = step
   }
 
-  // Front-loaded on purpose: perspective compresses the far half of the draw distance into a
-  // few pixels, so a linear ramp would spend most of its steps where nobody can see them.
-  assert.ok(fogStepFor(DRAW_DISTANCE / 2) > (FOG_STEPS - 1) / 2, 'the fog ramp is linear or slower — most steps are wasted')
+  // **⚠ BACK-loaded on purpose, and this assertion used to say the exact opposite.** It was
+  // front-loaded on a texture-economy argument -- perspective compresses the far half of the draw
+  // distance into a few pixels, so a linear ramp spends most of its rows where nobody can see
+  // them. True about the rows, and the wrong thing to optimise: what it actually did was start
+  // taking colour away at once, and the middle of the frame is where the game is read. The near
+  // half now costs almost nothing and the fade is spent in the far quarter, where there is
+  // genuinely air between the camera and the object.
+  assert.ok(
+    fogStepFor(DRAW_DISTANCE / 2) <= (FOG_STEPS - 1) / 4,
+    `half the draw distance is already at fog row ${fogStepFor(DRAW_DISTANCE / 2)} of ${FOG_STEPS - 1} -- the near field is losing colour`,
+  )
+  assert.ok(fogStepFor(DRAW_DISTANCE / 4) === 0, 'the near quarter is already fogged')
+
+  console.log(
+    `    fog rows at 10/25/50/75/100% of the draw distance: ${[0.1, 0.25, 0.5, 0.75, 1].map((t) => fogStepFor(t * DRAW_DISTANCE)).join('/')} of ${FOG_STEPS - 1}`,
+  )
 })
 
 check('every fog row is reachable, so none of the texture is dead weight', () => {

@@ -19,6 +19,7 @@ import {
   sunRay,
 } from './constants'
 import { blendColor, getRoadTheme, getRoadThemeId } from './themes'
+import { fromHsl, toHsl } from './color'
 
 /** Depths: sky behind the ground, glow and vignette in front of it but behind everything else. */
 const SKY_DEPTH = ROAD_MESH_DEPTH - 10
@@ -48,6 +49,29 @@ const LAYER_PARALLAX = [0.04, 0.12, 0.26] as const
  * Drawn between sky layer 0 and layer 1, so the haze bands pass in *front* of it. A sun with the
  * haze behind it is a lamp stuck on the glass.
  */
+
+/**
+ * Whether the far sky layer prefers the theme's authored plate over the generated gradient.
+ *
+ * False: see `layerTexture`. Kept as a named constant rather than deleted code, because the plates
+ * are still shipped and still loaded, and the argument that picked them is still on file.
+ */
+const SKY_PLATE_PREFERRED = false
+
+/**
+ * How much the top of the sky's own gradient is saturated past the theme's authored colour.
+ *
+ * Only the top: the horizon end is where the ground's fog is heading, and lifting both would put
+ * colour exactly where the fade is trying to take it away.
+ */
+const SKY_TOP_SATURATION = 1.35
+
+/** Raises a colour's saturation in HSL, leaving hue and lightness alone. A grey stays grey. */
+function saturate(colour: number, factor: number): number {
+  const hsl = toHsl(colour)
+
+  return fromHsl({ h: hsl.h, s: hsl.s <= 0.01 ? hsl.s : Math.min(1, hsl.s * factor), l: hsl.l })
+}
 
 /** Texture key for the built mountain strip, loaded by `Preloader` from `assets/sky/skyline.png`. */
 export const SKYLINE_TEXTURE = 'skyline'
@@ -179,10 +203,25 @@ export class Backdrop {
    * Layer 0 prefers the theme's loaded plate and falls back to the procedural gradient — so a
    * missing or still-loading plate degrades to the previous look rather than to a blank sprite.
    */
+  /**
+   * Which texture the sky layer `index` shows.
+   *
+   * **⚠ Layer 0 draws the generated gradient rather than the theme's plate, and that reverses a
+   * documented preference.** The plates were picked when the sky's whole job was a gradient plus
+   * haze bands, and a diffusion model draws haze better than `createLinearGradient` does. Two
+   * things have changed since: the haze is a cloud layer of its own now (see `CLOUD_LAYER`), which
+   * is what the bands were standing in for; and the plates were authored against the old muted
+   * palette, so they are the one surface in the frame that a saturation pass cannot reach — they
+   * are pixels, not colours. The gradient is `theme.sky.top` to `theme.sky.bottom`, which is
+   * saturated at the top and light at the horizon by construction, per theme, at zero bytes.
+   *
+   * `SKY_PLATE_PREFERRED` is the one edit that puts them back; the plates are still loaded and
+   * still shipped, so nothing about this is one-way.
+   */
   private layerTexture(scene: Phaser.Scene, index: number): string {
     const plate = skyPlateKey(getRoadThemeId())
 
-    return index === 0 && scene.textures.exists(plate) ? plate : skyTextureKey(index)
+    return index === 0 && SKY_PLATE_PREFERRED && scene.textures.exists(plate) ? plate : skyTextureKey(index)
   }
 
   /** Resizes every layer to the viewport and redraws the two static ones. */
@@ -457,7 +496,11 @@ export function ensureSkyTextures(scene: Phaser.Scene): void {
       // transparent overlays, or each would hide the one behind it.
       const gradient = context.createLinearGradient(0, 0, 0, height)
 
-      gradient.addColorStop(0, cssColor(theme.sky.top))
+      // **Saturated at the top, light at the horizon**, which is what a sky does and what a flat
+      // fill cannot say. The lift is applied to the top stop only: raising the horizon's with it
+      // would put colour exactly where the fog is trying to take it away, and the two would fight.
+      gradient.addColorStop(0, cssColor(saturate(theme.sky.top, SKY_TOP_SATURATION)))
+      gradient.addColorStop(0.55, cssColor(saturate(theme.sky.top, 1 + (SKY_TOP_SATURATION - 1) * 0.35)))
       gradient.addColorStop(1, cssColor(theme.sky.bottom))
       context.fillStyle = gradient
       context.fillRect(0, 0, width, height)

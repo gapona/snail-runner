@@ -14,6 +14,7 @@ import {
   DECOR_SINK_FRACTION,
   DRAW_DISTANCE,
   decorFog,
+  decorFogCeiling,
 } from './constants'
 import { isDecorArt, type DecorTexture } from './decor'
 import { getRoadTheme } from './themes'
@@ -189,7 +190,7 @@ export class RoadSprites {
         // calls. Breaking out early would silently report the pool as exactly big enough.
         if (used >= capacity) continue
 
-        this.place(this.slots[used], sprite.key, rect, visible, n, tint, variation)
+        this.place(this.slots[used], sprite.key, rect, visible, n, tint, variation, decorFogCeiling(sprite.tierScale))
         used++
       }
     }
@@ -232,6 +233,8 @@ export class RoadSprites {
     distanceIndex: number,
     tint: number,
     variation: DecorVariation,
+    /** Which tier's fog ceiling this prop fades under -- see `decorFogCeiling`. */
+    fogCeiling: number,
   ): void {
     const image = slot.image
 
@@ -270,7 +273,7 @@ export class RoadSprites {
     // `decorFog`, not the billboard one: that is what obstacles and pickups fade by and it is
     // held down by the reaction budget. Scenery is not on one -- but it is on a gate, so the
     // near field keeps the alpha it always had. See `DECOR_FOG_GATE`.
-    image.setAlpha((1 - decorFog(distanceIndex)) * billboardAppear(distanceIndex))
+    image.setAlpha((1 - decorFog(distanceIndex, fogCeiling)) * billboardAppear(distanceIndex))
     // Art gets its biome's colour under the theme's light; a generated silhouette already *is*
     // the theme's colour, and multiplying it again would darken it twice over.
     // The biome's colour under the theme's light, moved a little for this instance. A generated

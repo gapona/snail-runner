@@ -148,3 +148,96 @@ export function multiplyTint(a: number, b: number): number {
 
   return (r << 16) | (g << 8) | blue
 }
+
+/** HSL, with `h` in `0..360` and `s`/`l` in `0..1`. */
+export interface Hsl {
+  h: number
+  s: number
+  l: number
+}
+
+/** sRGB to HSL. */
+export function toHsl(color: number): Hsl {
+  const r = ((color >> 16) & 0xff) / 255
+  const g = ((color >> 8) & 0xff) / 255
+  const b = (color & 0xff) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  const d = max - min
+
+  if (d === 0) return { h: 0, s: 0, l }
+
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+  let h = 0
+
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60
+  else if (max === g) h = ((b - r) / d + 2) * 60
+  else h = ((r - g) / d + 4) * 60
+
+  return { h, s, l }
+}
+
+/** HSL back to sRGB. */
+export function fromHsl({ h, s, l }: Hsl): number {
+  const clamped = { h: ((h % 360) + 360) % 360, s: Math.min(1, Math.max(0, s)), l: Math.min(1, Math.max(0, l)) }
+
+  if (clamped.s === 0) {
+    const v = Math.round(clamped.l * 255)
+
+    return (v << 16) | (v << 8) | v
+  }
+
+  const q = clamped.l < 0.5 ? clamped.l * (1 + clamped.s) : clamped.l + clamped.s - clamped.l * clamped.s
+  const p = 2 * clamped.l - q
+  const channel = (t: number) => {
+    let x = t
+
+    if (x < 0) x += 1
+    if (x > 1) x -= 1
+    if (x < 1 / 6) return p + (q - p) * 6 * x
+    if (x < 1 / 2) return q
+    if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6
+
+    return p
+  }
+  const hue = clamped.h / 360
+  const to8 = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 255)
+
+  return (to8(channel(hue + 1 / 3)) << 16) | (to8(channel(hue)) << 8) | to8(channel(hue - 1 / 3))
+}
+
+/**
+ * Distance fog, done in HSL so that **only lightness travels toward the fog colour**.
+ *
+ * **⚠ An RGB lerp toward the fog is why the middle distance went pale, and "pale" is the correct
+ * word for what it does.** Interpolating a saturated green toward a pale blue-grey drags the green
+ * through the desaturated middle of the RGB cube: by the time a tree is half fogged it has lost
+ * most of its *chroma* as well as its contrast, and it stops being a green tree at a distance and
+ * becomes a grey one. Aerial perspective does not do that — a distant hillside is lighter and
+ * cooler, and it is still a colour.
+ *
+ * So the hue is kept, the lightness lerps to the fog's, and the saturation is **held and allowed
+ * to rise slightly** with distance (`saturationGain`), which is what keeps a far tree the same
+ * green as the near one rather than a wash of it.
+ *
+ * The one thing that has to be conceded: a fully fogged object is no longer exactly the fog
+ * colour, it is the fog's lightness in the object's own hue. That is the point rather than a
+ * defect — it is what stops the far field collapsing into one flat band — and the horizon still
+ * reads as haze because lightness is what haze actually takes away.
+ */
+export function fogBlend(color: number, fog: number, amount: number, saturationGain = 0): number {
+  const t = Math.min(1, Math.max(0, amount))
+
+  if (t <= 0) return color
+
+  const base = toHsl(color)
+  const target = toHsl(fog)
+
+  return fromHsl({
+    h: base.h,
+    // A grey stays grey: raising the saturation of something with no hue invents one.
+    s: base.s <= 0.01 ? base.s : base.s * (1 + saturationGain * t),
+    l: base.l + (target.l - base.l) * t,
+  })
+}

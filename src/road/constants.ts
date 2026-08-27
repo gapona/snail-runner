@@ -376,37 +376,71 @@ export const DECOR_POOL_SIZE = 200
 export const ROAD_MESH_DEPTH = -(DRAW_DISTANCE + 1)
 
 /**
- * Rows in the palette texture — one per step of distance fog.
+ * How many rows of distance fog the palette texture carries.
  *
- * **This is how the road fogs out without a tint, a filter or a second pass.** `Mesh2D` has one
- * object-wide tint and no per-vertex tint component, so a far segment cannot simply be drawn
- * darker. Instead the palette grows a second dimension: X still picks the colour, Y picks how
- * far into the fog it is, and a quad selects its row by its own distance. The cost is zero
- * extra draw calls, zero shader passes, and one more texture row per step.
+ * **⚠ Was 48, and 48 was too many for the opposite reason to the one that set it.** It came up
+ * from 16 because sixteen steps of an RGB lerp toward near-white were sixteen visible bands across
+ * the ground. What replaced that lerp is `fogBlend`, which moves lightness only — so a step is a
+ * change in lightness alone, and at 48 the difference between adjacent rows is **below what the
+ * eye separates**. The planes stop being planes: near, middle and far ground all read as one
+ * surface with a slight gradient over it, which is the flattening this whole round is about.
  *
- * **48, up from the 16 this shipped with, and the old value's own docstring said why it would
- * eventually be wrong**: it claimed 16 was "past the point where the banding is visible against
- * this palette" — and *that* palette was near-black, where sixteen steps between two colours a
- * few units apart are indistinguishable. Against a daylight palette fogging toward near-white the
- * same sixteen steps are sixteen visible horizontal bands laid across the ground, which was half
- * of what the frame was rippling with. A row costs `PALETTE_COLUMNS` texels — the whole texture at
- * 48 rows is 21x48 — so this is the cheapest fix available to any banding problem here.
+ * Twelve is deliberately few enough that a step is visible as a step. That is not stylisation: a
+ * readable depth cue is a *quantised* one, and the same argument is why a cel-shaded object reads
+ * as solid where a smoothly shaded one reads as soft.
  *
- * **48 rather than 64, and the ceiling is set by a test rather than by taste.** `verify:road`
- * asserts every row is actually reachable, so no part of the texture is dead weight. With
- * `DRAW_DISTANCE` at 300 and `FOG_CURVE` front-loading the near end, 48 is the largest count where
- * that still holds: at 56 and 64 the curve steps straight over row 1 and it is never sampled.
+ * The floor stays what it always was — every row must be reachable, or part of the texture is
+ * dead weight and the curve is skipping over it. `verify:road` asserts that, and it is the check
+ * that caught 56 stepping straight over row 1 under the old front-loaded curve.
  */
-export const FOG_STEPS = 48
+export const FOG_STEPS = 12
 
 /**
- * How sharply the fog closes in with distance.
+ * How sharply the fog closes in with distance, as an exponent on `distanceIndex / DRAW_DISTANCE`.
  *
- * Below 1 it builds quickly near the camera and flattens out; the road's own perspective
- * already compresses the far half of `DRAW_DISTANCE` into a few pixels, so a linear ramp spends
- * most of its steps where nobody can see them.
+ * **⚠ Was 0.62, i.e. FRONT-loaded, and it is now 3.0 — back-loaded.** The old value was chosen
+ * when the fog was an RGB lerp and the argument was about texture economy: perspective compresses
+ * the far half of `DRAW_DISTANCE` into a few pixels, so a linear ramp spends most of its rows
+ * where nobody can see them. True of the rows, and the wrong thing to optimise for. What it
+ * actually did was start taking colour away almost immediately — **0.245 of the way to full fog
+ * at a tenth of the draw distance** — so the middle of the frame, which is where the game is
+ * read, was already washed.
+ *
+ * At 3.0 the first half of the draw distance costs **12.5%** of the ramp and the near quarter
+ * costs 1.6%: the near and middle field keep their colour, and the fade is spent in the far
+ * quarter where there genuinely is air between the camera and the object. `verify:road` still
+ * asserts every fog row is reachable, which is what stops the exponent being raised until the
+ * curve steps over the near rows entirely.
  */
-export const FOG_CURVE = 0.62
+export const FOG_CURVE = 3
+
+/**
+ * How much saturation each family of palette column is given before it is baked.
+ *
+ * **⚠ Three numbers rather than one, because the surfaces have to stay apart.** The road, its
+ * rumble stripes and the ground beside it are adjacent in the frame and were authored to separate
+ * by lightness; pushing all three by the same factor keeps them exactly as far apart in hue as
+ * they were, which is to say it makes the picture more colourful without making it more readable.
+ * The verge takes the most — it is what the biome *is* — the road takes the least, because it is
+ * the surface the player reads obstacles against and a saturated road competes with them, and the
+ * stripe takes a middle share so it does not merge with either neighbour.
+ *
+ * Applied in HSL at bake time, so hue and lightness are untouched: this is saturation and nothing
+ * else. `verify:road` re-runs the whole threat sweep and the rumble-contrast floor over the
+ * boosted colours, because a saturation lift is exactly the kind of change that can walk a colour
+ * into the reserved band or flatten an edge that was reading on chroma.
+ */
+export const PALETTE_SATURATION = { road: 1.18, rumble: 1.32, ground: 1.5 } as const
+
+/**
+ * How much saturation the fog *adds* over the length of the ramp, as a fraction.
+ *
+ * Slightly above zero rather than exactly zero: aerial perspective takes contrast away, and a
+ * colour that keeps its saturation while losing lightness reads as having lost a little. A small
+ * gain compensates, and it is what makes a far conifer the same green as the near one rather than
+ * a paler version of it. See `fogBlend`.
+ */
+export const FOG_SATURATION_GAIN = 0.22
 
 /**
  * Which fog row a segment `n` steps from the camera samples.
@@ -737,47 +771,57 @@ export function billboardAppear(distanceIndex: number, drawDistance: number = DR
 export const MAX_BILLBOARD_FOG = 0.12
 
 /**
- * The same quantity for roadside scenery, which is not on a reaction budget.
+ * How far a billboard of scenery fades, by tier.
  *
- * **⚠ `MAX_BILLBOARD_FOG` is a combat constant and must stay one.** It is what obstacles and
- * pickups fade by, and `verify:obstacles` measures the contrast a hazard still has at the distance
- * `REACTION_MS` is counted from — a prop that is hard to see is atmosphere, a rock that is hard to
- * see is an unfair hit. Scenery answers to no such floor, so the two numbers separate here.
+ * **⚠ One ceiling for all scenery is why the middle distance was white.** `far` exists to be
+ * *air* — huge silhouettes beyond the corridor, whose whole job is to sit in the haze and give the
+ * horizon depth — and it wants most of the ramp. `mid` is the verge: the trees and rocks the
+ * player actually looks at, at the distance the game is read. Fading those by the same 0.85 is
+ * what took a conifer forty segments out and made it paler than the identical conifer at ten,
+ * which is the defect this is split for. The near tier is barely faded at all; it passes the
+ * camera in a moment and is the one thing in the frame at full colour by design.
  *
- * **0.85 is a ceiling at the very back, NOT a strength applied along the whole curve, and shipping
- * it as one was a real regression.** Raising this alone and leaving the ramp alone reintroduces
- * exactly the defect that took the billboard constant from 0.30 down to 0.12: `billboardFog` is
- * front-loaded (`t ^ FOG_CURVE`, and 0.62 is the *ground's* number), so it is already at **0.245
- * one tenth of the way out** — at a flat 0.85 a prop thirty segments away is a fifth transparent,
- * and it was reported as everything having gone see-through. `DECOR_FOG_GATE` is what makes the
- * large ceiling affordable.
+ * `MAX_BILLBOARD_FOG` is deliberately not in this table: it is a **combat** constant, what
+ * obstacles and pickups fade by, and `verify:obstacles` measures what a hazard still has at the
+ * distance `REACTION_MS` is counted from. A prop that is hard to see is atmosphere; a rock that is
+ * hard to see is an unfair hit.
  */
-export const MAX_DECOR_FOG = 0.85
+export const DECOR_FOG_BY_TIER = { near: 0.15, mid: 0.45, far: 0.85 } as const
 
 /**
  * How hard the decor haze is held off until the far end, as an exponent on `billboardFog`.
  *
- * **The ground's curve is reshaped, not replaced, and the difference matters.** Giving scenery a
- * curve of its own would let a tree lead or lag the ground it stands on — the one artefact that
- * makes billboards read as stickers. Raising the same curve to a power keeps it monotone in the
- * same direction and with the same zero at the camera: a prop still fades *towards* the fog as its
- * ground does, just later.
- *
- * At 4, measured against the shipped `FOG_CURVE` and `DRAW_DISTANCE`, alpha runs **0.999 at a
- * twentieth of the draw distance, 0.973 / 0.848 / 0.584 across the middle, and 0.150 at the far
- * edge**. So the near field is untouched to within a thousandth — which is what "put the textures
- * back" means, mechanically — and the haze is spent where the background actually is the fog
- * colour. That last point is what makes alpha legitimate here at all: measured on all seven
- * themes, the ground's palette fades to **precisely `theme.fog`** in its last row and the sky's
- * horizon band sits **deltaE 0.04 to 0.18** from it, so a distant prop at low alpha is blended
- * toward the fog by arithmetic rather than by luck. Near the camera that is not true, and near the
- * camera this gate has removed the fade.
+ * **⚠ It was 4, on top of a FRONT-loaded `FOG_CURVE` of 0.62, and it exists because of that
+ * curve.** `billboardFog` was already a quarter of the way to full fog a tenth of the distance
+ * out, so a large ceiling had to be gated hard to keep the near field opaque. The curve is
+ * back-loaded now (`FOG_CURVE` is 3), which does that job in the right place, and a second
+ * exponent on top of it would push the whole fade into the last few segments and leave the far
+ * tier as crisp as the near one — the opposite failure. 1.35 is a light shaping of a curve that
+ * is already correct rather than a rescue of one that was not.
  */
-export const DECOR_FOG_GATE = 4
+export const DECOR_FOG_GATE = 1.35
 
-/** How faded a billboard of scenery is at `distanceIndex`, as `0..1` of its own alpha. */
-export function decorFog(distanceIndex: number, drawDistance: number = DRAW_DISTANCE): number {
-  return MAX_DECOR_FOG * Math.pow(billboardFog(distanceIndex, drawDistance), DECOR_FOG_GATE)
+/** How faded a billboard of scenery is at `distanceIndex`, given the tier it belongs to. */
+export function decorFog(
+  distanceIndex: number,
+  ceiling: number = DECOR_FOG_BY_TIER.mid,
+  drawDistance: number = DRAW_DISTANCE,
+): number {
+  return ceiling * Math.pow(billboardFog(distanceIndex, drawDistance), DECOR_FOG_GATE)
+}
+
+/**
+ * Which ceiling a prop drawn at `tierScale` belongs under.
+ *
+ * Keyed off the scale rather than a stored tier because that is what the placement already
+ * carries — see `RoadSprite.tierScale` — and one fact stored in one place cannot disagree with
+ * itself. The far tier is the only one scaled up past the verge, so the test is a threshold.
+ */
+export function decorFogCeiling(tierScale: number): number {
+  if (tierScale >= DECOR_TIERS.far.scale) return DECOR_FOG_BY_TIER.far
+  if (tierScale >= DECOR_TIERS.near.scale) return DECOR_FOG_BY_TIER.near
+
+  return DECOR_FOG_BY_TIER.mid
 }
 
 /**

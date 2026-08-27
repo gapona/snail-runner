@@ -5341,6 +5341,108 @@ frames from the *same* run: the distance index is recoverable from the sprite's 
 photographed, and put back. The two frames drift by one metre, because taking a screenshot forces a
 paint and a paint runs a frame.
 
+## The Middle Distance Was Pale, And The Fog Was Why
+
+Colour only — no geometry, no outlines, no silhouettes touched.
+
+### ⚠ An RGB lerp toward the fog does not fade a colour, it desaturates it
+
+`fogBlend` in `road/color.ts`, replacing `blendColor` in the palette bake.
+
+Interpolating a saturated green toward a pale blue-grey drags it through the **desaturated middle
+of the RGB cube**: half-fogged, a tree has lost most of its *chroma* as well as its contrast, and it
+stops being a green tree at a distance and becomes a grey one. Aerial perspective does not do that
+— a distant hillside is lighter and cooler and still a colour.
+
+So the blend is done in HSL: **hue is kept, lightness lerps to the fog's, and saturation is held and
+allowed to rise slightly** (`FOG_SATURATION_GAIN = 0.22`), which is what compensates for the
+contrast the lightness lift takes away. A grey stays grey — raising the saturation of something with
+no hue invents one.
+
+What this concedes, stated rather than hidden: a fully fogged object is no longer exactly the fog
+colour, it is the fog's lightness in the object's own hue. That is the point — it is what stops the
+far field collapsing into one flat band — and the horizon still reads as haze, because lightness is
+what haze actually takes away.
+
+### ⚠ `FOG_CURVE` was front-loaded, and that is what washed the middle of the frame
+
+**0.62 → 3.0.** The old value was chosen on a texture-economy argument: perspective compresses the
+far half of `DRAW_DISTANCE` into a few pixels, so a linear ramp spends most of its rows where nobody
+can see them. True about the rows, and the wrong thing to optimise. Measured, it is the whole
+defect:
+
+| distance | ground was blended toward fog | now |
+|---|---|---|
+| 10% of draw distance | 23% | **0%** |
+| 25% | 43% | **0%** |
+| 50% | 66% | **9%** |
+| 75% | 83% | 45% |
+| 100% | 100% | 100% |
+
+At half the draw distance the ground used to be **two thirds of the way to the fog colour**. That is
+the pale middle ground, and everything standing on it inherited the wash. `verify:road`'s assertion
+here was inverted — it asserted the ramp *must* be front-loaded — and it is now the opposite claim
+with the reason on it.
+
+### One ceiling for all scenery made a far tree and a mid tree the same
+
+`DECOR_FOG_BY_TIER`: **near 0.15, mid 0.45, far 0.85.** The `far` tier exists to be *air* — huge
+silhouettes beyond the corridor whose job is to sit in the haze — and wants most of the ramp. `mid`
+is the verge, the props the player actually looks at, and fading those by the same 0.85 is what made
+a conifer forty segments out paler than the identical conifer at ten. Delivered alpha:
+
+| distance | mid tier | far tier |
+|---|---|---|
+| 50% | 0.973 | 0.949 |
+| 75% | 0.860 | 0.735 |
+| 100% | 0.550 | 0.150 |
+
+`DECOR_FOG_GATE` came down 4 → 1.35 in the same pass: the gate existed to hold a large ceiling off
+the near field *because the curve was front-loaded*, and the curve does that job in the right place
+now. Two exponents would have pushed the whole fade into the last few segments and left the far tier
+as crisp as the near one — the opposite failure.
+
+**`MAX_BILLBOARD_FOG` is deliberately not in that table.** It is a combat constant, what obstacles
+and pickups fade by, and `verify:obstacles` measures what a hazard still has at the distance
+`REACTION_MS` is counted from.
+
+### ⚠ `FOG_STEPS` came down, and the reason is the opposite of the one that raised it
+
+**48 → 12.** It went up from 16 because sixteen steps of an *RGB lerp toward near-white* were sixteen
+visible bands. What replaced that lerp moves lightness only, so a step is a change in lightness
+alone — and at 48 the difference between adjacent rows is **below what the eye separates**. Near,
+middle and far ground all read as one surface with a gradient over it, which is the flattening this
+whole round is about. A readable depth cue is a quantised one.
+
+The floor is unchanged and still checked: every row must be reachable, or part of the texture is
+dead weight. All twelve are.
+
+### Saturation, by family
+
+`PALETTE_SATURATION` — **road 1.18, rumble 1.32, ground 1.5**, applied in HSL at bake time so hue and
+lightness are untouched. Three numbers rather than one because the three surfaces are adjacent in
+the frame and were authored to separate: pushing all of them equally makes the picture more colourful
+without making it more readable. The verge takes the most (it is what the biome *is*), the road the
+least (it is what obstacles are read against, and a saturated road competes with them), the stripe a
+middle share so it merges with neither neighbour.
+
+`verify:road` re-runs the threat sweep and the rumble-contrast floor over the boosted colours,
+because a saturation lift is exactly the kind of change that walks a colour into the reserved band
+or flattens an edge that was reading on chroma. 109 checks, all green.
+
+### ⚠ The sky was never a flat fill, and the plate is why it looked like one
+
+Layer 0's gradient has always run `sky.top` → `sky.bottom`. What was drawn was the theme's authored
+**plate**, which overrides it. Two things have changed since the plates were picked: the haze bands
+they were chosen for are a cloud layer of their own now, and they were authored against the old
+muted palette — so they are the one surface in the frame a saturation pass **cannot reach**, being
+pixels rather than colours.
+
+`SKY_PLATE_PREFERRED = false` puts layer 0 back on the generated gradient, with `SKY_TOP_SATURATION
+= 1.35` lifting the top stop only. The horizon end is left alone: it is where the ground's fog is
+heading, and lifting both would put colour exactly where the fade is trying to take it away. The
+plates are still shipped and still loaded — the constant is the one edit that restores them.
+
 ## A Dark Patch On The Ground Means Something Is Above It
 
 **The rule, and it is the whole of this section: a soft dark patch on the ground means an object is
