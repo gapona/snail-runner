@@ -77,6 +77,17 @@ export class ObstacleSprites {
   /** Which shadow belongs to which object this frame, for the DEV mark overlay. */
   readonly shadowMarks: { x: number; y: number; owner: string }[] = []
 
+  /**
+   * DEV only: what was drawn this frame and at what alpha, and what the pool refused.
+   *
+   * **The honesty bug is about the moment a hazard is DRAWN, and only the renderer knows that.**
+   * The model's spawn distance is a different number and is what the existing reaction check
+   * measures -- which is why that check is green while a player is being hit by something they
+   * never saw. Empty in a production build.
+   */
+  readonly drawnIds: { id: number; alpha: number; distanceIndex: number }[] = []
+  readonly refusedIds: number[] = []
+
   private readonly rect = createBillboardRect()
   /** A second scratch rect: the shadow's own projection, taken at height zero. */
   private readonly shadowRect = createBillboardRect()
@@ -125,7 +136,11 @@ export class ObstacleSprites {
     const capacity = this.slots.length
     let used = 0
 
-    if (import.meta.env.DEV) this.shadowMarks.length = 0
+    if (import.meta.env.DEV) {
+      this.shadowMarks.length = 0
+      this.drawnIds.length = 0
+      this.refusedIds.length = 0
+    }
     let wanted = 0
 
     for (let n = 0; n < DRAW_DISTANCE; n++) {
@@ -170,7 +185,10 @@ export class ObstacleSprites {
         wanted++
         // Past capacity the loop keeps *counting* but stops drawing, so `wantedLastFrame` stays an
         // honest measure of demand. Breaking out early would report the pool as exactly big enough.
-        if (used >= capacity) continue
+        if (used >= capacity) {
+          if (import.meta.env.DEV) this.refusedIds.push(obstacle.id)
+          continue
+        }
 
         // Height zero, same segment, same `offsetX` -- projected rather than drawn in screen
         // coordinates, so it rides the road through a bend and over a crest.
@@ -188,6 +206,13 @@ export class ObstacleSprites {
           : null
 
         this.place(this.slots[used], key, rect, visible, n, (obstacle.id & 1) === 1, shadowRect, obstacle.yLow)
+        if (import.meta.env.DEV) {
+          this.drawnIds.push({
+            id: obstacle.id,
+            alpha: this.slots[used].image.alpha,
+            distanceIndex: n,
+          })
+        }
         if (import.meta.env.DEV && shadowRect) {
           this.shadowMarks.push({ x: shadowRect.x, y: shadowRect.y, owner: `${obstacle.kind}#${obstacle.id}` })
         }

@@ -119,6 +119,19 @@ export class RunScene extends Phaser.Scene {
   private runSeed = 0
   /** DEV only: labels every dark patch on the ground with what drew it. */
   private debugMarks: DebugMarks | null = null
+
+  /**
+   * DEV only: when each obstacle was first drawn at a readable alpha, and the budget that bought.
+   *
+   * **⚠ The reaction budget the game actually gives is measured at the moment of DRAWING, and
+   * nothing was measuring that.** `verify:obstacles` checks the placer's row spacing against
+   * `REACTION_MS` -- a statement about where obstacles are *put*, which is green whether or not
+   * they are ever shown in time. What the player gets is the gap between the first frame a hazard
+   * is legible and the frame it reaches them.
+   */
+  private reactionSeen: Map<number, number> | null = null
+  private reactionSamples: { id: number; kind: string; ms: number; firstIndex: number; refused: boolean }[] = []
+  private reactionRefused = new Set<number>()
   /** DEV only, and off unless `window.__marks.on()` asks for it. */
   private marksVisible = false
   /** Which lap the current obstacle layout was generated for. See `layLap`. */
@@ -189,6 +202,13 @@ export class RunScene extends Phaser.Scene {
       // A static import inside a DEV branch, not a gated call: gating the *call* leaves the module
       // in the bundle, which is the finding `perfReport.ts` exists for.
       this.debugMarks = new DebugMarks(this, HUD_DEPTH - 1)
+      this.reactionSeen = new Map()
+      const reactionHook = window as unknown as { __reaction?: { samples(): unknown[]; reset(): void } }
+
+      reactionHook.__reaction = {
+        samples: () => this.reactionSamples.slice(),
+        reset: () => { this.reactionSamples.length = 0; this.reactionSeen?.clear(); this.reactionRefused.clear() },
+      }
       this.cameras.main.ignore(this.debugMarks.gameObjects)
       // **⚠ Off unless asked for.** It shipped on, and a diagnostic that labels every mark in the
       // frame is unreadable to look past -- it was reported the first time it was seen. A dev
@@ -450,6 +470,56 @@ export class RunScene extends Phaser.Scene {
    * the world is what the player was just in, and cutting to an empty background makes the run
    * feel deleted rather than finished. Same overlay shape as `Settings` and `Shop`.
    */
+  /**
+   * DEV only: the reaction budget each obstacle actually bought, in milliseconds.
+   *
+   * **Measured between two events the player experiences**, not between two numbers in the model:
+   * the first frame the hazard is drawn at an alpha worth calling visible, and the frame it
+   * reaches the snail. Every obstacle the run passes yields a sample whether or not it was hit --
+   * the question is what the player was given, and a clean dodge is the same measurement as a
+   * collision. Read through `window.__reaction`.
+   */
+  private recordReaction(time: number): void {
+    const seen = this.reactionSeen
+
+    if (!seen) return
+
+    for (const id of this.obstacleSprites.refusedIds) this.reactionRefused.add(id)
+
+    // **Alpha, not merely "was placed".** A sprite fading up at the draw distance is on screen and
+    // is not yet something a player can act on; `BILLBOARD_FADE_IN_FRACTION` spends the far 28% of
+    // the draw distance getting there. Half opacity is the threshold used here, and it is stated
+    // rather than assumed so it can be argued with.
+    for (const drawn of this.obstacleSprites.drawnIds) {
+      if (drawn.alpha >= 0.5 && !seen.has(drawn.id)) seen.set(drawn.id, time)
+    }
+
+    // The moment each obstacle reaches the snail. Every one is passed exactly once per lap, and
+    // the sample is taken on the crossing rather than on a hit.
+    const playerZ = wrapZ(this.run.z + PLAYER_Z, this.world.trackLength)
+    const previous = this.previousPlayerZ
+
+    for (const obstacle of this.obstacles) {
+      const crossed = previous <= playerZ
+        ? obstacle.z > previous && obstacle.z <= playerZ
+        : obstacle.z > previous || obstacle.z <= playerZ
+
+      if (!crossed) continue
+
+      const first = seen.get(obstacle.id)
+
+      this.reactionSamples.push({
+        id: obstacle.id,
+        kind: obstacle.kind,
+        ms: first === undefined ? 0 : time - first,
+        firstIndex: -1,
+        refused: this.reactionRefused.has(obstacle.id),
+      })
+      seen.delete(obstacle.id)
+      this.reactionRefused.delete(obstacle.id)
+    }
+  }
+
   private endRun(): void {
     this.scene.pause()
     this.scene.launch('RunOver', { distance: this.run.distance, coins: this.run.coins })
@@ -577,6 +647,8 @@ export class RunScene extends Phaser.Scene {
       height,
       time,
     )
+    if (import.meta.env.DEV && this.reactionSeen) this.recordReaction(time)
+
     this.hud.update(this.run, width)
 
     if (import.meta.env.DEV && this.debugMarks && !this.marksVisible) {
