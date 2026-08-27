@@ -1724,7 +1724,7 @@ back to drawing the verge's own props 2.6x bigger, which is what it was before m
 - 331KB, quantised like the sky plates and for the same reason — 2048x384 of flat cel bands is
   nearly all palette, and it saves at 391KB untouched.
 
-### The sun, and why it does not move
+### The sun, why it does not move, and what about it does
 
 `SUN` and `ensureSunTexture` in `Backdrop.ts`. A generated radial-gradient canvas, per theme, on the
 same lifecycle as the vignette — `applyTheme` removes the previous theme's and builds the new one,
@@ -1783,6 +1783,52 @@ holding a destroyed texture. **Zero bytes**, and verified live across all seven 
   centre rather than shrinking the sun or moving `x` inwards for everyone — both of those pay for
   the narrowest frame on every other one — and `verify:road` asserts that at least one supported
   aspect still needs the clamp, so it cannot go dormant unnoticed.
+
+#### ⚠ It moves now, and the disc is the half that does not
+
+`SUN_ANIM` and `sunShimmer` (pure, `verify:road`). The sun was one baked texture and read as a
+sticker; it is two, and the split is the whole feature. **Turning the disc does nothing** — it is
+radially symmetric — and **breathing it is a sun that changes size, which reads as one that is
+approaching**, and this one is at infinity by the projection's own arithmetic. What may move is the
+*light*: the corona sweeps, lengthens and flares, and the body it comes out of holds still.
+
+So `sun-<theme>` is the disc and its halo, and `sun-rays-<theme>` is the corona, drawn behind it at
+`SKY_DEPTH + 0.45`. Compositing is unchanged: the single canvas painted the rays and then filled the
+gradient over them with source-over, and two images stacked in that order is the same operation —
+which is also what keeps the roots hidden under the opaque core.
+
+Three motions, and each is a different kind so no one of them carries it:
+
+- **A slow turn**, 5 degrees a second. The rays alternate long and short, so the pattern repeats
+  every 60 degrees — 12 seconds — and what the eye catches is a sweep rather than a rotation.
+- **A breath**, on **two incommensurate periods rather than one**. A single sine is a mechanism: the
+  eye finds the period in about three cycles and the sun starts reading as a pulsing lamp instead of
+  a burning thing. 4300 and 6700 have a common multiple of **288 seconds**, so nothing a player sees
+  repeats — asserted, rather than trusted to the two numbers looking unrelated.
+- **A glint**, one every 7.9s for 520ms, peaking 17% over the resting corona. It is **a surge of the
+  light, never a star or a streak**: a four-point sparkle is a lens flare, i.e. an artefact of a
+  camera, and this world does not have one — the same rule that made the rays blunt trapezoids
+  rather than points. A half-sine over its own window, so there is no step into it or out of it; a
+  linear ramp shows its corners and reads as a light being switched.
+
+Measured over 90 seconds at 60Hz: corona **0.94..1.20** of its size, alpha **0.77..1.00**, disc
+within **1.2%**, and the turn never steps more than half a degree in a frame.
+
+- **⚠ The clock is accumulated frame time, not a wall clock**, and it is clamped at
+  `MAX_SUN_STEP_MS`. A backgrounded tab hands back a multi-second delta; on `Date.now()` the corona
+  would jump a quarter turn on the frame it comes back, which is the one frame the player is taking
+  in the whole picture at once. Same clamp and the same reason as `stepDebris`'s.
+- **It is advanced from `WorldView.advance`, not from `render`.** A paused scene renders and does not
+  advance, which is what stops the sun turning behind a result panel.
+- **⚠ And every scene flared in its own first half-second until `glintOffsetMs` existed.** The clock
+  is per-backdrop and a run builds its own, so the menu's handover — deliberately a fade of the
+  interface over a world that does not cut — would have had the sun flaring on the frame the run
+  began, which is the single discontinuity that handover exists to avoid. The first glint is 3.9s
+  in, and `verify:road` asserts a scene does not flare inside its first two seconds.
+- `sunShimmer(0)` is exactly at rest and negative time returns the same thing, so a clock running
+  backwards under the stepping harness cannot extrapolate the animation — the clamp `progress01`
+  carries for the HUD, for the same reason.
+
 - **Known and accepted: on `night` this stops reading as a moon.** Rays are a sun's mark, so the
   cool blue orb the old soft ball gave that theme is now a radiant star. Nothing branches on the
   theme and nothing should — the alternative is deriving ray length from the glow's own luminance,

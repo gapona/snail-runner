@@ -79,7 +79,9 @@ import {
   SUN_RIM_WHITEN,
   SUN_DISC_STOP,
   SUN_RAYS,
+  SUN_ANIM,
   sunRay,
+  sunShimmer,
   FOG_SATURATION,
   GROUND_HORIZON_BLEND,
   GROUND_AIR_HUE_BAND,
@@ -2888,6 +2890,114 @@ check('the marks reach across the verge but still crowd the band the player read
   )
 })
 
+
+check('the sun shimmers within bounds, and nothing it does can escape them', () => {
+  // Everything here is a way an animated sun stops being a sun. The disc is at infinity and cannot
+  // move (see `SUN`), the corona may not go transparent or double in size, and the turn has to be
+  // slow enough that no single frame steps it visibly.
+  let minRayScale = Infinity
+  let maxRayScale = -Infinity
+  let minAlpha = Infinity
+  let maxAlpha = -Infinity
+  let maxDisc = 0
+  let previousSpin = -Infinity
+  let worstStep = 0
+
+  for (let frame = 0; frame < 60 * 90; frame++) {
+    const t = (frame * 1000) / 60
+    const now = sunShimmer(t)
+
+    minRayScale = Math.min(minRayScale, now.rayScale)
+    maxRayScale = Math.max(maxRayScale, now.rayScale)
+    minAlpha = Math.min(minAlpha, now.rayAlpha)
+    maxAlpha = Math.max(maxAlpha, now.rayAlpha)
+    maxDisc = Math.max(maxDisc, Math.abs(now.discScale - 1))
+    assert.ok(now.spinDegrees >= previousSpin, 'the corona turned backwards')
+    worstStep = Math.max(worstStep, now.spinDegrees - Math.max(0, previousSpin))
+    previousSpin = now.spinDegrees
+  }
+
+  assert.ok(minRayScale > 0.85 && maxRayScale < 1.3, `the corona ranged ${minRayScale.toFixed(2)}..${maxRayScale.toFixed(2)}`)
+  assert.ok(minAlpha >= 0 && maxAlpha <= 1, `alpha ranged ${minAlpha.toFixed(2)}..${maxAlpha.toFixed(2)}, outside what Phaser accepts`)
+  assert.ok(minAlpha > 0.5, `the corona faded to ${minAlpha.toFixed(2)} — at that point it reads as switching off`)
+  // The disc has an edge and the corona does not, so a body that visibly changes size is a body
+  // moving toward you — and this one is at infinity.
+  assert.ok(maxDisc < 0.02, `the disc breathed by ${(maxDisc * 100).toFixed(1)}%, which reads as approaching`)
+  assert.ok(worstStep < 0.5, `the corona turned ${worstStep.toFixed(2)} degrees in one frame`)
+  console.log(
+    `    corona ${minRayScale.toFixed(2)}..${maxRayScale.toFixed(2)} of its size, alpha ` +
+      `${minAlpha.toFixed(2)}..${maxAlpha.toFixed(2)}, disc within ${(maxDisc * 100).toFixed(1)}%, ` +
+      `${(worstStep * 60).toFixed(1)} degrees a second`,
+  )
+})
+
+check('the breath is two periods, not one, so the player never finds the loop', () => {
+  // A single sine is a mechanism: the eye finds the period in about three cycles and the sun starts
+  // reading as a pulsing lamp rather than as a burning thing. What makes two periods work is that
+  // their common multiple is far longer than anyone looks — asserted, not assumed from the numbers
+  // looking unrelated.
+  const [a, b] = SUN_ANIM.breathMs
+  const gcd = (x, y) => (y === 0 ? x : gcd(y, x % y))
+  const repeatMs = (a * b) / gcd(a, b)
+
+  assert.ok(repeatMs > 120000, `the breath repeats every ${(repeatMs / 1000).toFixed(0)}s`)
+
+  // And shown to reject the single-sine version: with both periods the same, the pattern repeats on
+  // that period and the check above would pass on a mechanism.
+  assert.equal((a * a) / gcd(a, a), a, 'one period repeats on itself, which is the case this rejects')
+  console.log(`    ${a}ms and ${b}ms breaths, first repeat at ${(repeatMs / 1000).toFixed(0)}s`)
+})
+
+check('a glint is rare, brief and smooth at both ends', () => {
+  // **A glint is a surge of the light, never a star or a streak.** A four-point sparkle is a lens
+  // flare, i.e. an artefact of a camera, and this world does not have one -- the same rule that made
+  // the rays blunt trapezoids rather than points.
+  const duty = SUN_ANIM.glintMs / SUN_ANIM.glintPeriodMs
+
+  assert.ok(duty > 0.02 && duty < 0.15, `a glint is up ${(duty * 100).toFixed(0)}% of the time, which is a throb`)
+
+  // No step into it or out of it: a linear ramp shows its corners and reads as a light being
+  // switched rather than as one flaring.
+  const at = (ms) => sunShimmer(ms).rayScale
+  // Where the first glint actually falls, derived rather than assumed to be at zero -- see
+  // `glintOffsetMs`, which exists so that it is not.
+  const firstGlint = SUN_ANIM.glintPeriodMs - SUN_ANIM.glintOffsetMs
+
+  assert.ok(firstGlint > 2000, `a scene flares ${firstGlint}ms after it opens, which the handover cannot afford`)
+
+  const justBefore = at(firstGlint - 1)
+  const justAfter = at(firstGlint + 1)
+  const justEnded = at(firstGlint + SUN_ANIM.glintMs - 1)
+  const afterEnd = at(firstGlint + SUN_ANIM.glintMs + 1)
+
+  assert.ok(Math.abs(justAfter - justBefore) < 0.002, `the glint starts with a step of ${(justAfter - justBefore).toFixed(4)}`)
+  assert.ok(Math.abs(afterEnd - justEnded) < 0.002, `the glint ends with a step of ${(afterEnd - justEnded).toFixed(4)}`)
+
+  const peak = at(firstGlint + SUN_ANIM.glintMs / 2)
+  const rest = at(firstGlint - SUN_ANIM.glintMs)
+
+  assert.ok(peak > rest + 0.08, `a glint only reaches ${((peak / rest - 1) * 100).toFixed(1)}% over the resting corona`)
+  console.log(
+    `    one every ${(SUN_ANIM.glintPeriodMs / 1000).toFixed(1)}s for ${SUN_ANIM.glintMs}ms ` +
+      `(${(duty * 100).toFixed(0)}% of the time), first at ${(firstGlint / 1000).toFixed(1)}s, ` +
+      `peaking ${((peak / rest - 1) * 100).toFixed(0)}% over rest`,
+  )
+})
+
+check('the sun is at rest on the first frame', () => {
+  // A scene that has just started, or one that was paused all along, must not draw the sun mid-turn
+  // or mid-flare -- the menu hands over to the run with no fade, and a corona that jumped would be
+  // the one thing in the frame that did.
+  const start = sunShimmer(0)
+
+  assert.equal(start.spinDegrees, 0)
+  assert.ok(Math.abs(start.rayScale - 1) < 1e-9, `the corona starts at ${start.rayScale}`)
+  assert.ok(Math.abs(start.discScale - 1) < 1e-9)
+  assert.equal(start.rayAlpha, SUN_ANIM.restAlpha)
+  // Negative time is what a clock running backwards under the stepping harness produces; it may not
+  // extrapolate the animation backwards -- the same clamp `progress01` carries for the HUD.
+  assert.deepEqual(sunShimmer(-5000), start)
+})
 
 check('the sun is a drawn object: even rays, roots under the disc, nothing outside the texture', () => {
   // Every one of these is a way the sun stops reading as drawn and starts reading as an artefact,

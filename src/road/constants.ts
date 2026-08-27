@@ -769,6 +769,101 @@ export const SUN_RAYS = {
   alpha: 0.9,
 } as const
 
+/**
+ * How the sun moves: a slow turn, a breath, and an occasional glint.
+ *
+ * **⚠ The corona is a separate texture from the disc so these can differ, and that split is the
+ * whole feature.** Turning the disc does nothing — it is radially symmetric — and breathing it is
+ * a sun that changes size, which reads as one that is approaching. What may move is the *light*:
+ * the spikes sweep, lengthen and flare, and the body they come out of holds still.
+ *
+ * **Two breathing periods, not one, and they are deliberately incommensurate.** A single sine is a
+ * mechanism: the eye finds the period in about three cycles and the sun starts reading as a
+ * pulsing light rather than as a burning one. 4300 and 6700 have a common multiple of 288
+ * seconds, so nothing a player sees repeats — `verify:road` asserts that rather than trusting the
+ * two numbers to look unrelated.
+ *
+ * **The glint is a surge of the light, never a star or a streak.** A four-point sparkle is a lens
+ * flare, i.e. an artefact of a camera, and this world does not have one — the same rule that made
+ * the rays blunt trapezoids rather than points. So a glint is the whole corona brightening and
+ * reaching further for half a second, on a smooth rise and fall with no step at either end.
+ */
+export const SUN_ANIM = {
+  /** Degrees the corona turns per second. 60 degrees — one repeat of the long/short pattern — takes 12s. */
+  spinDegreesPerSecond: 5,
+  /** The two breathing periods, in milliseconds. See above for why there are two. */
+  breathMs: [4300, 6700] as const,
+  /** How much the corona's reach varies with the breath, as a fraction. */
+  breathScale: 0.06,
+  /** How much its alpha varies with the breath. */
+  breathAlpha: 0.08,
+  /**
+   * Where the corona's alpha sits at rest.
+   *
+   * Below 1 so the glint has somewhere to go: a flare that cannot get brighter than the resting
+   * state is a flare nobody sees. It tops out at exactly 1 at the peak of a glint.
+   */
+  restAlpha: 0.85,
+  /** How often a glint comes and how long it lasts, in milliseconds. */
+  glintPeriodMs: 7900,
+  glintMs: 520,
+  /**
+   * How far into the cycle a scene starts, in milliseconds — so the first glint is not immediate.
+   *
+   * **⚠ Without it every scene flares in its first half-second.** The clock is per-backdrop and a
+   * run builds its own, so the menu's handover — which is deliberately a fade of the interface over
+   * a world that does not cut — would have had the sun flaring on the frame the run began, the one
+   * discontinuity the whole handover exists to avoid. At 4000 the first glint lands 3.9s in.
+   */
+  glintOffsetMs: 4000,
+  glintScale: 0.15,
+  glintAlpha: 0.15,
+  /**
+   * How much the disc itself breathes.
+   *
+   * An order of magnitude under the corona's, because the disc has an edge and the corona does
+   * not: a body that visibly changes size is a body that is moving toward you, and this one is at
+   * infinity — see `SUN` for why it cannot move at all.
+   */
+  discBreath: 0.012,
+} as const
+
+export interface SunShimmer {
+  /** How far the corona has turned, in degrees. Rises without bound; `Image.angle` wraps it. */
+  spinDegrees: number
+  /** Multipliers on the corona's drawn size and the disc's, and the corona's alpha, `0..1`. */
+  rayScale: number
+  rayAlpha: number
+  discScale: number
+}
+
+/**
+ * The sun's state at `elapsedMs` of **accumulated frame time**, not of wall clock.
+ *
+ * Accumulated, for the reason everything else timed in this project is: a backgrounded tab hands
+ * back a multi-second delta, and a sun driven by `Date.now()` would jump a third of a turn on the
+ * frame it comes back. Pure, so `verify:road` can sweep a minute of it under Node.
+ */
+export function sunShimmer(elapsedMs: number): SunShimmer {
+  const t = Math.max(0, elapsedMs)
+  const breath =
+    (Math.sin((t / SUN_ANIM.breathMs[0]) * Math.PI * 2) + Math.sin((t / SUN_ANIM.breathMs[1]) * Math.PI * 2)) / 2
+  const into = (t + SUN_ANIM.glintOffsetMs) % SUN_ANIM.glintPeriodMs
+  // A half-sine over the glint's own window: zero at both ends, so there is no step into it or out
+  // of it. A linear ramp would show its corners, which reads as a light being switched.
+  const glint = into < SUN_ANIM.glintMs ? Math.sin((into / SUN_ANIM.glintMs) * Math.PI) : 0
+
+  return {
+    spinDegrees: (t / 1000) * SUN_ANIM.spinDegreesPerSecond,
+    rayScale: 1 + breath * SUN_ANIM.breathScale + glint * SUN_ANIM.glintScale,
+    rayAlpha: Math.max(
+      0,
+      Math.min(1, SUN_ANIM.restAlpha + breath * SUN_ANIM.breathAlpha + glint * SUN_ANIM.glintAlpha),
+    ),
+    discScale: 1 + breath * SUN_ANIM.discBreath,
+  }
+}
+
 /** One ray's angle and length, so the geometry can be checked without a canvas. */
 export function sunRay(index: number): { angle: number; length: number } {
   const wrapped = ((index % SUN_RAYS.count) + SUN_RAYS.count) % SUN_RAYS.count

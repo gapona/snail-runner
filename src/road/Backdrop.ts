@@ -17,6 +17,7 @@ import {
   SUN_TEXTURE_SIZE,
   sunCenterX,
   sunRay,
+  sunShimmer,
 } from './constants'
 import { blendColor, getRoadTheme, getRoadThemeId } from './themes'
 import { fromHsl, toHsl } from './color'
@@ -27,6 +28,15 @@ const GLOW_DEPTH = ROAD_MESH_DEPTH + 1
 
 /** How much of the camera's lateral drift and height each sky layer answers to. */
 const LAYER_PARALLAX = [0.04, 0.12, 0.26] as const
+
+/**
+ * The most one frame may advance the sun by, in milliseconds.
+ *
+ * A tab that was backgrounded for ten seconds hands back a ten-second delta, and without this the
+ * corona would spin a quarter turn on the frame it comes back — which is the one moment the player
+ * is looking at the whole frame at once. Same clamp, and the same reason, as `stepDebris`'s.
+ */
+const MAX_SUN_STEP_MS = 64
 
 /**
  * The sun: where it sits, how big it is, and how it is drawn.
@@ -145,6 +155,18 @@ export class Backdrop {
 
   private readonly layers: Phaser.GameObjects.TileSprite[]
   private readonly sun: Phaser.GameObjects.Image
+  /** The corona. Behind the disc, so its roots stay hidden — see `sunRaysTextureKey`. */
+  private readonly sunRays: Phaser.GameObjects.Image
+  /**
+   * Frame time this backdrop has been shown for, in milliseconds.
+   *
+   * **Accumulated from the deltas rather than read off a clock**, the same rule everything timed in
+   * this project follows: a backgrounded tab hands back a multi-second delta, and a sun on
+   * `Date.now()` would jump a third of a turn on the frame it comes back.
+   */
+  private elapsedMs = 0
+  /** What `layout` sized the sun to, so `update` can scale off it without re-deriving it. */
+  private sunSize = 0
   private readonly clouds: Phaser.GameObjects.TileSprite
   private readonly skyline: Phaser.GameObjects.TileSprite | undefined
   private readonly glow: Phaser.GameObjects.Graphics
@@ -164,6 +186,7 @@ export class Backdrop {
     // Created before the range so the display list already has it underneath, and given its
     // texture here for the same reason the vignette is: `getRoadTheme()` has to be answerable.
     ensureSunTexture(scene)
+    this.sunRays = scene.add.image(0, 0, sunRaysTextureKey()).setOrigin(0.5, 0.5).setDepth(SKY_DEPTH + 0.45)
     this.sun = scene.add.image(0, 0, sunTextureKey()).setOrigin(0.5, 0.5).setDepth(SKY_DEPTH + 0.5)
 
     ensureCloudTexture(scene)
@@ -189,6 +212,7 @@ export class Backdrop {
     this.vignette = scene.add.image(0, 0, vignetteTextureKey()).setOrigin(0.5, 0.5).setDepth(GLOW_DEPTH + 1)
     this.gameObjects = [
       ...this.layers,
+      this.sunRays,
       this.sun,
       this.clouds,
       ...(this.skyline ? [this.skyline] : []),
@@ -262,11 +286,18 @@ export class Backdrop {
     // the renderer a few frames later.
     this.clouds.setTexture(cloudTextureKey())
     this.sun.setTexture(sunTextureKey())
-    this.sun.setDisplaySize(height * SUN.size, height * SUN.size)
+    this.sunRays.setTexture(sunRaysTextureKey())
+    this.sunSize = height * SUN.size
     // Clamped rather than placed at the bare fraction: `SUN.x` is a share of the width and
     // `SUN.size` a share of the height, and on a portrait frame those diverge enough to push
     // the sun off the edge. See `sunCenterX`.
-    this.sun.setPosition(sunCenterX(width, height), height * SUN.y)
+    const sunX = sunCenterX(width, height)
+
+    this.sun.setPosition(sunX, height * SUN.y)
+    this.sunRays.setPosition(sunX, height * SUN.y)
+    // Sized here and then scaled by `update`'s shimmer, so a resize and a breath cannot fight over
+    // the same property.
+    this.applySunShimmer()
 
     this.layoutClouds()
     this.layoutSkyline()
@@ -356,6 +387,33 @@ export class Backdrop {
    * layers answer to them in different proportions, which is the entire parallax: a distant
    * band barely moves while a near one sweeps.
    */
+  /**
+   * Adds a frame's worth of time to the sun's own clock.
+   *
+   * Separate from `update` because that one is called from the render pass and is handed the
+   * camera's numbers rather than a delta — and because a paused scene should render without the
+   * sun advancing, which falls out of this being the thing the scene chooses to call.
+   */
+  advance(dtMs: number): void {
+
+    // Clamped, for the same reason `stepDebris` clamps its own: a tab that was backgrounded for
+    // ten seconds would otherwise spin the corona a quarter turn on the frame it comes back.
+    this.elapsedMs += Math.max(0, Math.min(dtMs, MAX_SUN_STEP_MS))
+    this.applySunShimmer()
+  }
+
+  /** Puts the current shimmer onto the two images. Called on a resize as well as on a tick. */
+  private applySunShimmer(): void {
+    if (this.sunSize <= 0) return
+
+    const shimmer = sunShimmer(this.elapsedMs)
+
+    this.sun.setDisplaySize(this.sunSize * shimmer.discScale, this.sunSize * shimmer.discScale)
+    this.sunRays.setDisplaySize(this.sunSize * shimmer.rayScale, this.sunSize * shimmer.rayScale)
+    this.sunRays.setAlpha(shimmer.rayAlpha)
+    this.sunRays.setAngle(shimmer.spinDegrees)
+  }
+
   update(driftX: number, cameraY: number, baseCameraY: number): void {
     // Horizontal only. The sky's vertical term is a texture offset inside a full-height sprite, so
     // it can never expose an edge; the range is one tile tall with its feet buried under the
@@ -628,6 +686,18 @@ function sunTextureKey(): string {
 }
 
 /**
+ * The corona, as its own texture.
+ *
+ * **Split from the disc so the two can move differently**, which is the whole of the animation:
+ * the spikes turn, breathe and flare while the body they come out of holds still. Compositing is
+ * unchanged — the single canvas painted the rays and then filled the gradient over them with
+ * source-over, and two images stacked in that order is the same operation.
+ */
+function sunRaysTextureKey(): string {
+  return `sun-rays-${getRoadThemeId()}`
+}
+
+/**
  * Generates the sun for the active theme, if it does not exist yet.
  *
  * **Drawn in the theme's own `glow.color`, not in a colour of its own**, and that is the whole
@@ -636,19 +706,35 @@ function sunTextureKey(): string {
  * A night theme's cool glow makes this a moon without anything having to branch on it.
  */
 export function ensureSunTexture(scene: Phaser.Scene): void {
+  const colour = getRoadTheme().glow.color
+  const rgb = `${(colour >> 16) & 0xff}, ${(colour >> 8) & 0xff}, ${colour & 0xff}`
+  const size = SUN_TEXTURE_SIZE
+  const half = size / 2
+
+  // **The corona first, on its own canvas.** It used to be painted into the disc's canvas and then
+  // covered by the gradient, which hid the roots for free; with two textures the ray image simply
+  // sits behind the disc image and the disc's opaque core does the same job.
+  const raysKey = sunRaysTextureKey()
+
+  if (!scene.textures.exists(raysKey)) {
+    const raysTexture = scene.textures.createCanvas(raysKey, size, size)
+
+    if (!raysTexture) throw new Error(`ensureSunTexture: could not create canvas texture "${raysKey}"`)
+
+    raysTexture.context.clearRect(0, 0, size, size)
+    drawSunRays(raysTexture.context, half, rgb)
+    raysTexture.refresh()
+  }
+
   const key = sunTextureKey()
 
   if (scene.textures.exists(key)) return
 
-  const size = SUN_TEXTURE_SIZE
   const canvasTexture = scene.textures.createCanvas(key, size, size)
 
   if (!canvasTexture) throw new Error(`ensureSunTexture: could not create canvas texture "${key}"`)
 
   const context = canvasTexture.context
-  const half = size / 2
-  const colour = getRoadTheme().glow.color
-  const rgb = `${(colour >> 16) & 0xff}, ${(colour >> 8) & 0xff}, ${colour & 0xff}`
   const gradient = context.createRadialGradient(half, half, 0, half, half, half)
 
   const whiten = (channel: number, amount: number) => Math.round(channel + (255 - channel) * amount)
@@ -670,13 +756,6 @@ export function ensureSunTexture(scene: Phaser.Scene): void {
   gradient.addColorStop(1, `rgba(${rgb}, 0)`)
 
   context.clearRect(0, 0, size, size)
-
-  // **Rays first, disc second, and the order is the whole reason the roots are invisible.**
-  // Every ray starts inside `SUN_DISC_STOP`, so the opaque core painted over them covers where
-  // they begin; drawn the other way round each spike would show its own base as a hard edge
-  // sitting just off the sun, which reads as a crack rather than as light.
-  drawSunRays(context, half, rgb)
-
   context.fillStyle = gradient
   context.fillRect(0, 0, size, size)
   canvasTexture.refresh()
@@ -835,6 +914,9 @@ const CLOUD_SEED = 40213
 
 /** Removes the sun texture of `themeId`, alongside its sky set. */
 export function removeSunTexture(scene: Phaser.Scene, themeId: string): void {
+  // Both halves, or a theme switch leaves the previous theme's corona behind a new disc.
+  if (scene.textures.exists(`sun-rays-${themeId}`)) scene.textures.remove(`sun-rays-${themeId}`)
+
   const key = `sun-${themeId}`
 
   if (scene.textures.exists(key)) scene.textures.remove(key)

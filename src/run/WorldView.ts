@@ -184,6 +184,9 @@ export class WorldView {
     const smoothing = 1 - Math.pow(1 - CAMERA_LEAN_SMOOTHING, deltaMs / FIXED_STEP_MS)
 
     this.cameraLean += (target - this.cameraLean) * smoothing
+    // The sun's own clock. Advanced here rather than in `render` because a paused scene renders
+    // and does not advance, which is what stops the sun turning behind a result panel.
+    this.backdrop.advance(deltaMs)
   }
 
   /**
