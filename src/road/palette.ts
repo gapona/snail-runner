@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser'
-import { BIOMES, GROUND_SHADES_PER_BIOME, groundShadesForTheme } from './biomes'
+import { BIOMES, GROUND_SHADES_PER_BIOME, groundShadesForTheme, roadShadesForTheme } from './biomes'
 import { FOG_STEPS, PALETTE_COLUMNS, PALETTE_INDEX } from './constants'
 import { blendColor, getRoadTheme } from './themes'
 
@@ -48,8 +48,16 @@ export function createRoadPalette(scene: Phaser.Scene, key: string): Phaser.Text
       // The road's own colours first, then `GROUND_SHADES_PER_BIOME` shades per biome. Ground is faded
       // by the theme's fog exactly as the road is, which is what makes a forest in `ice` a cold
       // forest without anyone authoring one: the place is the biome, the light is the theme.
+      const groundEnd = theme.road.length + BIOMES.length * GROUND_SHADES_PER_BIOME
       const base = column < theme.road.length
         ? theme.road[column]
+        : column >= groundEnd
+        // The asphalt's own five shades, after the ground block -- see `roadPaletteIndex`, which
+        // computes the same offset from the same three constants.
+        ? roadShadesForTheme(
+            theme.road[PALETTE_INDEX.ASPHALT_DARK],
+            theme.road[PALETTE_INDEX.ASPHALT_LIGHT],
+          )[column - groundEnd]
         : groundShadesForTheme(
             BIOMES[Math.floor((column - theme.road.length) / GROUND_SHADES_PER_BIOME)].ground,
             theme.road[PALETTE_INDEX.ASPHALT_DARK],

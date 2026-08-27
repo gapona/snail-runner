@@ -90,7 +90,8 @@ export class WorldView {
   cameraLean = 0
 
   private readonly roadSprites: RoadSprites
-  private readonly decalMesh: DecalMesh
+  /** Readable so the DEV mark overlay can ask it what it drew. Nothing else touches it. */
+  readonly decalMesh: DecalMesh
   private readonly atmosphere: Atmosphere
   private readonly backdrop: Backdrop
   /**

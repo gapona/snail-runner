@@ -5341,6 +5341,74 @@ frames from the *same* run: the distance index is recoverable from the sprite's 
 photographed, and put back. The two frames drift by one metre, because taking a screenshot forces a
 paint and a paint runs a frame.
 
+## A Dark Patch On The Ground Means Something Is Above It
+
+**The rule, and it is the whole of this section: a soft dark patch on the ground means an object is
+hanging over that spot, and nothing else. Surface texture is carried by the colour of the surface,
+never by something laid over it.** Anything else is indistinguishable from a shadow, and a height
+cue that can be confused with dirt is not a height cue.
+
+### The diagnosis came first, and it changed what got fixed
+
+Reported as stray dark spots on the road. That has two causes with opposite fixes — decals, which
+would be turned off; or shadows of objects that have already despawned, which is a pool desync that
+turning decals off would not touch at all — and **no screenshot can tell them apart**, because both
+are soft dark patches lying on the road.
+
+`src/run/DebugMarks.ts` (DEV only) labels every patch with the renderer that emitted it, in the
+same frame: yellow `decal:<kind>`, cyan `shadow of <objectId>`, red `ORPHAN` for a shadow whose
+owner is not in the live list. The orphan test is done in `RunScene`, because only the scene knows
+what is alive.
+
+Measured on a live frame: **43 decals, 13 shadows, 0 orphans.** So the patches were decals, no pool
+was out of step, and the shadow work of the previous round was sound. The two dark streaks either
+side of the snail — the ones that read as a misplaced shadow — were labelled `decal:tuft`.
+
+The overlay is a static import inside an `import.meta.env.DEV` branch, which is the shape
+`perfReport.ts` established: gating the *call* leaves the module in the bundle.
+
+### What was switched off, and what replaced it
+
+- **`DECAL_DENSITY` is 0.** Ownerless marks are gone from the ground — not only from the asphalt.
+  The rule above is about the ground, and leaving them on the verge would have kept exactly the
+  ambiguity the rule exists to remove.
+- **Kept as a knob at 0, not deleted**, the same line `GROUND_ALTERNATION` is on. The placer is
+  correct and is what a future *object-owned* mark would be built on — a scuff at the foot of a
+  boulder, a scrape where the snail landed. That needs the placer to take an owner, not a different
+  density.
+- **⚠ The checks that exercise the placer take the density as an argument now.** With the shipped
+  value at 0 they would all have collapsed into "nothing is placed", which guards none of the
+  machinery. `verify:road` runs them at the density the placer was tuned at and separately asserts
+  the shipped constant is 0 and that a lap carries nothing: **0 marks shipped, 756 when exercised.**
+
+### The road surface got the treatment the verge already had
+
+Switching the marks off would have left the asphalt as **two colours alternating on the rumble
+beat**, which is a rhythm rather than a texture — and the same argument that removed the decals
+says the fix has to be the colour of the surface itself.
+
+- `ROAD_SHADES_PER_THEME = 5`, spread by **`GROUND_SHADE_SPREAD`, the same table the verge uses**,
+  so the two surfaces are worn by the same amount and read as one world. No separation push, unlike
+  `groundShadesForTheme`: this *is* the road and there is nothing for it to clear, so the spread is
+  centred on the theme's pair rather than anchored to one end.
+- The palette is now **55 columns**: five road colours, nine biomes at five ground shades, five
+  asphalt shades. `roadPaletteIndex` and `createRoadPalette` compute the block offsets from the same
+  three constants.
+- **⚠ The chroma half of the spread is asked only of a road that has a hue to vary.** A chroma
+  offset scales `a` and `b`, so on a grey it has no direction to point in and correctly does
+  nothing — `signal` is an almost monochrome theme by design and its asphalt sits at chroma 0.
+  Requiring a chroma spread there would be requiring the road to stop being grey. The lightness
+  half is asked of every theme, and it is what carries the texture.
+- **The rumble stripe now has to clear all five shades, not the authored two**, and does: every
+  theme stays above the 1.6:1 the road's edge needs.
+- **⚠ `roadShadeFor` reads the noise half a patch out of step with `groundShadeFor`.** Sampling at
+  the same coordinate would change both surfaces at every patch boundary — one band across the
+  whole width of the frame, which is a stripe with extra steps. Measured over 4000 segments:
+  **50 shared boundaries against 55 by chance**, i.e. independent, against **470** if they share a
+  coordinate. The check asserts independence rather than zero, because offsetting the sample makes
+  the two independent and does not forbid coincidence — asserting zero was simply wrong about what
+  the mechanism does, and it failed on correct code.
+
 ## Shadows Are A Height Gauge, And Clouds Are Their Own Layer
 
 ### The shadows

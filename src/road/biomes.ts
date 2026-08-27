@@ -262,6 +262,49 @@ function groundNoise(index: number): number {
 }
 
 /**
+ * How many palette columns the road surface itself occupies.
+ *
+ * **⚠ The asphalt had two shades and they alternated on the rumble rhythm, which is a beat rather
+ * than a texture.** With the ownerless decals switched off (see `DECAL_DENSITY`) the road would
+ * have been left as two flat colours in a regular stripe — and the reason those decals had to go
+ * is that surface texture must be the *colour of the surface* rather than something laid over it,
+ * or it cannot be told apart from a shadow. That argument applies to the road exactly as it
+ * applies to the verge, so the road gets the same treatment the verge already has.
+ */
+export const ROAD_SHADES_PER_THEME = 5
+
+/**
+ * The `ROAD_SHADES_PER_THEME` colours the asphalt is drawn in, under one theme.
+ *
+ * **Spread by `GROUND_SHADE_SPREAD`, the same table the verge uses**, so the two surfaces are worn
+ * by the same amount and read as one world rather than as two materials that happen to meet. No
+ * separation push here, unlike `groundShadesForTheme`: this *is* the road, and there is nothing
+ * for it to clear.
+ *
+ * Centred on the pair rather than anchored to one end, which the verge could not do because its
+ * far end would walk across the asphalt's own brightness. Here there is no such edge to cross, and
+ * centring keeps the mean where the theme authored it.
+ */
+export function roadShadesForTheme(dark: number, light: number): number[] {
+  const base = mixColour(dark, light, 0.5)
+
+  return GROUND_SHADE_SPREAD.map((offset) => shiftLightnessAndChroma(base, offset.lightness, offset.chroma))
+}
+
+/**
+ * Which of the road's shades a segment is drawn in.
+ *
+ * **Offset from the verge's own draw on purpose.** Both surfaces read the same noise, and reading
+ * it at the same coordinate would change them together at every patch boundary — one band across
+ * the whole width of the frame, which is a stripe with extra steps and precisely what the
+ * alternation was replaced to avoid. Half a patch out of step is enough that the two boundaries
+ * never coincide.
+ */
+export function roadShadeFor(index: number): number {
+  return groundShadeFor(index + Math.round(GROUND_PATCH_SEGMENTS / 2))
+}
+
+/**
  * Which of a biome's shades a segment is drawn in — deterministic, from the index alone.
  *
  * **⚠ Deliberately NOT the rumble alternation, and deliberately not a bare hash either.** The

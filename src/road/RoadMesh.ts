@@ -6,6 +6,7 @@ import {
   fogStepFor,
   GROUND_EXTENT,
   groundPaletteIndex,
+  roadPaletteIndex,
   hasRung,
   PALETTE_INDEX,
   paletteU,
@@ -15,7 +16,7 @@ import {
   RUMBLE_WIDTH_FRACTION,
 } from './constants'
 import { logWarning } from '../platform/yt'
-import { biomeForSegment, biomeIndex, groundShadeFor } from './biomes'
+import { biomeForSegment, biomeIndex, groundShadeFor, roadShadeFor } from './biomes'
 import { quadWriteAction } from './meshGuard'
 import { createRoadPalette } from './palette'
 import { projectInto, type ScreenPoint } from './project'
@@ -298,6 +299,9 @@ export class RoadMesh {
         // property of that piece of ground: it is the same on the next lap, at every viewport
         // size and in whatever pool slot the segment happens to land.
         groundShadeFor(segment.index),
+        // Offset from the verge's own draw, so the two surfaces never change shade on the same
+        // segment -- see `roadShadeFor`.
+        roadShadeFor(segment.index),
       )
       maxY = s2.y
     }
@@ -343,8 +347,12 @@ export class RoadMesh {
     fogV: number,
     biome: number,
     shade: number,
+    roadShade: number,
   ): void {
-    const roadU = paletteU(alternate ? PALETTE_INDEX.ASPHALT_DARK : PALETTE_INDEX.ASPHALT_LIGHT)
+    // **The asphalt picks one of five shades by noise, not one of two by the rumble beat.** A beat
+    // across the largest surface in the frame is a stripe; the stripes themselves still ride
+    // `alternate` below, which is the rhythm it was always for. See `ROAD_SHADES_PER_THEME`.
+    const roadU = paletteU(roadPaletteIndex(roadShade))
     const rumbleU = paletteU(alternate ? PALETTE_INDEX.RUMBLE_DARK : PALETTE_INDEX.RUMBLE_LIGHT)
     // The ground does NOT ride the rumble beat -- see `groundShadeFor`. `alternate` still
     // drives the asphalt and the stripes above, which is the rhythm it was always for.

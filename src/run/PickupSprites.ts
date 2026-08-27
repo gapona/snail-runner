@@ -55,6 +55,9 @@ export class PickupSprites {
   usedLastFrame = 0
 
   private readonly slots: SlotState[]
+  /** Which shadow belongs to which object this frame, for the DEV mark overlay. */
+  readonly shadowMarks: { x: number; y: number; owner: string }[] = []
+
   private readonly rect = createBillboardRect()
   /** A second scratch rect: the shadow's own projection, taken at height zero. */
   private readonly shadowRect = createBillboardRect()
@@ -92,6 +95,8 @@ export class PickupSprites {
     const previousUsed = this.usedLastFrame
     const capacity = this.slots.length
     let used = 0
+
+    if (import.meta.env.DEV) this.shadowMarks.length = 0
 
     for (let n = 0; n < DRAW_DISTANCE; n++) {
       const index = (baseIndex + n) % track.length
@@ -143,6 +148,9 @@ export class PickupSprites {
         )
 
         this.place(this.slots[used], PICKUP_TEXTURES[pickup.kind], rect, visible, n, shadowRect, PICKUP_HEIGHT + bob)
+        if (import.meta.env.DEV) {
+          this.shadowMarks.push({ x: shadowRect.x, y: shadowRect.y, owner: `pickup#${pickup.id}` })
+        }
         used++
       }
     }

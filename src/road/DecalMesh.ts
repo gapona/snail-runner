@@ -86,10 +86,15 @@ export class DecalMesh {
    * marks nearest the camera get the slots when the pool is short, which is where they are largest
    * and most obviously missing.
    */
+  /** What this frame drew and where, for the DEV mark overlay. Empty in a production build. */
+  readonly drawnMarks: { x: number; y: number; kind: string }[] = []
+
   render(track: Segment[], baseIndex: number, clipY: readonly number[]): void {
     const vertices = this.vertices
     let used = 0
     let wanted = 0
+
+    if (import.meta.env.DEV) this.drawnMarks.length = 0
 
     for (let n = 0; n < DECAL_DRAW_SEGMENTS && n < DRAW_DISTANCE; n++) {
       const index = baseIndex + n
@@ -143,6 +148,13 @@ export class DecalMesh {
         v0,
         v1,
       )
+
+      // DEV only, and it is the reason this array exists: a dark patch on the road has exactly two
+      // possible sources, and the only way to tell which one a given patch is is to ask the thing
+      // that drew it. See `DebugMarks`.
+      if (import.meta.env.DEV) {
+        this.drawnMarks.push({ x: s1.x + decal.offsetX * s1.w, y: s1.y, kind: decal.kind })
+      }
     }
 
     // Unused slots are degenerated rather than skipped: the index buffer is a fixed length, so a

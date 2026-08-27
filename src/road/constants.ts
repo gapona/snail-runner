@@ -7,7 +7,7 @@
  * — see CLAUDE.md "Known Issues Fixed" for the same rule applied to the platform layer).
  */
 
-import { BIOMES, GROUND_SHADES_PER_BIOME } from './biomes'
+import { BIOMES, GROUND_SHADES_PER_BIOME, ROAD_SHADES_PER_THEME } from './biomes'
 
 /** Depth of one track segment, in world units. */
 export const SEGMENT_LENGTH = 200
@@ -118,7 +118,8 @@ export const ROAD_PALETTE = [0x1d1f26, 0x24262f, 0x4a7fd6, 0xf2f2f5, 0x969698]
  * the two is a palette whose columns no longer mean what the mesh thinks they mean, and nothing
  * about the resulting picture says which half is wrong.
  */
-export const PALETTE_COLUMNS = ROAD_PALETTE.length + BIOMES.length * GROUND_SHADES_PER_BIOME
+export const PALETTE_COLUMNS =
+  ROAD_PALETTE.length + BIOMES.length * GROUND_SHADES_PER_BIOME + ROAD_SHADES_PER_THEME
 
 /**
  * The palette column for one of a biome's ground shades.
@@ -127,6 +128,14 @@ export const PALETTE_COLUMNS = ROAD_PALETTE.length + BIOMES.length * GROUND_SHAD
  * alternation this function used to take. See `groundShadeFor` for why the ground may not share
  * the stripes' beat.
  */
+export function roadPaletteIndex(shade: number): number {
+  const clamped = Math.min(ROAD_SHADES_PER_THEME - 1, Math.max(0, Math.trunc(shade)))
+
+  // After the ground block, which is after the road's own declared colours. The three offsets are
+  // computed from the same three constants everywhere, here and in `createRoadPalette`.
+  return ROAD_PALETTE.length + BIOMES.length * GROUND_SHADES_PER_BIOME + clamped
+}
+
 export function groundPaletteIndex(biome: number, shade: number): number {
   const clampedBiome = Math.min(BIOMES.length - 1, Math.max(0, biome))
   const clampedShade = Math.min(GROUND_SHADES_PER_BIOME - 1, Math.max(0, Math.trunc(shade)))

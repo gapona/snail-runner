@@ -1,3 +1,5 @@
+import { DebugMarks } from '../run/DebugMarks'
+import { HUD_DEPTH } from '../run/hudDepth'
 import * as Phaser from 'phaser'
 import { bindAction, bindSteering, type Steering } from '../platform/input'
 import { bindLayout } from '../ui/layout'
@@ -115,6 +117,8 @@ export class RunScene extends Phaser.Scene {
   private invulnerableUntilDistance = 0
   /** One number a whole run is reproducible from: the scenery scatter and the obstacle layout. */
   private runSeed = 0
+  /** DEV only: labels every dark patch on the ground with what drew it. */
+  private debugMarks: DebugMarks | null = null
   /** Which lap the current obstacle layout was generated for. See `layLap`. */
   private laidLap = 0
   /** How many times this run has been hit. Reported by the DEV hook; the HUD reads `run.lives`. */
@@ -178,6 +182,13 @@ export class RunScene extends Phaser.Scene {
     this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height)
     this.uiCamera.ignore(this.worldObjects())
     this.cameras.main.ignore(this.hud.gameObjects)
+
+    if (import.meta.env.DEV) {
+      // A static import inside a DEV branch, not a gated call: gating the *call* leaves the module
+      // in the bundle, which is the finding `perfReport.ts` exists for.
+      this.debugMarks = new DebugMarks(this, HUD_DEPTH - 1)
+      this.cameras.main.ignore(this.debugMarks.gameObjects)
+    }
 
     // Steering is an *absolute* axis — a runner steers to a place, not in a direction — so it is
     // `bindSteering` rather than `bindHeldAction`. See `platform/input.ts` for why that shape had
@@ -552,6 +563,27 @@ export class RunScene extends Phaser.Scene {
       time,
     )
     this.hud.update(this.run, width)
+
+    if (import.meta.env.DEV && this.debugMarks) {
+      // **The orphan test, which is the whole point of the overlay.** A shadow whose owner is not
+      // in the live list is a pool that has outlived its objects; a shadow whose owner IS live is
+      // working correctly, and the patch beside it is somebody else's.
+      const liveObstacles = new Set(this.obstacles.map((o) => `${o.kind}#${o.id}`))
+      const livePickups = new Set(this.pickups.map((p) => `pickup#${p.id}`))
+      const shadows = [
+        ...this.obstacleSprites.shadowMarks.map((m) => ({ ...m, live: liveObstacles.has(m.owner) })),
+        ...this.pickupSprites.shadowMarks.map((m) => ({ ...m, live: livePickups.has(m.owner) })),
+      ]
+
+      this.debugMarks.update(
+        this.world.decalMesh.drawnMarks.map((m) => ({ x: m.x, y: m.y, label: `decal:${m.kind}` })),
+        [
+          ...shadows.filter((m) => m.live).map((m) => ({ x: m.x, y: m.y, label: `shadow of ${m.owner}` })),
+          { x: this.playerView.shadow.x, y: this.playerView.shadow.y, label: 'shadow of snail' },
+        ],
+        shadows.filter((m) => !m.live).map((m) => ({ x: m.x, y: m.y, label: `ORPHAN ${m.owner}` })),
+      )
+    }
     // After the world, never before: it reads this frame's segment projections out of the mesh
     // pass, exactly as `RoadSprites` does.
     this.playerView.render(

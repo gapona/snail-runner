@@ -7,6 +7,15 @@
 // ts-extensionless-loader.mjs Node-native-TS setup -- same shape as verify-scroll-momentum.mjs.
 import assert from 'node:assert/strict'
 
+/**
+ * The density the decal placer was tuned at, for the checks that exercise it.
+ *
+ * The shipped `DECAL_DENSITY` is **0** — see its own docstring, and the check below. These marks
+ * are off because a soft dark patch on the ground now means one thing only. The placer itself is
+ * still correct and still guarded, because whatever brings a mark back will be built on it.
+ */
+const TEST_DECAL_DENSITY = 0.52
+
 import {
   readsAsSame,
   tintFor,
@@ -60,7 +69,7 @@ import { KIT } from '../src/ui/kitPalette.ts'
  */
 const MIN_HOSTILE_HUE_GAP = 30
 import { quadWriteAction } from '../src/road/meshGuard.ts'
-import { BIOMES, BIOME_IDS, biomeById, biomeForSegment, biomeIndexForSegment, biomeIndex, biomeRunSegments, MIN_BIOME_RUN_SEGMENTS, groundPairForTheme, MIN_GROUND_CONTRAST, GROUND_ALTERNATION, setBiomeLayout, skylineBiomeTint, SKYLINE_SEAM_BLEND_SEGMENTS, GROUND_SHADES_PER_BIOME, GROUND_SHADE_SPREAD, groundShadesForTheme, groundShadeFor, GROUND_PATCH_SEGMENTS, GROUND_PATCH_MIN_SEGMENTS, GROUND_PATCH_MAX_SEGMENTS } from '../src/road/biomes.ts'
+import { BIOMES, BIOME_IDS, biomeById, biomeForSegment, biomeIndexForSegment, biomeIndex, biomeRunSegments, MIN_BIOME_RUN_SEGMENTS, groundPairForTheme, MIN_GROUND_CONTRAST, GROUND_ALTERNATION, setBiomeLayout, skylineBiomeTint, SKYLINE_SEAM_BLEND_SEGMENTS, GROUND_SHADES_PER_BIOME, GROUND_SHADE_SPREAD, groundShadesForTheme, groundShadeFor, GROUND_PATCH_SEGMENTS, GROUND_PATCH_MIN_SEGMENTS, GROUND_PATCH_MAX_SEGMENTS, ROAD_SHADES_PER_THEME, roadShadesForTheme, roadShadeFor } from '../src/road/biomes.ts'
 import {
   SUN,
   sunCenterX,
@@ -92,6 +101,7 @@ import {
   FOG_STEPS,
   PALETTE_COLUMNS,
   groundPaletteIndex,
+  roadPaletteIndex,
   HORIZON_Y,
   fogStepFor,
   billboardFog,
@@ -148,6 +158,7 @@ import {
 import {
   DECAL_DRAW_SEGMENTS,
   DECAL_HALF_WIDTH,
+  DECAL_DENSITY,
   DECAL_KINDS,
   DECAL_LENGTH_SEGMENTS,
   DECAL_MAX_OFFSET,
@@ -562,8 +573,8 @@ check('paletteU: samples the exact centre of texel i, never an edge', () => {
 
   assert.equal(
     count,
-    ROAD_PALETTE.length + BIOMES.length * GROUND_SHADES_PER_BIOME,
-    'PALETTE_COLUMNS does not cover road plus biome ground',
+    ROAD_PALETTE.length + BIOMES.length * GROUND_SHADES_PER_BIOME + ROAD_SHADES_PER_THEME,
+    'PALETTE_COLUMNS does not cover the road, the biome ground and the asphalt shades',
   )
   // **Deliberately not a literal.** This was `17`, and adding two biomes broke a test that was
   // measuring nothing except how many biomes there were when it was written — the line above
@@ -2193,7 +2204,7 @@ check('a mark is a pure function of where it is, on this lap and the next', () =
   // The rule the whole file is built on: no decorate pass, nothing stored on a segment, so the
   // same stretch of road looks the same the second time round and at every screen size.
   for (const index of [0, 1, 7, 199, 1433, 90210]) {
-    assert.deepEqual(decalAt(index), decalAt(index), `segment ${index} answers differently twice`)
+    assert.deepEqual(decalAt(index, 0, TEST_DECAL_DENSITY), decalAt(index, 0, TEST_DECAL_DENSITY), `segment ${index} answers differently twice`)
   }
 
   // ...and different segments really do differ, or "deterministic" would be satisfied by a
@@ -2201,7 +2212,7 @@ check('a mark is a pure function of where it is, on this lap and the next', () =
   const marks = []
 
   for (let index = 0; index < 1434; index++) {
-    const decal = decalAt(index)
+    const decal = decalAt(index, 0, TEST_DECAL_DENSITY)
 
     if (decal) marks.push(decal)
   }
@@ -2220,7 +2231,7 @@ check('a mark is a pure function of where it is, on this lap and the next', () =
 
 check('every mark stays inside the bounds the renderer assumes', () => {
   for (let index = 0; index < 4000; index++) {
-    const decal = decalAt(index)
+    const decal = decalAt(index, 0, TEST_DECAL_DENSITY)
 
     if (!decal) continue
 
@@ -2237,7 +2248,7 @@ check('every mark stays inside the bounds the renderer assumes', () => {
   const offsets = []
 
   for (let index = 0; index < 4000; index++) {
-    const decal = decalAt(index)
+    const decal = decalAt(index, 0, TEST_DECAL_DENSITY)
 
     if (decal) offsets.push(Math.abs(decal.offsetX))
   }
@@ -2298,7 +2309,7 @@ check('the pool holds the busiest stretch of the lap', () => {
   let peakAt = 0
 
   for (let base = 0; base < 1434; base++) {
-    const wanted = decalsIn(base, DECAL_DRAW_SEGMENTS)
+    const wanted = decalsIn(base, DECAL_DRAW_SEGMENTS, 0, TEST_DECAL_DENSITY)
 
     if (wanted > peak) {
       peak = wanted
@@ -2786,7 +2797,7 @@ check('a mark only ever lands on ground that could have made it', () => {
   const used = new Map()
 
   for (let i = 0; i < length; i++) {
-    const decal = decalAt(i, length)
+    const decal = decalAt(i, length, TEST_DECAL_DENSITY)
 
     if (!decal) continue
 
@@ -2812,7 +2823,7 @@ check('a mark only ever lands on ground that could have made it', () => {
   let wrongForBiome = 0
 
   for (let i = 0; i < length; i++) {
-    const anywhere = decalAt(i, 0)
+    const anywhere = decalAt(i, 0, TEST_DECAL_DENSITY)
 
     if (anywhere && !biomeForSegment(i, length).decals.includes(anywhere.kind)) wrongForBiome += 1
   }
@@ -2830,7 +2841,7 @@ check('the marks reach across the verge but still crowd the band the player read
   const offsets = []
 
   for (let i = 0; i < length; i++) {
-    const decal = decalAt(i, length)
+    const decal = decalAt(i, length, TEST_DECAL_DENSITY)
 
     if (decal) offsets.push(Math.abs(decal.offsetX))
   }
@@ -2986,6 +2997,132 @@ check('the cloud band is a layer of its own, slower than the range and never str
   console.log(
     `    cloud band: aspect ${aspect.toFixed(2)} held at 320/945/1440px, drift ${CLOUD_LAYER.driftPixels} against the range's ${SKYLINE_LAYER.driftPixels}, worst ${perSecond.toFixed(1)}px/s`,
   )
+})
+
+
+check('the road surface has five shades of its own, and they do not stripe', () => {
+  // **⚠ The asphalt was two colours alternating on the rumble beat, which is a rhythm and not a
+  // texture.** With the ownerless decals off it would have been left as exactly that, and the
+  // reason those decals went is that surface texture has to be the colour of the surface: a mark
+  // laid over the ground cannot be told apart from a shadow. That applies to the road too.
+  const minLightnessRange = 0.05
+  const minChromaRange = 0.012
+
+  for (const id of themeIds()) {
+    const theme = THEMES[id]
+    const shades = roadShadesForTheme(
+      theme.road[PALETTE_INDEX.ASPHALT_DARK],
+      theme.road[PALETTE_INDEX.ASPHALT_LIGHT],
+    )
+
+    assert.equal(shades.length, ROAD_SHADES_PER_THEME, `${id} delivered ${shades.length} asphalt shades`)
+    assert.equal(new Set(shades).size, ROAD_SHADES_PER_THEME, `${id} has two asphalt shades of the same colour`)
+
+    const lightness = shades.map((c) => toOklab(c).L)
+    const chromas = shades.map((c) => chroma(c))
+
+    assert.ok(
+      Math.max(...lightness) - Math.min(...lightness) >= minLightnessRange,
+      `${id}'s asphalt spreads over only ${(Math.max(...lightness) - Math.min(...lightness)).toFixed(4)} of lightness`,
+    )
+    // **⚠ Asked only of a road that has a hue to vary.** A chroma offset scales `a` and `b`, so on
+    // a grey it has no direction to point in and correctly does nothing -- `signal` is an almost
+    // monochrome theme by design and its asphalt sits at chroma 0. Requiring a chroma spread there
+    // would be requiring the road to stop being grey. The lightness half is asked of every theme,
+    // which is what actually carries the texture; hue is the seasoning.
+    const base = chroma(blendColor(theme.road[PALETTE_INDEX.ASPHALT_DARK], theme.road[PALETTE_INDEX.ASPHALT_LIGHT], 0.5))
+
+    if (base > 0.01) {
+      assert.ok(
+        Math.max(...chromas) - Math.min(...chromas) >= minChromaRange,
+        `${id}'s asphalt spreads over only ${(Math.max(...chromas) - Math.min(...chromas)).toFixed(4)} of chroma`,
+      )
+    }
+
+    // **The stripe's whole job is marking the road's edge, and that is lightness.** It had to clear
+    // the two authored shades; it now has to clear all five, and the darkest and lightest of the
+    // five are further apart than that pair was.
+    for (const rumble of [theme.road[PALETTE_INDEX.RUMBLE_DARK], theme.road[PALETTE_INDEX.RUMBLE_LIGHT]]) {
+      for (const shade of shades) {
+        const ratio = contrastRatio(rumble, shade)
+
+        assert.ok(ratio >= 1.6, `${id}: a rumble stripe is ${ratio.toFixed(2)}:1 against an asphalt shade -- the edge stops reading`)
+      }
+    }
+  }
+
+  // Columns land where `roadPaletteIndex` says, inside the strip, and clear of every ground column.
+  const groundColumns = new Set()
+
+  for (let biome = 0; biome < BIOMES.length; biome++) {
+    for (let shade = 0; shade < GROUND_SHADES_PER_BIOME; shade++) groundColumns.add(groundPaletteIndex(biome, shade))
+  }
+  for (let shade = 0; shade < ROAD_SHADES_PER_THEME; shade++) {
+    const column = roadPaletteIndex(shade)
+
+    assert.ok(column >= ROAD_PALETTE.length && column < PALETTE_COLUMNS, `asphalt column ${column} is outside the strip`)
+    assert.ok(!groundColumns.has(column), `asphalt column ${column} collides with a ground column`)
+  }
+
+  // **The road's patch boundaries must not coincide with the verge's, or every one of them is a
+  // single band across the whole width of the frame.** Not zero coincidences -- offsetting where
+  // the noise is sampled makes the two *independent*, it does not forbid them landing together by
+  // chance, and asserting zero was simply wrong about what the mechanism does. What is asserted is
+  // that they are no more correlated than independence.
+  const sample = 4000
+  const count = (fn) => {
+    let changes = 0
+
+    for (let i = 1; i < sample; i++) if (fn(i) !== fn(i - 1)) changes += 1
+
+    return changes
+  }
+  let together = 0
+
+  for (let i = 1; i < sample; i++) {
+    if (roadShadeFor(i) !== roadShadeFor(i - 1) && groundShadeFor(i) !== groundShadeFor(i - 1)) together += 1
+  }
+
+  const byChance = (count(roadShadeFor) * count(groundShadeFor)) / sample
+
+  assert.ok(
+    together < byChance * 1.6,
+    `${together} shared boundaries against ${byChance.toFixed(0)} by chance -- the two surfaces are changing together`,
+  )
+
+  // Shown to reject the arrangement it guards against: reading the noise at the same coordinate
+  // puts every single boundary on both surfaces at once.
+  let locked = 0
+
+  for (let i = 1; i < sample; i++) {
+    if (groundShadeFor(i) !== groundShadeFor(i - 1)) locked += 1
+  }
+  assert.ok(locked > byChance * 4, 'sharing the coordinate is not being rejected, so this check is measuring nothing')
+
+  console.log(
+    `    ${ROAD_SHADES_PER_THEME} asphalt shades a theme, ${PALETTE_COLUMNS} palette columns; ${together} boundaries shared with the verge against ${byChance.toFixed(0)} by chance (${locked} if they shared a coordinate)`,
+  )
+})
+
+check('no mark is laid on the ground unless something is above that spot', () => {
+  // The rule the ownerless decals were switched off for, stated where it can fail. A soft dark
+  // patch on the ground means an object hangs over it and nothing else; the DEV overlay that
+  // settled this counted 43 decals, 13 shadows and 0 orphans, so the patches were never shadows.
+  assert.equal(DECAL_DENSITY, 0, 'ownerless ground marks are back on')
+
+  let placed = 0
+
+  for (let index = 0; index < 1434; index++) if (decalAt(index, 1434)) placed += 1
+  assert.equal(placed, 0, `${placed} ownerless marks over a lap`)
+
+  // The placer itself is still correct, and is shown to be: it is what an object-owned mark would
+  // be built on, and a check that could only ever see "nothing placed" would guard none of it.
+  let underTest = 0
+
+  for (let index = 0; index < 1434; index++) if (decalAt(index, 1434, TEST_DECAL_DENSITY)) underTest += 1
+  assert.ok(underTest > 100, 'the placer draws nothing even at the density it was tuned at')
+
+  console.log(`    ownerless marks over a lap: 0 shipped, ${underTest} when the placer is exercised at ${TEST_DECAL_DENSITY}`)
 })
 
 console.log(`${passed} checks passed`)

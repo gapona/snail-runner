@@ -74,6 +74,9 @@ export class ObstacleSprites {
   usedLastFrame = 0
 
   private readonly slots: SlotState[]
+  /** Which shadow belongs to which object this frame, for the DEV mark overlay. */
+  readonly shadowMarks: { x: number; y: number; owner: string }[] = []
+
   private readonly rect = createBillboardRect()
   /** A second scratch rect: the shadow's own projection, taken at height zero. */
   private readonly shadowRect = createBillboardRect()
@@ -121,6 +124,8 @@ export class ObstacleSprites {
     const previousUsed = this.usedLastFrame
     const capacity = this.slots.length
     let used = 0
+
+    if (import.meta.env.DEV) this.shadowMarks.length = 0
     let wanted = 0
 
     for (let n = 0; n < DRAW_DISTANCE; n++) {
@@ -183,6 +188,9 @@ export class ObstacleSprites {
           : null
 
         this.place(this.slots[used], key, rect, visible, n, (obstacle.id & 1) === 1, shadowRect, obstacle.yLow)
+        if (import.meta.env.DEV && shadowRect) {
+          this.shadowMarks.push({ x: shadowRect.x, y: shadowRect.y, owner: `${obstacle.kind}#${obstacle.id}` })
+        }
         used++
       }
     }

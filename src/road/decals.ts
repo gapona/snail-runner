@@ -124,14 +124,25 @@ export function decalFade(distanceIndex: number): number {
 /**
  * Chance that a segment starts a decal.
  *
- * **Raised from 0.17 with the field, and the two had to move together.** Widening
- * `DECAL_MAX_OFFSET` spreads the same marks over six times the area — the density is a chance
- * per *segment*, so it says nothing about how far across the ground they scatter. Left alone, the
- * effect of reaching across the verge would have been to make the road itself emptier, which is
- * the opposite of the change. `verify:road` sweeps the lap and prints what this actually delivers
- * against `DECAL_POOL_SIZE`.
+ * **⚠ ZERO: no mark is laid on the ground unless something is hanging over that spot.** These were
+ * added to give the largest surface in the frame some fibre, and they do — but a soft dark patch
+ * on the ground is exactly what a shadow is, and the ground carried dozens of them. Reported as
+ * stray shadows lying nowhere near their objects; a DEV overlay labelling every dark patch by
+ * whatever drew it (`DebugMarks`) came back **43 decals, 13 shadows, 0 orphans**, so they were not
+ * misplaced shadows at all and no pool was out of step. They were these.
+ *
+ * **The rule this leaves, and it is the whole reason the knob is 0 rather than the file deleted:
+ * a soft dark patch on the ground means an object is above that spot, and nothing else. Surface
+ * texture is carried by the colour of the surface** — `GROUND_SHADES_PER_BIOME` for the verge and
+ * `ROAD_SHADES_PER_THEME` for the asphalt — which cannot be confused with a shadow by
+ * construction, because it *is* the ground rather than something laid over it.
+ *
+ * Kept as a knob at 0, the same line `GROUND_ALTERNATION` is on: the machinery is correct, and if
+ * a mark is ever wanted again it will be one *attached to an object* — a scuff at the foot of a
+ * boulder, a scrape where the snail landed — which has an owner and so cannot be ownerless. That
+ * needs the placer to take an owner, not a different density.
  */
-export const DECAL_DENSITY = 0.52
+export const DECAL_DENSITY = 0
 
 /**
  * How far either side of the centreline a decal may sit, in road half-widths.
@@ -210,10 +221,17 @@ function unit(h: number, axis: number): number {
  * them answers. That is what stops two decals from being generated inside each other, and it is
  * why the renderer walks segments rather than asking each visible one what it is showing.
  */
-export function decalAt(segmentIndex: number, trackLength = 0): DecalPlacement | null {
+export function decalAt(
+  segmentIndex: number,
+  trackLength = 0,
+  // **Takeable as an argument so the placer stays under test with the shipped density at 0.** The
+  // machinery is correct and is what a future object-owned mark would be built on; a check that
+  // could only ever see "nothing is placed" would stop guarding any of it.
+  density = DECAL_DENSITY,
+): DecalPlacement | null {
   const h = hash(segmentIndex)
 
-  if (unit(h, 0) >= DECAL_DENSITY) return null
+  if (unit(h, 0) >= density) return null
 
   const between = (axis: number, min: number, max: number) => min + unit(h, axis) * (max - min)
 
@@ -249,11 +267,11 @@ export function decalAt(segmentIndex: number, trackLength = 0): DecalPlacement |
  * that never arrives. What this cannot know is the hill clip, which needs a projection; that only
  * ever removes marks, so this is an upper bound on what a frame asks for.
  */
-export function decalsIn(fromSegment: number, segments: number, trackLength = 0): number {
+export function decalsIn(fromSegment: number, segments: number, trackLength = 0, density = DECAL_DENSITY): number {
   let count = 0
 
   for (let i = 0; i < segments; i++) {
-    const decal = decalAt(fromSegment + i, trackLength)
+    const decal = decalAt(fromSegment + i, trackLength, density)
 
     if (decal && decalRowFor(decal.strength, decalFade(i)) >= 0) count++
   }
