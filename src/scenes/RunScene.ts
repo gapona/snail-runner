@@ -42,6 +42,7 @@ import {
 } from '../run/ramp'
 import { RampSprites } from '../run/RampSprites'
 import { Dust } from '../run/Dust'
+import { LapLayout, type LapContent } from '../run/lapLayout'
 import {
   feverClearanceUnits,
   feverInvulnerable,
@@ -103,13 +104,14 @@ export class RunScene extends Phaser.Scene {
   private obstacles!: Obstacle[]
   private obstacleSprites!: ObstacleSprites
   /**
-   * Obstacles indexed by the segment they stand on.
+   * Everything standing on the ground, indexed by segment, and the cursor that rolls the next lap
+   * into it **behind the camera** — see `lapLayout.ts` for the defect that shape exists to fix.
    *
-   * **Built once, walked per frame.** The renderer visits 300 segments a frame and the run holds
-   * a couple of thousand obstacles; without this the draw would be O(obstacles) per frame instead
-   * of O(what is on screen), which is the same reason `Segment.sprites` exists in the road layer.
+   * **Indexed rather than walked flat**, which is what it always was: the renderer visits 300
+   * segments a frame and the run holds a couple of thousand obstacles, so a flat walk would be
+   * O(obstacles) per frame instead of O(what is on screen).
    */
-  private obstaclesBySegment!: Map<number, Obstacle[]>
+  private lap!: LapLayout
   /**
    * Which lap each obstacle was last resolved against the snail on.
    *
@@ -118,28 +120,19 @@ export class RunScene extends Phaser.Scene {
    * obstacle id, holding the lap number, so each obstacle is live again next time round.
    */
   private resolvedOnLap!: Map<number, number>
-  /**
-   * The pickups, and the same segment index the obstacles get.
-   *
-   * `taken` is a plain boolean here where the obstacles need a per-lap key: a collected pickup is
-   * gone for the rest of the run, which is what makes a stretch already cleared feel cleared.
-   */
-  private pickups!: Pickup[]
-  private pickupsBySegment!: Map<number, Pickup[]>
   private pickupSprites!: PickupSprites
   private feverView!: FeverView
-  /** The ramps on this lap, and the same segment index everything else in the world gets. */
-  private ramps!: Ramp[]
-  private rampsBySegment!: Map<number, Ramp[]>
   private rampSprites!: RampSprites
   private dust!: Dust
   /**
-   * Which ramps have already had their arc re-laid for the run's real speed — see `relayArc`.
+   * Which ramps have already had their arc re-laid for the run's real speed — see `relayArcs`.
    *
-   * Keyed by id and cleared with the lap, like `resolvedOnLap`: the ids are fresh every lap and a
-   * surviving entry would leave the next lap's chain laid for whatever speed the last one had.
+   * **A `WeakSet` of the ramp objects rather than a set of ids**, because ids restart at zero every
+   * lap and the handover replaces the objects: keyed by id, a lap-old entry would leave the next
+   * lap's chain laid for whatever speed the last one had, and there is no longer a lap boundary at
+   * which to clear it. Keyed by identity it clears itself.
    */
-  private readonly arcRelaid = new Set<number>()
+  private readonly arcRelaid = new WeakSet<Ramp>()
   private hud!: Hud
   /**
    * The slime trail's world-space points, and the ribbon that draws them.
@@ -177,8 +170,6 @@ export class RunScene extends Phaser.Scene {
   private reactionRefused = new Set<number>()
   /** DEV only, and off unless `window.__marks.on()` asks for it. */
   private marksVisible = false
-  /** Which lap the current obstacle layout was generated for. See `layLap`. */
-  private laidLap = 0
   /** How many times this run has been hit. Reported by the DEV hook; the HUD reads `run.lives`. */
   private hitCount = 0
   /** Coins taken in a row, for the rising collection tone. Reset by anything that is not a coin. */
@@ -223,7 +214,11 @@ export class RunScene extends Phaser.Scene {
     // The obstacles, laid along the finished track and *proved passable* before they are used —
     // see `obstacles.ts`. Seeded from the same draw as the scenery so a run is reproducible from
     // one number.
-    this.layLap(0)
+    this.lap = new LapLayout({
+      trackLength: this.world.trackLength,
+      segmentCount: this.world.track.length,
+      build: (lapOffset) => this.buildLap(lapOffset),
+    })
     this.previousPlayerZ = PLAYER_Z
 
     // Built after the world, because they draw over it and the display list is the draw order.
@@ -327,7 +322,7 @@ export class RunScene extends Phaser.Scene {
       player: () => ({ ...this.player, offRoad: isOffRoad(this.player.offsetX) }),
       screen: () => ({ x: this.playerView.screenX, y: this.playerView.screenY }),
       seconds: () => runSeconds(this.run),
-      obstacles: () => this.obstacles.length,
+      obstacles: () => this.lap.liveObstacles().length,
       slime: () => ({ points: this.slime.length, quads: this.slimeTrail.usedLastFrame }),
       drawn: () => ({ used: this.obstacleSprites.usedLastFrame, wanted: this.obstacleSprites.wantedLastFrame }),
       hits: () => this.hitCount,
@@ -370,7 +365,7 @@ export class RunScene extends Phaser.Scene {
     const segmentCount = this.world.track.length
 
     for (let index = first; index <= last; index++) {
-      const here = this.obstaclesBySegment.get(((index % segmentCount) + segmentCount) % segmentCount)
+      const here = this.lap.obstacles.get(((index % segmentCount) + segmentCount) % segmentCount)
 
       if (!here) continue
 
@@ -409,37 +404,30 @@ export class RunScene extends Phaser.Scene {
   }
 
   /**
-   * Lays out one lap of obstacles and pickups, at the difficulty the run has reached.
+   * Builds one lap's contents, at the difficulty the run has reached by then.
    *
-   * **Called again every time the run wraps, and that is not an optimisation.** The renderer and
-   * the collision both index by *segment*, so a layout generated across a distance longer than the
-   * lap would put two obstacles on the same piece of ground. Regenerating per lap keeps one
-   * obstacle per place and lets `difficultyAt` see how far the run has actually come — see
-   * `placeRunObstacles`.
+   * **Whole-lap generation, delivered a segment at a time.** The row spacing, the passability proof
+   * and `sideAwayFrom` all reason about a lap as a unit, so this has to build one; what may not
+   * happen is the *delivery* landing on road the player is looking at — see `lapLayout.ts` for the
+   * 69 obstacle slots that used to change in view every time the run wrapped.
    */
-  private layLap(lapOffset: number): void {
-    this.obstacles = placeRunObstacles(this.runSeed, this.world.trackLength, lapOffset)
-    this.obstaclesBySegment = indexBySegment(this.obstacles, this.world.track.length)
+  private buildLap(lapOffset: number): LapContent {
+    const obstacles = placeRunObstacles(this.runSeed, this.world.trackLength, lapOffset)
     // **Ramps before pickups, because a ramp is where an arc chain goes.** `formations.ts` will not
     // lay an `arc` anywhere else — an arc over flat road is a chain hanging in the air.
-    this.ramps = placeRamps(this.runSeed ^ 0x2a17, this.world.trackLength, lapOffset, this.obstacles)
-    this.rampsBySegment = indexBySegment(this.ramps, this.world.track.length)
+    const ramps = placeRamps(this.runSeed ^ 0x2a17, this.world.trackLength, lapOffset, obstacles)
     // Laid *after* the obstacles and against them — see `sideAwayFrom`. A pickup in the gap the
     // player was already threading costs nothing, and a pickup that costs nothing is scenery.
-    this.pickups = placeFormations({
+    const pickups = placeFormations({
       rng: createRng((this.runSeed ^ 0x5eed) + Math.round(lapOffset / SEGMENT_LENGTH)),
       fromZ: lapOffset === 0 ? SEGMENT_LENGTH * 20 : 0,
       toZ: this.world.trackLength,
       trackLength: this.world.trackLength,
-      obstacles: this.obstacles,
-      launches: this.ramps.map((ramp) => ({ id: ramp.id, z: ramp.z, offsetX: ramp.offsetX, launchV: RAMP_LAUNCH_V })),
+      obstacles,
+      launches: ramps.map((ramp) => ({ id: ramp.id, z: ramp.z, offsetX: ramp.offsetX, launchV: RAMP_LAUNCH_V })),
     })
-    this.pickupsBySegment = indexBySegment(this.pickups, this.world.track.length)
-    this.arcRelaid.clear()
-    // A fresh set of ids means the old lap's resolutions mean nothing, and keeping them would
-    // disarm whatever happened to reuse a number.
-    this.resolvedOnLap.clear()
-    this.laidLap = Math.floor(lapOffset / this.world.trackLength)
+
+    return { obstacles, pickups, ramps }
   }
 
   /**
@@ -455,7 +443,7 @@ export class RunScene extends Phaser.Scene {
     const segmentCount = this.world.track.length
 
     for (let index = first; index <= last; index++) {
-      const here = this.pickupsBySegment.get(((index % segmentCount) + segmentCount) % segmentCount)
+      const here = this.lap.pickups.get(((index % segmentCount) + segmentCount) % segmentCount)
 
       if (!here) continue
 
@@ -511,7 +499,7 @@ export class RunScene extends Phaser.Scene {
   private clearRoadAhead(playerZ: number): void {
     const units = feverClearanceUnits(this.run.speed)
 
-    for (const obstacle of this.obstacles) {
+    for (const obstacle of this.lap.liveObstacles()) {
       if (wrapZ(obstacle.z - playerZ, this.world.trackLength) <= units) obstacle.cleared = true
     }
   }
@@ -532,7 +520,7 @@ export class RunScene extends Phaser.Scene {
   private pullPickups(playerZ: number, delta: number): void {
     const rate = 1 - Math.exp((-FEVER_MAGNET_RATE * delta) / 1000)
 
-    for (const pickup of this.pickups) {
+    for (const pickup of this.lap.livePickups()) {
       if (pickup.taken) continue
 
       const ahead = wrapZ(pickup.z - playerZ, this.world.trackLength)
@@ -559,7 +547,7 @@ export class RunScene extends Phaser.Scene {
     const segmentCount = this.world.track.length
 
     for (let index = first; index <= last; index++) {
-      const here = this.rampsBySegment.get(((index % segmentCount) + segmentCount) % segmentCount)
+      const here = this.lap.ramps.get(((index % segmentCount) + segmentCount) % segmentCount)
 
       if (!here) continue
 
@@ -594,16 +582,16 @@ export class RunScene extends Phaser.Scene {
    * lining up on.
    */
   private relayArcs(playerZ: number): void {
-    for (const ramp of this.ramps) {
-      if (this.arcRelaid.has(ramp.id)) continue
+    for (const ramp of this.lap.liveRamps()) {
+      if (this.arcRelaid.has(ramp)) continue
 
       const ahead = wrapZ(ramp.z - playerZ, this.world.trackLength)
 
       if (ahead > ARC_RELAY_Z) continue
 
-      this.arcRelaid.add(ramp.id)
+      this.arcRelaid.add(ramp)
 
-      const mine = this.pickups.filter((pickup) => pickup.arcOf === ramp.id)
+      const mine = this.lap.livePickups().filter((pickup) => pickup.arcOf === ramp.id)
 
       if (mine.length === 0) continue
 
@@ -618,7 +606,7 @@ export class RunScene extends Phaser.Scene {
       })
 
       for (let i = 0; i < mine.length; i++) {
-        this.movePickup(mine[i], wrapZ(points[i].z, this.world.trackLength), points[i].offsetX, points[i].y)
+        this.lap.movePickup(mine[i], wrapZ(points[i].z, this.world.trackLength), points[i].offsetX, points[i].y)
       }
     }
   }
@@ -636,7 +624,7 @@ export class RunScene extends Phaser.Scene {
     const to = Math.floor(z / SEGMENT_LENGTH) % count
 
     if (from !== to) {
-      const bucket = this.pickupsBySegment.get(from)
+      const bucket = this.lap.pickups.get(from)
 
       if (bucket) {
         const at = bucket.indexOf(pickup)
@@ -644,10 +632,10 @@ export class RunScene extends Phaser.Scene {
         if (at >= 0) bucket.splice(at, 1)
       }
 
-      const target = this.pickupsBySegment.get(to)
+      const target = this.lap.pickups.get(to)
 
       if (target) target.push(pickup)
-      else this.pickupsBySegment.set(to, [pickup])
+      else this.lap.pickups.set(to, [pickup])
     }
 
     pickup.z = z
@@ -746,7 +734,7 @@ export class RunScene extends Phaser.Scene {
     const playerZ = wrapZ(this.run.z + PLAYER_Z, this.world.trackLength)
     const previous = this.previousPlayerZ
 
-    for (const obstacle of this.obstacles) {
+    for (const obstacle of this.lap.liveObstacles()) {
       const crossed = previous <= playerZ
         ? obstacle.z > previous && obstacle.z <= playerZ
         : obstacle.z > previous || obstacle.z <= playerZ
@@ -831,8 +819,10 @@ export class RunScene extends Phaser.Scene {
     const playerZ = wrapZ(this.run.z + PLAYER_Z, this.world.trackLength)
     const lap = Math.floor((this.run.distance + PLAYER_Z) / this.world.trackLength)
 
-    // A new lap needs a new layout, at whatever difficulty the run has reached — see `layLap`.
-    if (lap !== this.laidLap) this.layLap(lap * this.world.trackLength)
+    // **The next lap is handed over a segment at a time, behind the camera.** Never at the wrap:
+    // the road is drawn 300 segments ahead of a 1434-segment lap, so a whole-lap swap rewrote a
+    // fifth of what the player was looking at. See `lapLayout.ts`.
+    this.lap.advance(this.run.distance)
 
     if (playerZ >= this.previousPlayerZ) {
       this.resolveRamps(this.previousPlayerZ, playerZ)
@@ -895,7 +885,7 @@ export class RunScene extends Phaser.Scene {
     // projections out of the mesh pass exactly as the sprite pools do.
     this.slimeTrail.render(this.slime, this.world.track, this.world.baseIndex, this.run.z, width)
     this.rampSprites.render(
-      this.rampsBySegment,
+      this.lap.ramps,
       this.world.track,
       this.world.baseIndex,
       this.world.clipY,
@@ -903,7 +893,7 @@ export class RunScene extends Phaser.Scene {
       height,
     )
     this.obstacleSprites.render(
-      this.obstaclesBySegment,
+      this.lap.obstacles,
       this.world.track,
       this.world.baseIndex,
       this.world.clipY,
@@ -911,7 +901,7 @@ export class RunScene extends Phaser.Scene {
       height,
     )
     this.pickupSprites.render(
-      this.pickupsBySegment,
+      this.lap.pickups,
       this.world.track,
       this.world.baseIndex,
       this.world.clipY,
@@ -932,8 +922,8 @@ export class RunScene extends Phaser.Scene {
       // **The orphan test, which is the whole point of the overlay.** A shadow whose owner is not
       // in the live list is a pool that has outlived its objects; a shadow whose owner IS live is
       // working correctly, and the patch beside it is somebody else's.
-      const liveObstacles = new Set(this.obstacles.map((o) => `${o.kind}#${o.id}`))
-      const livePickups = new Set(this.pickups.map((p) => `pickup#${p.id}`))
+      const liveObstacles = new Set(this.lap.liveObstacles().map((o) => `${o.kind}#${o.id}`))
+      const livePickups = new Set(this.lap.livePickups().map((p) => `pickup#${p.id}`))
       const shadows = [
         ...this.obstacleSprites.shadowMarks.map((m) => ({ ...m, live: liveObstacles.has(m.owner) })),
         ...this.pickupSprites.shadowMarks.map((m) => ({ ...m, live: livePickups.has(m.owner) })),
@@ -964,24 +954,3 @@ export class RunScene extends Phaser.Scene {
   }
 }
 
-/**
- * Groups obstacles by the segment index they stand on.
- *
- * The renderer walks segments, not obstacles — see `ObstacleSprites.render` — so this is what
- * turns a run-long list into something a 300-segment draw can index into. The same shape
- * `Segment.sprites` gives the scenery, built here rather than on the segment because `src/road/`
- * does not know obstacles exist and is not going to be taught.
- */
-function indexBySegment<T extends { z: number }>(items: readonly T[], segmentCount: number): Map<number, T[]> {
-  const index = new Map<number, T[]>()
-
-  for (const item of items) {
-    const key = Math.floor(item.z / SEGMENT_LENGTH) % segmentCount
-    const list = index.get(key)
-
-    if (list) list.push(item)
-    else index.set(key, [item])
-  }
-
-  return index
-}

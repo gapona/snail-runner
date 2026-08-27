@@ -98,9 +98,9 @@ is the same question in both games.
 
 ### Reading the rest of this document
 
-**The runner's own chapters are the fourteen between "## UI Kit" and "## Road Renderer"** — The Run,
-The Snail, The Jump, The Ramp, Obstacles, Draw Order, Pickups, Chains, Fever, The Slime Trail, The
-Art, The Difficulty Curve, The End Of A Run, The HUD. Those describe this game.
+**The runner's own chapters are the fifteen between "## UI Kit" and "## Road Renderer"** — The Run,
+The Snail, The Jump, The Ramp, Obstacles, Draw Order, Pickups, The Handover, Chains, Fever, The
+Slime Trail, The Art, The Difficulty Curve, The End Of A Run, The HUD. Those describe this game.
 
 Below them, everything about the road, the billboards, the biomes, the themes, the interface kit,
 the save layer, the platform layer, the build guards and the scroll patterns is **current and
@@ -151,6 +151,11 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
   speed, and **in 200 simulated exits over the real placer's output the first obstacle a player can
   be hit by arrives no sooner than `REACTION_MS`** — shown failing first against the same simulation
   with the road-clearing removed. See "Fever, And The Second In Which It Ends".
+- `npm run verify:layout` — `src/run/lapLayout.ts`: **nothing already on screen is ever
+  rewritten.** Drives a real run over three laps against the real placers and asserts no segment
+  inside the visible band ever changes; carries the shipped whole-lap swap as its negative
+  control, which rewrites 69 obstacle slots in view. See "Nothing Already On Screen Is Ever
+  Rewritten".
 - `npm run verify:obstacles` — `src/run/obstacles.ts`: a passable line exists through every
   generated stretch, the three classes produce exactly the expected outcomes on the ground and at
   the apex, and every obstacle is readable for at least `REACTION_MS` at `SPEED_CAP`. See
@@ -856,6 +861,83 @@ reports it by visibly dragging every pickup on screen onto the snail's line.
 **Fruit ships as four rendered PNGs under one kind** — grapes, banana, melon, pear — chosen by
 `pickupTexture` from the pickup's own id, so a lap deals the same fruit twice and a screenshot is
 reproducible. Four *kinds* would have put four rows in the weight table for one decision.
+
+## ⚠ Nothing Already On Screen Is Ever Rewritten
+
+**The rule, and it is a hard one: a segment's contents may be replaced only while that segment is
+behind the camera.** Not at a convenient moment, not with a crossfade, not "usually" — the player is
+looking at the road ahead and deciding what to do with it, and a decision that is invalidated after
+it is taken reads as the game cheating.
+
+`src/run/lapLayout.ts` (pure, `npm run verify:layout`).
+
+### The defect, measured on the shipped placer
+
+`RunScene.layLap` regenerated the entire lap on the frame the run wrapped — `placeRunObstacles`,
+`placeRamps` and `placeFormations` all rebuilt, every segment bucket replaced at once. That is
+correct about the *ground*: the renderer and the collision both index by segment, so a layout longer
+than the lap would put two obstacles on one piece of road. It is completely wrong about the *moment*:
+
+```
+the lap                    1434 segments
+drawn ahead of the camera   300 segments   = 21% of the lap
+obstacles standing in that band, lap N       24
+obstacle slots that change when lap N+1 lands 69
+segments holding a row in BOTH laps            0
+```
+
+Not one segment holds a row in both laps, so the rows do not merely change shape — **they move**.
+Reported as two things that are one thing: barriers appearing in view that the player then hits, and
+walls whose blocks change on the fly while the wall stays.
+
+**It reads as happening "at a biome seam" because it does.** `BIOME_RUN_SEGMENTS` divides the lap
+evenly, so **segment 0 is a biome boundary by construction** and the lap seam always falls on one.
+
+### The fix is a delivery cursor, not a different generator
+
+Generation is unchanged and still whole-lap: the row spacing, the passability proof and
+`sideAwayFrom` all reason about a lap as a unit. What changed is when each segment takes delivery.
+
+A cursor trails the camera by `HANDOVER_MARGIN` segments. Every segment it passes is given the
+*next* lap's contents — one at a time, always just after the segment leaves view. By the time the
+camera reaches the seam the road in front of it already holds the new lap, written a lap earlier and
+out of sight, and **nothing changes at the wrap at all**.
+
+- **`HANDOVER_MARGIN` is 2, and one is not enough.** The camera sits *inside* its own base segment,
+  so that segment is half in view, and at `MAX_ATTAINABLE_SPEED` one frame covers about half a
+  segment. Two is the first value that is behind the camera at every speed and every frame length.
+- **The build moves but does not grow.** One `buildLap` per lap, as before; it now happens when the
+  cursor enters a lap rather than when the camera wraps out of one.
+- **The flat lists are gone.** `RunScene` held `obstacles`, `pickups` and `ramps` alongside the
+  segment maps, and a rolling rewrite would have to keep four things in step. The maps are the only
+  truth; `liveObstacles()`, `livePickups()` and `liveRamps()` gather on demand for the handful of
+  callers that genuinely need everything (Fever's road-clearing, the magnet, the arc relay).
+- **`arcRelaid` became a `WeakSet` of ramp objects.** Ids restart at zero every lap and there is no
+  longer a lap boundary at which to clear a set of them, so keyed by id a stale entry would leave the
+  next lap's arc laid for the previous lap's speed. Keyed by identity it clears itself.
+
+### What the check asserts, and the control it carries
+
+`verify:layout` drives a real run over three laps at `MAX_ATTAINABLE_SPEED` and again over one lap at
+`SPEED_BASE`, against the real placers, and asserts that **no segment inside the 300-segment visible
+band ever changes**: 4301 handovers across three laps, zero in view. It also asserts the delivery
+arrives — after one lap, 1434 of 1434 segments hold the new lap — and that each segment is handed
+over once rather than repeatedly.
+
+**The negative control is the shipped placer itself**, not a fixture: the same 69-slot measurement
+above runs as a check, so the suite is shown to be measuring something on every run.
+
+Confirmed in the running game: driven across the lap seam twice at top speed over 4000 frames, 1408
+segments handed over, **0 rewrites in view**, zero errors, 252 obstacles / 129 pickups / 7 ramps
+live throughout.
+
+### What this rule now covers, and what it does not
+
+It covers everything the `LapLayout` owns — obstacles, pickups and ramps. It does **not** cover the
+scenery: `decorateTrack` fills `Segment.sprites` once at track build and is never regenerated, so the
+verge cannot change under the player and never could. And it does not cover a *theme* switch, which
+deliberately replaces every texture at once — that is only reachable from the menu, where there is no
+run to invalidate.
 
 ## Chains, Not Scatter
 
@@ -1891,9 +1973,10 @@ time. If the curve ever wants something the floor forbids, the curve is what cha
 (`blocking`/`overhead` are shares of all obstacles, so walls — which are made of `low` — dilute
 them; the share of *non-wall* obstacles that are unjumpable is roughly three times those figures.)
 
-**⚠ Layouts are generated one lap at a time and regenerated on the wrap.** The renderer and the
-collision both index by *segment*, so a layout laid across a distance longer than the lap puts two
-obstacles on the same piece of ground. The whole curve fits inside one lap (`DIFFICULTY_TAU_Z` is
+**⚠ Layouts are generated one lap at a time and *handed over* a segment at a time.** The renderer
+and the collision both index by *segment*, so a layout laid across a distance longer than the lap
+puts two obstacles on the same piece of ground — but regenerating on the wrap, which is what this
+used to say, rewrote a fifth of the road in view. See "Nothing Already On Screen Is Ever Rewritten". The whole curve fits inside one lap (`DIFFICULTY_TAU_Z` is
 90 000 units against a 286 800-unit lap), so a run is at 96% of the ceiling by the time it first
 wraps and every later lap is generated at the saturated end — the seam is not a difficulty step
 because there is nothing left to step to.
