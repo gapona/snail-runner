@@ -119,6 +119,8 @@ export class RunScene extends Phaser.Scene {
   private runSeed = 0
   /** DEV only: labels every dark patch on the ground with what drew it. */
   private debugMarks: DebugMarks | null = null
+  /** DEV only, and off unless `window.__marks.on()` asks for it. */
+  private marksVisible = false
   /** Which lap the current obstacle layout was generated for. See `layLap`. */
   private laidLap = 0
   /** How many times this run has been hit. Reported by the DEV hook; the HUD reads `run.lives`. */
@@ -188,6 +190,19 @@ export class RunScene extends Phaser.Scene {
       // in the bundle, which is the finding `perfReport.ts` exists for.
       this.debugMarks = new DebugMarks(this, HUD_DEPTH - 1)
       this.cameras.main.ignore(this.debugMarks.gameObjects)
+      // **⚠ Off unless asked for.** It shipped on, and a diagnostic that labels every mark in the
+      // frame is unreadable to look past -- it was reported the first time it was seen. A dev
+      // overlay defaults to silent; this is the same `window.__*` hook shape `__adGate` and
+      // `__getRecentErrors` use, and `check-bundle.mjs` greps for the name so "we gated it" and
+      // "it is gone" stay separate claims.
+      const w = window as unknown as { __marks?: { on(): void; off(): void; isOn(): boolean } }
+      const scene = this
+
+      w.__marks = {
+        on: () => { scene.marksVisible = true },
+        off: () => { scene.marksVisible = false },
+        isOn: () => scene.marksVisible,
+      }
     }
 
     // Steering is an *absolute* axis — a runner steers to a place, not in a direction — so it is
@@ -564,7 +579,10 @@ export class RunScene extends Phaser.Scene {
     )
     this.hud.update(this.run, width)
 
-    if (import.meta.env.DEV && this.debugMarks) {
+    if (import.meta.env.DEV && this.debugMarks && !this.marksVisible) {
+      // Cleared once when it is switched off, or the last labelled frame stays on screen.
+      this.debugMarks.update([], [], [])
+    } else if (import.meta.env.DEV && this.debugMarks) {
       // **The orphan test, which is the whole point of the overlay.** A shadow whose owner is not
       // in the live list is a pool that has outlived its objects; a shadow whose owner IS live is
       // working correctly, and the patch beside it is somebody else's.

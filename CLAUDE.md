@@ -5365,7 +5365,16 @@ was out of step, and the shadow work of the previous round was sound. The two da
 side of the snail — the ones that read as a misplaced shadow — were labelled `decal:tuft`.
 
 The overlay is a static import inside an `import.meta.env.DEV` branch, which is the shape
-`perfReport.ts` established: gating the *call* leaves the module in the bundle.
+`perfReport.ts` established: gating the *call* leaves the module in the bundle. Verified on the
+built output — zero occurrences of `DebugMarks` or `__marks` in `dist/`.
+
+**⚠ And it is off unless asked for, which it was not the first time.** It shipped drawing on
+every DEV frame, and a diagnostic that rings and labels every mark in the picture is impossible
+to look past — it was reported the moment it was seen. `window.__marks.on()` / `.off()` /
+`.isOn()`, the same hook shape `__adGate` and `__getRecentErrors` use, with the name registered
+in `check-bundle.mjs`'s forbidden-globals list so that "we gated it" and "it is gone" stay
+separate claims. Switching it off clears the labels once rather than leaving the last frame's
+on screen.
 
 ### What was switched off, and what replaced it
 
