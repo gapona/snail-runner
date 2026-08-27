@@ -931,6 +931,46 @@ of the rocks went away" is not a sentence at all.
 - `Obstacle.cleared` is gone rather than left unset: dead state is worse than no state, and
   `verify:fever` asserts the field does not exist so it cannot come back quietly.
 
+### ⚠ The mascot was too small, and a phone is where that showed
+
+Reported as the snail and the coins being tiny in the mobile build. Measured through the real
+projection, at the snail's own row:
+
+| viewport | road half-width | snail | pickup |
+|---|---|---|---|
+| 1920x945 | 806px | 113x72 | 129px |
+| 390x844 | 164px | **23x15** | **26px** |
+| 844x390 | 354px | 50x32 | 57px |
+
+**The cause is structural and has almost no levers.** Everything on the road is scaled by the
+frame's *width* — which is what keeps an object the same size relative to the road at every aspect —
+and 390 is a fifth of 1920. Three ways out were considered and two are closed:
+
+- **A camera zoom on narrow frames is impossible**, not merely undesirable: the player's own lane
+  (`±ROAD_EDGE`) already fills **78% of the frame at every aspect**, so any zoom past about 1.25x
+  pushes the snail off the edge at full lock.
+- **A viewport-dependent field of view is worse than it looks.** `PLAYER_Z` is *solved* from
+  `CAMERA_DEPTH`, so making the FOV depend on the frame would make the snail's world position depend
+  on the device — and with it the collision timing, the arc geometry and the slime trail.
+- **Drawing the snail bigger than its box is the pancake bug** `PLAYER_WIDTH` documents, in the
+  other direction: the player would see themselves clip a rock and take nothing, which reads as the
+  game dropping a hit.
+
+So the mascot is genuinely bigger everywhere: **`PLAYER_HALF_WIDTHS` 0.07 → 0.105**, which is 1/9 of
+the road's width rather than 1/14. **35x22 on a phone and 172x107 on a desktop.** It is a real
+difficulty change — `hits` adds this to the obstacle's own half-width, so every hitbox is about 13%
+wider — and it is safe rather than merely small, because `provePassable` re-proves every row against
+whatever this number is and redraws the ones that lose their line. The difficulty table comes out
+unchanged: density, class shares and the reaction budget are properties of the row spacing, not of
+the snail.
+
+**Pickups are the one thing that could be scaled per frame, and the reason is a rule that already
+existed.** A pickup's collection box is deliberately twice its icon — the single place in this game
+where box and sprite may disagree, and only ever in the generous direction — so growing the icon
+*toward* the box costs nothing and takes back nothing. `readableScale` does it: 1 at 1280 pixels and
+wider, up to 1.9 on a phone, which is **26px → 51px** and still inside the 640-unit catchment.
+Nothing else in the world may use it, and the constant says so.
+
 ### The HUD says five things instead of three
 
 Rebuilt against a reference the player supplied. What it is now:
@@ -955,6 +995,17 @@ Rebuilt against a reference the player supplied. What it is now:
 - **The speed is a multiple, not a number of units.** 5760 means nothing; `2.4x` is the same fact in
   the unit the player experiences, and it is what makes a Fever legible as a number as well as as a
   wash.
+- **⚠ The first leaf was a symmetric lens and read as an eye.** `sin(pi t)` is fattest exactly in
+  the middle, pointed identically at both ends, with a straight rib through it — which is an eye,
+  and it was reported as looking poor. A leaf is **asymmetric**: the profile is a beta curve
+  `t^base * (1-t)^tip` with `base < tip`, so the blade swells out of the stem and runs a long way to
+  the point. `LEAF_WIDEST` states where that puts the widest part — **30% along** — so the shape is
+  a number rather than a feeling. It has a stem, a bowed rib, four veins and a lit upper edge; the
+  rib's bow is what stops a closed curve reading as an eye, and it is 8.3px on an 84px leaf.
+- **⚠ And the check that guarded the old shape was asserting the wrong property.** It required the
+  leaf to be fattest in the middle, reasoning that a shape which swells early reads as fuller than it
+  is. That is true of *area* and false of what a player reads off a gauge, which is **the fill's front
+  edge** — and that is exactly `fill * width` by construction, asserted at fifty points.
 - **⚠ The leaf's fill is a truncated polygon, not a mask.** `setMask(geometryMask)` is a silent
   no-op under this renderer — it warns and returns without assigning `.mask` — which this codebase
   has now hit in four separate places. `ui/leafGauge.ts` returns the leaf *shortened*, and is pure

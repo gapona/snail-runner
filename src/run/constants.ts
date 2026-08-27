@@ -72,13 +72,27 @@ export function halfWidthsAtLane(screenFraction: number): number {
  * three clearly separated lines through any obstacle without the road having to be marked into
  * lanes, which is what keeps an obstacle a choice rather than a reflex test.
  *
+ * **⚠ Raised from 0.07 because the mascot was too small, and a phone is where that showed.**
+ * Measured through the real projection: at 390x844 the snail came out **23x15 pixels** against
+ * 113x72 at 1920x945, because everything on the road is scaled by the frame's *width* and 390 is a
+ * fifth of 1920. There is no lever that fixes that on the phone alone — the drawn size IS the
+ * collision box (below), the box is world-space and must be the same game on every device, and a
+ * camera zoom would push the player's own lane off the edge of a narrow frame, since the lane
+ * already fills 78% of it at every aspect.
+ *
+ * So the mascot is genuinely bigger everywhere: **1/9 of the road's width rather than 1/14**, which
+ * is 35 pixels on a phone and 170 on a desktop. It is a real difficulty change — `hits` adds this to
+ * the obstacle's own half-width, so every hitbox is about 13% wider — and it is safe rather than
+ * merely small, because `provePassable` re-proves every row against whatever this number is and
+ * redraws the ones that no longer have a line through them. `verify:obstacles` prints the table.
+ *
  * **The collision width and the drawn width are the same number, and that is enforced rather than
  * remembered** — see `PLAYER_WIDTH`. The first version of this let the texture's own pixel size
  * decide how wide the snail looked (via `SPRITE_SCALE`, which is world units per texture pixel),
  * and the two promptly disagreed by a factor of two and a half: a snail 720 units wide on screen
  * and 180 tall by the collision model, i.e. a pancake that got hit by things it visibly cleared.
  */
-export const PLAYER_HALF_WIDTHS = 0.07
+export const PLAYER_HALF_WIDTHS = 0.105
 
 /**
  * The snail's drawn footprint in world units — width from `PLAYER_HALF_WIDTHS`, height from
@@ -221,6 +235,29 @@ export const FEVER_CLEAR_MARGIN = 1.15
  * a busy stretch it costs one segment and on an empty one it costs forty.
  */
 export const NEAREST_OBSTACLE_SCAN = 40
+
+/**
+ * How much bigger a small readable object is drawn on a narrow frame, given the frame's width.
+ *
+ * **⚠ This is allowed for pickups and forbidden for everything else, and the difference is the
+ * rule.** A pickup's collection box is deliberately twice its icon — the one place in this game
+ * where the box and the sprite may disagree, and only ever in the generous direction — so growing
+ * the icon *toward* the box costs nothing and takes it back nowhere. An obstacle or the snail has
+ * no such slack: their drawn size IS their box, and scaling one without the other is the pancake
+ * bug `PLAYER_WIDTH` documents.
+ *
+ * Below the reference width everything on the road shrinks in proportion to the frame, because the
+ * projection scales by width; at 390 pixels a pickup came out at **26px**. At the ceiling it is
+ * 49px, which is under the 640-unit catchment it has to stay inside.
+ */
+export const READABLE_REFERENCE_WIDTH = 1280
+export const READABLE_MAX_SCALE = 1.9
+
+export function readableScale(screenWidth: number): number {
+  if (!(screenWidth > 0)) return 1
+
+  return Math.max(1, Math.min(READABLE_MAX_SCALE, READABLE_REFERENCE_WIDTH / screenWidth))
+}
 
 /**
  * How the speed tracks the Fever ceiling, as a fraction of the remaining gap closed per second.

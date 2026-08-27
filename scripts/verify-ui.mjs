@@ -9,7 +9,7 @@
 // browser; the two hit-area traps every widget in it has to handle are documented in CLAUDE.md
 // "Responsive Layout" and are properties of Phaser's `Container`, not of this arithmetic.
 import assert from 'node:assert/strict'
-import { leafFill, leafOutline } from '../src/ui/leafGauge.ts'
+import { LEAF_RIB_BOW, LEAF_WIDEST, leafFill, leafOutline, leafRib, leafVeins } from '../src/ui/leafGauge.ts'
 import { clampVolume, DEFAULT_MUSIC_VOLUME, DEFAULT_SOUND_VOLUME, gainFor, isSilent } from '../src/audio/volume.ts'
 import { isTap, TAP_SLOP_PX } from '../src/ui/gesture.ts'
 import {
@@ -340,7 +340,11 @@ check('the leaf gauge fills monotonically and is empty when it is empty', () => 
     assert.ok(covered >= previous - 1e-9, `the fill went backwards at ${fill}`)
     previous = covered
     for (const point of points) {
-      assert.ok(point.x <= W + 1e-9 && Math.abs(point.y) <= H / 2 + 1e-9, 'the fill left the leaf')
+      // The bound carries the rib's own bow: `height` is the blade's thickness across the rib, and
+      // the rib itself is not straight, so the leaf's total vertical extent is a little more.
+      const bound = (H / 2) * (1 + LEAF_RIB_BOW) + 1e-9
+
+      assert.ok(point.x <= W + 1e-9 && Math.abs(point.y) <= bound, 'the fill left the leaf')
     }
   }
 
@@ -357,23 +361,42 @@ check('the leaf gauge fills monotonically and is empty when it is empty', () => 
   console.log(`    a ${W}x${H} leaf: ${outline.length} outline points, widest ${Math.max(...outline.map((p) => Math.abs(p.y))).toFixed(1)}px either side of the rib`)
 })
 
-check('the leaf is fattest in the middle, so the fill is not misleading at either end', () => {
-  // Below 1 the shape fattens toward the tips and the gauge reads nearly full long before it is,
-  // which is the wrong direction for a gauge to lie in. Measured as where the widest point falls.
+check('the gauge is read by how far the fill has got, and that is exactly linear', () => {
+  // **The property that matters is the fill's FRONT EDGE, not its area.** An earlier version of this
+  // check asserted the leaf was fattest in the middle, on the reasoning that a shape which swells
+  // early reads as fuller than it is. That is true of area and false of what a player reads off a
+  // gauge, and it was written for a symmetric lens — which was reported as looking like an eye.
   const W = 200
   const H = 84
-  const outline = leafOutline(W, H, 200).slice(0, 201)
-  let widest = 0
-  let at = 0
 
-  for (const point of outline) {
-    if (Math.abs(point.y) > widest) {
-      widest = Math.abs(point.y)
-      at = point.x / W
-    }
+  for (let i = 1; i <= 50; i++) {
+    const fill = i / 50
+    const front = Math.max(...leafFill(W, H, fill).map((p) => p.x))
+
+    assert.ok(Math.abs(front - fill * W) < 1e-9, `at ${fill} the fill reached ${front.toFixed(2)} of ${fill * W}`)
   }
+})
 
-  assert.ok(Math.abs(at - 0.5) < 0.06, `the leaf is widest at ${(at * 100).toFixed(0)}% along it`)
+check('it is a leaf and not a lens: asymmetric, with a bowed rib', () => {
+  // The three things that separate the two, each stated as a number so the shape cannot drift back.
+  assert.ok(LEAF_WIDEST < 0.4, `the widest point is ${(LEAF_WIDEST * 100).toFixed(0)}% along, which is a lens`)
+  assert.ok(LEAF_WIDEST > 0.15, 'the blade swells so fast it has no base')
+  assert.ok(LEAF_RIB_BOW > 0.1, 'a straight rib through a closed curve reads as an eye')
+
+  const H = 84
+  const bow = Math.max(...Array.from({ length: 41 }, (_, i) => Math.abs(leafRib(i / 40, H))))
+
+  assert.ok(bow > H * 0.05 && bow < H * 0.3, `the rib bows ${bow.toFixed(1)}px of an ${H}px leaf`)
+  assert.ok(Math.abs(leafRib(0, H)) < 1e-9, 'the rib does not start at the stem')
+
+  const veins = leafVeins(200, H)
+
+  assert.equal(veins.length, 4)
+  for (const [from, to] of veins) {
+    assert.ok(to.x > from.x, 'a vein points back toward the stem')
+    assert.ok(Math.abs(to.y - from.y) > 1, 'a vein lies along the rib')
+  }
+  console.log(`    widest ${(LEAF_WIDEST * 100).toFixed(0)}% along, rib bows ${bow.toFixed(1)}px, 4 veins`)
 })
 
 console.log(`${passed} checks passed`)

@@ -10,6 +10,7 @@ import type { Segment } from '../road/track'
 import { createPickupTextures, PICKUP_TEXTURES, pickupTexture } from './pickupArt'
 import { WORLD_LAYER, worldDepth } from './worldDepth'
 import { PICKUP_DRAW_SIZE, type Pickup } from './pickups'
+import { readableScale } from './constants'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowScale } from './shadows'
 
 /**
@@ -118,13 +119,16 @@ export class PickupSprites {
         // everywhere and shrinks with distance exactly as the sprite does.
         const bob = Math.sin(now / 260 + pickup.id) * 22
 
+        // **Bigger on a narrow frame, and only a pickup may be** — see `readableScale` for why the
+        // catchment box is what makes that free here and impossible for anything else.
+        const drawn = PICKUP_DRAW_SIZE * readableScale(screenWidth)
         const rect = billboardRectInto(
           this.rect,
           ground,
           pickup.offsetX,
           pickup.y + bob,
-          PICKUP_DRAW_SIZE / SPRITE_SCALE,
-          PICKUP_DRAW_SIZE / SPRITE_SCALE,
+          drawn / SPRITE_SCALE,
+          drawn / SPRITE_SCALE,
           screenWidth,
           screenHeight,
         )

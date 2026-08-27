@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser'
 import { anchorTopLeft, anchorTopRight } from '../ui/anchors'
 import { KIT } from '../ui/kitPalette'
-import { leafFill, leafOutline } from '../ui/leafGauge'
+import { leafFill, leafHalfHeight, leafOutline, leafRib, leafRibLine, LEAF_STEM, leafVeins } from '../ui/leafGauge'
 import { toCssColor } from '../ui/theme'
 import { uiScale } from '../ui/uiScale'
 import { HUD_DEPTH } from './hudDepth'
@@ -159,10 +159,19 @@ export class Hud {
       for (let i = 1; i < points.length; i++) this.gauge.lineTo(x + points[i].x, y + points[i].y)
       if (close) this.gauge.closePath()
     }
+    const outline = leafOutline(w, h)
 
-    // The empty leaf first, so the fill is drawn inside it and the rim over both.
-    this.gauge.fillStyle(KIT.plate, 0.72)
-    path(leafOutline(w, h), true)
+    // The stem, first and behind everything: a leaf without one is a shape, and it is what tells
+    // the eye which end the gauge fills from.
+    this.gauge.lineStyle(Math.max(2, h * 0.085), LEAF_STEM_COLOR, 1)
+    this.gauge.beginPath()
+    this.gauge.moveTo(x - w * LEAF_STEM, y + h * 0.1)
+    this.gauge.lineTo(x + w * 0.02, y)
+    this.gauge.strokePath()
+
+    // The empty blade, then the fill inside it, then the rim over both.
+    this.gauge.fillStyle(KIT.plate, 0.8)
+    path(outline, true)
     this.gauge.fillPath()
 
     const filled = leafFill(w, h, fill)
@@ -171,16 +180,33 @@ export class Hud {
       this.gauge.fillStyle(fever ? KIT.warning : LEAF_FRUIT, 1)
       path(filled, true)
       this.gauge.fillPath()
+      // A lighter band along the upper edge of what is filled: one flat colour reads as paper, and
+      // the rest of this game's art is lit from above.
+      this.gauge.fillStyle(fever ? LEAF_FEVER_LIGHT : LEAF_FRUIT_LIGHT, 0.55)
+      path(
+        filled.filter((point) => point.y < leafRib(point.x / w, h) - leafHalfHeight(point.x / w, h) * 0.35),
+        false,
+      )
+      this.gauge.lineStyle(Math.max(2, h * 0.13), fever ? LEAF_FEVER_LIGHT : LEAF_FRUIT_LIGHT, 0.5)
+      this.gauge.strokePath()
     }
 
-    this.gauge.lineStyle(Math.max(2, h * 0.09), fever ? KIT.warning : LEAF_RIM, 1)
-    path(leafOutline(w, h), true)
+    // The veins, inside the blade and under the rim, so they read as part of the leaf rather than
+    // as marks on top of it.
+    this.gauge.lineStyle(Math.max(1, h * 0.035), LEAF_RIM, 0.5)
+    for (const [from, to] of leafVeins(w, h)) {
+      this.gauge.beginPath()
+      this.gauge.moveTo(x + from.x, y + from.y)
+      this.gauge.lineTo(x + to.x, y + to.y)
+      this.gauge.strokePath()
+    }
+
+    this.gauge.lineStyle(Math.max(2, h * 0.1), LEAF_RIM, 1)
+    path(outline, true)
     this.gauge.strokePath()
-    // The midrib, which is what stops a lens shape reading as an eye.
-    this.gauge.lineStyle(Math.max(1, h * 0.05), LEAF_RIM, 0.75)
-    this.gauge.beginPath()
-    this.gauge.moveTo(x, y)
-    this.gauge.lineTo(x + w, y)
+    // The midrib last, over the fill: it is the stiff part of a leaf and reads as being on top.
+    this.gauge.lineStyle(Math.max(1, h * 0.055), LEAF_RIM, 0.85)
+    path(leafRibLine(w, h), false)
     this.gauge.strokePath()
   }
 
@@ -241,3 +267,8 @@ export class Hud {
 const LEAF_FRUIT = 0xa964d8
 /** The leaf itself: the shield pickup's green, which is the only leaf-coloured thing in the game. */
 const LEAF_RIM = 0x4fc663
+/** The stem, a shade darker so it reads as woody rather than as more blade. */
+const LEAF_STEM_COLOR = 0x2f7d3c
+/** The lit edge of whatever is filling it. The rest of this game's art is lit from above. */
+const LEAF_FRUIT_LIGHT = 0xd7a8f2
+const LEAF_FEVER_LIGHT = 0xffe3a8
