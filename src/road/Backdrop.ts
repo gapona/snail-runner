@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser'
 import { createRng } from '../race/rng'
-import { HORIZON_Y, ROAD_MESH_DEPTH, SKYLINE_LAYER } from './constants'
-import { getRoadTheme, getRoadThemeId } from './themes'
+import { BIOME_SKYLINE_WEIGHT, HORIZON_Y, ROAD_MESH_DEPTH, SKYLINE_LAYER } from './constants'
+import { blendColor, getRoadTheme, getRoadThemeId } from './themes'
 
 /** Depths: sky behind the ground, glow and vignette in front of it but behind everything else. */
 const SKY_DEPTH = ROAD_MESH_DEPTH - 10
@@ -60,16 +60,6 @@ export const SKYLINE_TEXTURE = 'skyline'
  * The tuning lives in `SKYLINE_LAYER`, in the phaser-free module, because one of its numbers needs
  * a check that runs under plain Node.
  */
-
-/**
- * How far the range's tint is pulled back towards the haze, as `0..1`.
- *
- * **The biome's own colour is the wrong colour for a horizon, and the first strip proved it**: at
- * full tint the forest's green turned the range into a hedgerow. Aerial perspective is the reason
- * — a ridge kilometres out is mostly the air in front of it, which is why distant hills read
- * blue-grey whatever they are made of. So the biome still steers the hue, and the haze wins.
- */
-const SKYLINE_TINT_MIX = 0.62
 
 // The horizon fraction is imported, never redeclared. This file used to carry its own `0.5`
 // beside the projection's implicit one — two constants describing one line, which stay right
@@ -239,27 +229,23 @@ export class Backdrop {
   }
 
   /**
-   * The colour the range is seen in — the biome's own, under the theme's light.
+   * The colour the range is seen in — the theme's air at the horizon, steered by the biome.
    *
-   * The same product every verge prop is drawn with, which is what keeps a desert's horizon sandy
-   * and a forest's cool without nine strips of art. One tint for the whole strip rather than per
-   * segment: a backdrop has no distance, so there is nothing to interpolate along, and the change
-   * lands over the second or so a biome seam takes to pass.
+   * `steer` is what the caller wants the biome to contribute, already crossfaded across the seam
+   * (`skylineBiomeTint`); this decides how little of it survives. Towards the theme's own sky
+   * rather than towards grey, so a night range is seen through a night sky and an ember one
+   * through fire — the light belongs to the theme, and only the hue nudge belongs to the place.
+   *
+   * One tint for the whole strip, because there is exactly one object: what stops that being a
+   * step is that both terms move continuously, not that they are applied per segment.
    */
-  setSkylineTint(tint: number): void {
+  setSkylineTint(steer: number): void {
     if (!this.skyline) return
 
-    const haze = getRoadTheme().sky.band
-    const mix = (shift: number): number => {
-      const from = (tint >> shift) & 0xff
-      const to = (haze >> shift) & 0xff
-
-      return Math.round(from + (to - from) * SKYLINE_TINT_MIX) << shift
-    }
-
-    // Towards the theme's own horizon band rather than towards white: haze is the sky seen
-    // through, so on a night or an ember theme it is that sky, not a grey one.
-    this.skyline.setTint(mix(16) | mix(8) | mix(0))
+    // `blendColor` rather than a mix rolled out by hand here: the check that holds this layer's
+    // seam flat has to compose the identical colour under plain Node, and two copies of a lerp
+    // are two places for it to be subtly different.
+    this.skyline.setTint(blendColor(getRoadTheme().sky.bottom, steer, BIOME_SKYLINE_WEIGHT))
   }
 
   /**

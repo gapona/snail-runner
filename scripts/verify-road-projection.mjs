@@ -60,8 +60,9 @@ import { KIT } from '../src/ui/kitPalette.ts'
  */
 const MIN_HOSTILE_HUE_GAP = 30
 import { quadWriteAction } from '../src/road/meshGuard.ts'
-import { BIOMES, BIOME_IDS, biomeById, biomeForSegment, biomeIndexForSegment, biomeIndex, biomeRunSegments, MIN_BIOME_RUN_SEGMENTS, groundPairForTheme, MIN_GROUND_CONTRAST, GROUND_ALTERNATION } from '../src/road/biomes.ts'
+import { BIOMES, BIOME_IDS, biomeById, biomeForSegment, biomeIndexForSegment, biomeIndex, biomeRunSegments, MIN_BIOME_RUN_SEGMENTS, groundPairForTheme, MIN_GROUND_CONTRAST, GROUND_ALTERNATION, setBiomeLayout, skylineBiomeTint, SKYLINE_SEAM_BLEND_SEGMENTS } from '../src/road/biomes.ts'
 import {
+  BIOME_SKYLINE_WEIGHT,
   CAMERA_DEPTH,
   CAMERA_HEIGHT,
   hasRung,
@@ -2367,6 +2368,168 @@ check('no mote is drawn in the reserved threat colour', () => {
   }
 
   console.log(`    nearest mote hue to the threat colour: ${worstId} at ${worst.toFixed(1)} degrees`)
+})
+
+
+// ---------------------------------------------------------------------------------------------
+// The skyline's tint: it belongs to the air, and it may not step.
+// ---------------------------------------------------------------------------------------------
+
+/** Exactly what `Backdrop.setSkylineTint` composes, so the check cannot drift from the layer. */
+function skylineTintAt(index, trackLength, theme) {
+  const steer = multiplyTint(skylineBiomeTint(index, trackLength), theme.decorTint)
+
+  return blendColor(theme.sky.bottom, steer, BIOME_SKYLINE_WEIGHT)
+}
+
+/** The old arrangement, kept as the negative control: the ground family, stepped per segment. */
+function groundFamilyTintAt(index, trackLength, theme) {
+  const steer = multiplyTint(biomeForSegment(index, trackLength).decorTint, theme.decorTint)
+
+  return blendColor(theme.sky.band, steer, 0.38)
+}
+
+const channels = (colour) => [(colour >> 16) & 0xff, (colour >> 8) & 0xff, colour & 0xff]
+const worstChannel = (a, b) => Math.max(...channels(a).map((v, i) => Math.abs(v - channels(b)[i])))
+
+check('the biome steers the skyline at no more than 0.3, and the rest is aerial perspective', () => {
+  assert.ok(
+    BIOME_SKYLINE_WEIGHT > 0,
+    'a weight of 0 would make every biome look identical on the horizon -- the steer is meant to survive, only quietly',
+  )
+  assert.ok(
+    BIOME_SKYLINE_WEIGHT <= 0.3,
+    `the biome supplies ${BIOME_SKYLINE_WEIGHT} of the range's colour; past 0.3 the ground under the player is repainting the horizon`,
+  )
+
+  console.log(
+    `    biome steer ${(BIOME_SKYLINE_WEIGHT * 100).toFixed(0)}%, aerial perspective ${((1 - BIOME_SKYLINE_WEIGHT) * 100).toFixed(0)}%`,
+  )
+})
+
+check('the skyline never steps: a whole lap moves it by under a level a segment, on every theme', () => {
+  // The strip has no `z`, so whatever it is handed lands across the full width of the frame in one
+  // frame. A per-segment jump the eye can see IS the artefact -- there is no distance for it to
+  // sweep along, which is the entire difference between this layer and the ground.
+  const track = buildRunCircuit()
+  const length = track.length // SEGMENTS, not world units -- biomeIndexForSegment counts segments
+  const budget = 1
+
+  let worstStep = 0
+  let worstAt = ''
+
+  for (const id of themeIds()) {
+    const theme = THEMES[id]
+
+    for (let i = 0; i < length; i += 1) {
+      const step = worstChannel(skylineTintAt(i, length, theme), skylineTintAt(i + 1, length, theme))
+
+      if (step > worstStep) {
+        worstStep = step
+        worstAt = `${id} at segment ${i}`
+      }
+    }
+  }
+
+  assert.ok(
+    worstStep <= budget,
+    `the skyline jumps ${worstStep} levels in one segment (${worstAt}); a whole-width tint change that big reads as a dropped texture`,
+  )
+
+  // A check that has never rejected anything is not evidence. The shipped arrangement is compared
+  // against the one it replaced -- the ground family, stepped -- which must still be caught.
+  const theme = THEMES[DEFAULT_ROAD_THEME]
+  let oldWorst = 0
+
+  for (let i = 0; i < length; i += 1) {
+    oldWorst = Math.max(oldWorst, worstChannel(groundFamilyTintAt(i, length, theme), groundFamilyTintAt(i + 1, length, theme)))
+  }
+
+  assert.ok(
+    oldWorst > budget,
+    'the negative control is not being rejected, so this check is measuring nothing',
+  )
+
+  console.log(
+    `    worst single-segment move: ${worstStep} of 255 (${worstAt}); the stepped ground-family version it replaced: ${oldWorst}`,
+  )
+})
+
+check('ten segments either side of a biome seam are barely a different colour', () => {
+  // The acceptance, stated as arithmetic rather than as a screenshot: the pair of frames a player
+  // would compare across a boundary.
+  const track = buildRunCircuit()
+  const length = track.length // SEGMENTS, not world units -- biomeIndexForSegment counts segments
+  const run = biomeRunSegments(length)
+  const budget = 8
+
+  let worst = 0
+  let worstAt = ''
+
+  for (const id of themeIds()) {
+    const theme = THEMES[id]
+
+    for (let seam = run; seam < length; seam += run) {
+      const gap = worstChannel(skylineTintAt(seam - 10, length, theme), skylineTintAt(seam + 10, length, theme))
+
+      if (gap > worst) {
+        worst = gap
+        worstAt = `${id} at the seam on segment ${seam}`
+      }
+    }
+  }
+
+  assert.ok(worst <= budget, `the range changes by ${worst} levels across a seam (${worstAt})`)
+  console.log(`    widest colour gap across a seam, -10 to +10 segments: ${worst} of 255 (${worstAt})`)
+})
+
+check('the seam crossfade is centred on the seam, not trailing it', () => {
+  // Half done at the boundary is what makes neither end of the move a surprise: approaching the
+  // seam the horizon has already begun to change, and it finishes after the ground has.
+  const track = buildRunCircuit()
+  const length = track.length // SEGMENTS, not world units -- biomeIndexForSegment counts segments
+  const run = biomeRunSegments(length)
+  const half = SKYLINE_SEAM_BLEND_SEGMENTS / 2
+
+  const before = biomeForSegment(run - 1, length).decorTint
+  const after = biomeForSegment(run, length).decorTint
+
+  assert.notEqual(before, after, 'the fixture is not a seam at all -- these two segments are the same biome')
+
+  const atSeam = skylineBiomeTint(run, length)
+  const midpoint = blendColor(before, after, 0.5)
+
+  assert.ok(
+    worstChannel(atSeam, midpoint) <= 2,
+    'the crossfade is not half done at the seam, so it is trailing the boundary rather than straddling it',
+  )
+  // At the window's own edges the ease has all but closed -- "all but" rather than "exactly"
+  // because the two branches straddle the boundary by half a segment each, which is the thing
+  // that keeps them continuous across it.
+  assert.ok(worstChannel(skylineBiomeTint(run - half, length), before) <= 1, 'the crossfade starts before the window opens')
+  assert.ok(worstChannel(skylineBiomeTint(run + half, length), after) <= 1, 'the crossfade is still running after the window closes')
+
+  console.log(
+    `    crossfade spans ${SKYLINE_SEAM_BLEND_SEGMENTS} segments centred on the seam, against a biome run of ${run}`,
+  )
+})
+
+check('a pinned biome has no seam to cross, and the crossfade does not invent one', () => {
+  // A level is one biome for its whole track. Every lookup inside the blend returns the same
+  // record there, so the interpolation runs between a colour and itself -- asserted rather than
+  // assumed, because a hand-rolled neighbour index would quietly blend towards a biome that is
+  // not on this track at all.
+  const track = buildStraightTrack(500)
+  const length = track.length // SEGMENTS, not world units -- biomeIndexForSegment counts segments
+
+  setBiomeLayout({ kind: 'single', index: 3 })
+  try {
+    for (let i = 0; i < length; i += 7) {
+      assert.equal(skylineBiomeTint(i, length), BIOMES[3].decorTint, `segment ${i} drifted off the pinned biome`)
+    }
+  } finally {
+    setBiomeLayout({ kind: 'cycle' })
+  }
 })
 
 console.log(`${passed} checks passed`)

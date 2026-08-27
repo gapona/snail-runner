@@ -9,7 +9,7 @@ import { RoadMesh } from '../road/RoadMesh'
 import { RoadSprites } from '../road/RoadSprites'
 import { wrapZ } from '../road/project'
 import { decorateTrack, trackLengthOf, type Segment } from '../road/track'
-import { biomeForSegment } from '../road/biomes'
+import { biomeForSegment, skylineBiomeTint } from '../road/biomes'
 import { multiplyTint } from '../road/color'
 import { getRoadTheme } from '../road/themes'
 import { FIXED_STEP_MS } from '../race/constants'
@@ -206,8 +206,13 @@ export class WorldView {
     const biome = biomeForSegment(this.roadMesh.baseIndex, this.track.length)
 
     this.atmosphere.setBiome(biome.id)
-    // The range is drawn in the same product every prop standing in this biome is drawn in.
-    this.backdrop.setSkylineTint(multiplyTint(biome.decorTint, getRoadTheme().decorTint))
+    // The range is NOT drawn in the props' product. It is the theme's air with a small steer from
+    // the biome, and the steer is crossfaded across the seam rather than stepped — the strip has
+    // no `z`, so a step lands on the whole width of the frame at once. See `BIOME_SKYLINE_WEIGHT`
+    // and `skylineBiomeTint`. The theme's light still multiplies in, so a night horizon is dark.
+    this.backdrop.setSkylineTint(
+      multiplyTint(skylineBiomeTint(this.roadMesh.baseIndex, this.track.length), getRoadTheme().decorTint),
+    )
 
     return { roadMs, decorMs: performance.now() - decorStarted }
   }

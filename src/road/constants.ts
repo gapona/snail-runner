@@ -476,6 +476,29 @@ export function billboardFog(distanceIndex: number, drawDistance: number = DRAW_
  */
 export const SKYLINE_LAYER = { driftPixels: 0.0012, height: 0.3, sink: 0.035 } as const
 
+/**
+ * How much of the range's colour the biome under the player is allowed to supply, as `0..1`.
+ *
+ * **The far silhouette belongs to the air, not to the ground.** The strip used to be tinted with
+ * the same product every verge prop is drawn with — `biome.decorTint * theme.decorTint`, the
+ * ground family — so walking from the forest into the dunes repainted a mountain range that is
+ * kilometres away and made of neither. A ridge at that distance is mostly the atmosphere in front
+ * of it; that is why distant hills read blue-grey whatever they are made of, and it is the whole
+ * reason a horizon cannot answer to what is underfoot.
+ *
+ * So the base is the theme's own air at the horizon (`sky.bottom` — the end of the sky gradient
+ * the range is seen through, and the slot the SKYLOCK plates were authored against) and the biome
+ * is a *steer* on top of it, nothing more. The complement, **0.85, is the aerial perspective**:
+ * this is the same quantity the old `SKYLINE_TINT_MIX = 0.62` stated from the other end, and the
+ * move from 0.38 to 0.15 of biome is what takes the seam from visible to not.
+ *
+ * **⚠ This is not `MAX_BILLBOARD_FOG` and must never be derived from it.** That constant is how
+ * far a *billboard's alpha* is taken away with distance, it is load-bearing for how obstacles and
+ * pickups read at the reaction distance, and it never reaches this layer — the range is a
+ * `TileSprite` with no distance and no alpha ramp at all. Two quantities, two owners.
+ */
+export const BIOME_SKYLINE_WEIGHT = 0.15
+
 /** Size of the strip `scripts/build-sprites.py` composites. Width matters — see `layoutSkyline`. */
 export const SKYLINE_TEXTURE_SIZE = { width: 3072, height: 384 } as const
 

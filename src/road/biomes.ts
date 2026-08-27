@@ -460,3 +460,84 @@ export function biomeIndexForSegment(index: number, trackLength: number): number
   // seam is now a longer first stretch rather than a boundary between two different places.
   return Math.floor(wrapped / biomeRunSegments(trackLength)) % BIOMES.length
 }
+
+/**
+ * Over how many segments the skyline crossfades from one biome's steer to the next.
+ *
+ * **The strip has no `z`, and that is the whole reason this number exists.** Everything else the
+ * biome colours — the ground, the props, the decals — is addressed per segment, so a boundary
+ * arrives as a line sweeping up the frame and the change is spread across the second or two it
+ * takes to pass. A `TileSprite` is one object with one tint: whatever it is handed lands on the
+ * full width of the screen in a single frame. A hard step there does not read as a new place, it
+ * reads as the renderer having dropped a texture.
+ *
+ * 64 segments is 3.6s at `SPEED_CAP` and 8.9s at `SPEED_BASE`, against a biome run of 179 — so a
+ * third of a run is spent in transition and two thirds sit on the biome's own steer. Centred on
+ * the seam rather than trailing it, so the horizon is half-changed at the moment the ground under
+ * the player changes and neither half of the move is a surprise.
+ */
+export const SKYLINE_SEAM_BLEND_SEGMENTS = 64
+
+/** Hermite ease. Zero derivative at both ends, so the window opens and closes without a corner. */
+function smoothstep(t: number): number {
+  const x = Math.min(1, Math.max(0, t))
+
+  return x * x * (3 - 2 * x)
+}
+
+/**
+ * The biome steer the skyline is drawn with at a given segment — crossfaded across the seam.
+ *
+ * **This is deliberately NOT `biomeForSegment(...).decorTint`, and the difference is the bug it
+ * was written for.** That lookup is a hard step, which is correct for anything with a distance:
+ * the segment carries its own `z`, so the step happens at one place on the road and sweeps up the
+ * frame. The range has no distance at all — see `SKYLINE_SEAM_BLEND_SEGMENTS`.
+ *
+ * **⚠ The seam is FOUND, not computed from `biomeRunSegments`, and the first version got that
+ * wrong.** A lap that does not divide evenly ends in a short stub which wraps onto biome 0 — the
+ * biome the lap starts with — so run arithmetic reports a boundary at segment 0 where the ground
+ * does not actually change. On the shipped 1434-segment circuit that put a **5-level jump into
+ * the delivered tint at segment 1433**, i.e. exactly the whole-width step this function exists to
+ * remove, at the one place nobody would look for it. `verify:road` caught it on its first run.
+ *
+ * So both neighbours are found by walking outward through `biomeIndexForSegment` itself: whatever
+ * that says is a boundary is a boundary, and this cannot disagree with the ground for any layout,
+ * any lap length or any remainder. The walk is bounded by half the window and runs once a frame,
+ * not once a sprite. A pinned (`'single'`) layout falls out for free — every lookup returns the
+ * same biome, both walks run to their limit, and the crossfade never engages.
+ */
+export function skylineBiomeTint(index: number, trackLength: number): number {
+  const here = biomeIndexForSegment(index, trackLength)
+  const own = BIOMES[here].decorTint
+
+  if (!(trackLength > 0)) return own
+
+  const window = Math.max(2, SKYLINE_SEAM_BLEND_SEGMENTS)
+  const half = Math.floor(window / 2)
+
+  // Leaving a seam behind: the second half of a move that began `half` segments before it. The
+  // half-segment offset is what makes the two branches meet either side of the boundary rather
+  // than both landing on it, so the crossfade is exactly half done as the ground changes.
+  let back = 0
+
+  while (back < half && biomeIndexForSegment(index - back - 1, trackLength) === here) back += 1
+
+  if (back < half) {
+    const previous = BIOMES[biomeIndexForSegment(index - back - 1, trackLength)]
+
+    return mixColour(previous.decorTint, own, smoothstep(0.5 + (back + 0.5) / window))
+  }
+
+  // Approaching the next one: the first half of the same move.
+  let ahead = 0
+
+  while (ahead < half && biomeIndexForSegment(index + ahead + 1, trackLength) === here) ahead += 1
+
+  if (ahead < half) {
+    const next = BIOMES[biomeIndexForSegment(index + ahead + 1, trackLength)]
+
+    return mixColour(own, next.decorTint, smoothstep(0.5 - (ahead + 0.5) / window))
+  }
+
+  return own
+}
