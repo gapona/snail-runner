@@ -159,11 +159,6 @@ export class ObstacleSprites {
       const clip = clipY[n]
 
       for (const obstacle of here) {
-        // Swept off the road by a Fever landing. Not drawn *and* not collided with — the two go
-        // together, because a hazard that is drawn and does nothing is the same lie as one that
-        // hits from further than it looks. See `Obstacle.cleared`.
-        if (obstacle.cleared) continue
-
         const key = obstacleTextureKey(obstacle.kind, obstacle.id)
         // The world box, converted into the texture-pixel units `billboardRectInto` wants — the
         // same conversion `PlayerView` does, and for the same reason: the drawn size has to be the

@@ -58,17 +58,6 @@ export interface Obstacle {
    * and checking it behaves as the band says rather than as the name does.
    */
   kind: ObstacleKind
-  /**
-   * Swept off the road by a Fever landing, so it is neither drawn nor collided with.
-   *
-   * **A removal, not a suppression, and the difference is what the player sees.** The road ahead
-   * has to be empty for `REACTION_MS` after the Fever guard comes off — see `fever.ts` — and the
-   * two ways to arrange that are not equivalent: an obstacle that is drawn and declines to hurt
-   * anyone is a hazard passing through the snail, which is the same lie as one that hits from
-   * further away than it looks. It is cleared while the player is still visibly in Fever, so what
-   * they see is the wake sweeping the road rather than a rock evaporating in front of them.
-   */
-  cleared: boolean
 }
 
 /** Anything with a lane and a height — the snail, or a hypothetical one the placer is testing. */
@@ -87,7 +76,7 @@ export function createObstacle(spec: {
 }): Obstacle {
   const band = OBSTACLE_BANDS[spec.kind]
 
-  return { ...spec, yLow: band.yLow, yHigh: band.yHigh, cleared: false }
+  return { ...spec, yLow: band.yLow, yHigh: band.yHigh }
 }
 
 /**
@@ -242,6 +231,13 @@ export interface PlacementOptions {
    * `difficulty.ts`'s own note for why the shipped curve never sets it there.
    */
   wallShare?: number
+  /**
+   * The first id this call may use, so ids stay unique across a lap's several bands.
+   *
+   * See `placeObstacles` for the 66% of a lap that could not hit the player while every band
+   * restarted at zero.
+   */
+  firstId?: number
 }
 
 
@@ -282,7 +278,17 @@ const OBSTACLE_HALF_WIDTHS = { min: 0.12, max: 0.22 } as const
 export function placeObstacles(options: PlacementOptions): Obstacle[] {
   const { rng, fromZ, toZ, density } = options
   const placed: Obstacle[] = []
-  let id = 0
+  // **⚠ Ids must be unique across the whole lap, and starting every band at zero meant they were
+  // not.** `placeRunObstacles` calls this once per difficulty band, so band 1's first obstacle got
+  // id 0 again — and `RunScene.resolvedOnLap` is keyed by id, marking an obstacle settled *for the
+  // lap* as soon as the sweep passes it. Every later obstacle sharing that id was therefore
+  // disarmed before the player reached it. Measured on the shipped placer: 164 obstacles, 56
+  // distinct ids, and **108 of them — 66% of the lap — could not hit the player at all.**
+  //
+  // That is very likely most of what "some obstacles deal no damage" always was. An earlier round
+  // attributed the report to the `overhead` class not touching a grounded snail, which is true and
+  // was also worth fixing; this is the larger half and had nothing to do with the art.
+  let id = options.firstId ?? 0
   let z = fromZ + MIN_ROW_GAP_Z
 
   while (z < toZ) {
@@ -392,7 +398,7 @@ export function placeRunObstacles(seed: number, trackLength: number, lapOffset =
     // difficulty nor at its end's — sampling at an edge would make every boundary a visible step.
     const difficulty = difficultyAt(lapOffset + (fromZ + toZ) / 2)
 
-    placed.push(...placeObstacles({ rng, fromZ, toZ, ...difficulty }))
+    placed.push(...placeObstacles({ rng, fromZ, toZ, ...difficulty, firstId: placed.length }))
   }
 
   return placed

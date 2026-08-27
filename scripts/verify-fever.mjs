@@ -13,14 +13,19 @@
 //
 // The last check is the headline: 200 simulated exits, each measuring how long the player actually
 // has before the first obstacle that can hurt them. **It is shown failing first**, against the same
-// simulation with the clearing taken out, because a floor that has never rejected anything is not a
+// simulation with the hold taken out, because a floor that has never rejected anything is not a
 // floor.
+//
+// ⚠ The hold REPLACED an earlier fix that deleted the obstacles inside the window. That worked and
+// was reported anyway: the window is 42 segments against a road drawn 300 ahead, so the player
+// watched rocks vanish in front of them -- and it broke `lapLayout.ts`'s rule that nothing already
+// on screen is ever rewritten. Holding the guard until the road opens removes nothing.
 import assert from 'node:assert/strict'
 import {
   addFruit,
   createFeverState,
   feverCharge,
-  feverClearanceUnits,
+  roadIsClear,
   feverInvulnerable,
   feverMagnet,
   feverSpeedFactor,
@@ -33,6 +38,7 @@ import { PICKUP_KINDS, PICKUP_WEIGHTS } from '../src/run/pickups.ts'
 import {
   FEVER_EASE_MS,
   FEVER_FRUIT_TARGET,
+  FEVER_HOLD_MAX_MS,
   FEVER_MAGNET_RATE,
   FEVER_MAGNET_Z,
   FEVER_MS,
@@ -109,7 +115,9 @@ check('it lasts FEVER_MS + FEVER_EASE_MS of simulated time, at any frame rate', 
     const ms = at(hz)
     const want = FEVER_MS + FEVER_EASE_MS
 
-    assert.ok(Math.abs(ms - want) <= 1000 / hz + 1e-6, `${hz}Hz ran ${ms}ms against ${want}ms`)
+    // Plus the one tick the `holding` phase takes when the road is already clear, which is the
+    // default here -- the hold's own behaviour is checked against a real layout below.
+    assert.ok(Math.abs(ms - want) <= 2 * (1000 / hz) + 1e-6, `${hz}Hz ran ${ms}ms against ${want}ms`)
   }
   console.log(`    ${FEVER_MS}ms of Fever and ${FEVER_EASE_MS}ms of landing, identical at 30/60/144Hz`)
 })
@@ -148,15 +156,24 @@ check('the guard outlives the speed - it covers the landing, not just the Fever'
   for (let i = 0; i < FEVER_FRUIT_TARGET; i++) state = addFruit(state)
 
   let easingTicks = 0
+  let heldTicks = 0
 
+  // The road is deliberately never clear here, so the hold runs to its own ceiling and every phase
+  // is exercised.
   while (state.phase !== 'idle') {
     assert.equal(feverInvulnerable(state), true, `the guard came off during ${state.phase}`)
     assert.equal(feverMagnet(state), true, 'the magnet stopped before the guard did')
     if (state.phase === 'easing') easingTicks++
-    state = stepFever(state, DT).state
+    if (state.phase === 'holding') heldTicks++
+    state = stepFever(state, DT, false).state
   }
   assert.equal(feverInvulnerable(state), false, 'the guard never came off')
   assert.ok(easingTicks >= FEVER_EASE_MS / DT - 1, `only ${easingTicks} guarded ticks of landing`)
+  assert.ok(heldTicks > 0, 'the guard never waited for the road')
+  assert.ok(
+    heldTicks <= FEVER_HOLD_MAX_MS / DT + 1,
+    `the hold ran ${heldTicks} ticks, past its own ceiling — a run could stay invulnerable`,
+  )
 })
 
 check('the speed is actually back in the normal range when the guard drops', () => {
@@ -236,54 +253,49 @@ console.log('the exit, over the real placer')
 
 /**
  * One simulated exit. Returns how long the player has, in milliseconds, before the first obstacle
- * that can hurt them -- measured from the frame the guard came off.
+ * that can hurt them -- measured from the frame the guard actually came off.
  *
- * `clear` is the whole variable: with it, this is the shipped arrangement; without it, this is the
- * arrangement before the fix, kept as the negative control the house rule asks for.
+ * `hold` is the whole variable: with it, this is the shipped arrangement, where the guard waits for
+ * the road to open; without it, the guard drops the moment the ease ends, which is the arrangement
+ * the ordering exists to prevent and is kept as the negative control the house rule asks for.
  */
-function simulateExit(obstacles, exitZ, clear) {
-  let run = createRunState()
+function simulateExit(obstacles, exitZ, hold) {
+  const nearestAhead = (z) => {
+    let nearest = Infinity
 
-  // Put the run at Fever speed and in the landing phase, at `exitZ`, without waiting out six
-  // seconds of Fever per sample: what is being measured is the exit, and the entry is checked
-  // above.
-  run = {
-    ...run,
+    for (const obstacle of obstacles) {
+      const ahead = (((obstacle.z - z) % TRACK) + TRACK) % TRACK
+
+      if (ahead <= TRACK / 2) nearest = Math.min(nearest, ahead)
+    }
+
+    return nearest
+  }
+
+  let run = {
+    ...createRunState(),
     speed: SPEED_CAP * FEVER_SPEED_FACTOR,
     distance: exitZ,
     z: exitZ % TRACK,
+    // Put the run in the landing phase directly: what is being measured is the exit, and the entry
+    // is checked above.
     fever: { fruit: 0, phase: 'easing', msRemaining: FEVER_EASE_MS },
   }
 
-  const cleared = new Set()
+  let guarded = 0
 
-  if (clear) {
-    const units = feverClearanceUnits(run.speed)
+  while (run.fever.phase !== 'idle' && guarded < 600) {
+    const clear = hold ? roadIsClear(nearestAhead(run.distance), run.speed) : true
 
-    for (const obstacle of obstacles) {
-      const ahead = (((obstacle.z - exitZ) % TRACK) + TRACK) % TRACK
-
-      if (ahead <= units) cleared.add(obstacle.id)
-    }
+    run = stepRun(run, DT, { trackLength: TRACK, roadClear: clear })
+    guarded++
   }
 
-  while (run.fever.phase !== 'idle') run = stepRun(run, DT, { trackLength: TRACK })
-
-  const guardZ = run.distance
-
-  let soonest = Infinity
-
-  for (const obstacle of obstacles) {
-    if (cleared.has(obstacle.id)) continue
-
-    const ahead = (((obstacle.z - guardZ) % TRACK) + TRACK) % TRACK
-
-    // Only the road in front. Half a lap is the same bound `isBehindCamera` uses.
-    if (ahead > TRACK / 2) continue
-    soonest = Math.min(soonest, (ahead / run.speed) * 1000)
+  return {
+    ms: (nearestAhead(run.distance) / run.speed) * 1000,
+    speed: run.speed,
+    travelled: run.distance - exitZ,
   }
-
-  return { ms: soonest, speed: run.speed, travelled: guardZ - exitZ }
 }
 
 check('in 200 exits the first obstacle after the guard is never sooner than REACTION_MS', () => {
@@ -304,15 +316,20 @@ check('in 200 exits the first obstacle after the guard is never sooner than REAC
   const worst = Math.min(...samples.map((s) => s.ms))
   const worstControl = Math.min(...control.map((s) => s.ms))
   const sorted = [...samples.map((s) => s.ms)].sort((a, b) => a - b)
+  const held = samples.map((s) => s.travelled)
 
-  console.log(`    ${obstacles.length} obstacles on the lap, landing over ${samples[0].travelled.toFixed(0)} units`)
+  console.log(`    ${obstacles.length} obstacles on the lap`)
   console.log(
     `    shipped: min ${worst.toFixed(0)}ms, 5th pct ${sorted[9].toFixed(0)}ms, median ${sorted[100].toFixed(0)}ms`,
   )
-  console.log(`    without the clearing: min ${worstControl.toFixed(0)}ms`)
+  console.log(
+    `    the landing covers ${Math.min(...held).toFixed(0)}..${Math.max(...held).toFixed(0)} units, ` +
+      `so the hold adds up to ${(Math.max(...held) - Math.min(...held)).toFixed(0)} of road`,
+  )
+  console.log(`    without the hold: min ${worstControl.toFixed(0)}ms`)
 
-  // **The negative control first.** Without the clearing an exit lands on top of a row, and the
-  // budget is whatever the gap happens to be -- which is the reported bug.
+  // **The negative control first.** Without the hold an exit lands on top of a row and the budget is
+  // whatever the gap happens to be -- which is the reported bug.
   assert.ok(
     worstControl < REACTION_MS,
     `the control passed at ${worstControl.toFixed(0)}ms, so this check is measuring nothing`,
@@ -320,18 +337,19 @@ check('in 200 exits the first obstacle after the guard is never sooner than REAC
   assert.ok(worst >= REACTION_MS, `the worst exit gave the player ${worst.toFixed(0)}ms against ${REACTION_MS}ms`)
 })
 
-check('the clearance is an upper bound on what the landing actually covers', () => {
-  // It is computed at the Fever speed and the run only slows from there, so it may never come out
-  // short -- erring long costs a row the player did not have to dodge, erring short costs the hit.
-  const speed = SPEED_CAP * FEVER_SPEED_FACTOR
-  const { travelled } = simulateExit([], 0, true)
-  const needed = travelled + (speed * REACTION_MS) / 1000
+check('nothing is deleted from the road to achieve it', () => {
+  // The rule `lapLayout.ts` states without qualification. An earlier fix cleared every obstacle
+  // inside a 42-segment window -- correct about the budget and reported anyway, because the road is
+  // drawn 300 segments ahead and the player watched rocks vanish in front of them.
+  const before = placeRunObstacles(1234, TRACK, 0)
+  const ids = new Set(before.map((o) => o.id))
 
-  assert.ok(
-    feverClearanceUnits(speed) >= needed,
-    `cleared ${feverClearanceUnits(speed).toFixed(0)} against ${needed.toFixed(0)} units needed`,
-  )
-  console.log(`    cleared ${feverClearanceUnits(speed).toFixed(0)} units against ${needed.toFixed(0)} needed`)
+  simulateExit(before, TRACK * 0.4, true)
+
+  assert.equal(before.length, ids.size, 'the simulation mutated the layout it was handed')
+  for (const obstacle of before) {
+    assert.equal('cleared' in obstacle, false, `an obstacle still carries a \`cleared\` flag`)
+  }
 })
 
 console.log(`${passed} checks passed`)

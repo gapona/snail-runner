@@ -100,7 +100,8 @@ is the same question in both games.
 
 **The runner's own chapters are the fifteen between "## UI Kit" and "## Road Renderer"** — The Run,
 The Snail, The Jump, The Ramp, Obstacles, Draw Order, Pickups, The Handover, Chains, Fever, The
-Slime Trail, The Art, The Difficulty Curve, The End Of A Run, The HUD. Those describe this game.
+Slime Trail, The Art, The Difficulty Curve, The End Of A Run, The HUD. "Four Things From One
+Screenshot" collects a round of player reports across several of them. Those describe this game.
 
 Below them, everything about the road, the billboards, the biomes, the themes, the interface kit,
 the save layer, the platform layer, the build guards and the scroll patterns is **current and
@@ -862,6 +863,112 @@ reports it by visibly dragging every pickup on screen onto the snail's line.
 `pickupTexture` from the pickup's own id, so a lap deals the same fruit twice and a screenshot is
 reproducible. Four *kinds* would have put four rows in the weight table for one decision.
 
+## Four Things From One Screenshot
+
+All four came from a player pointing at frames, and three of them are the same lesson in different
+clothes: **a rule this project already wrote down was applied in one place and not in the next.**
+
+### ⚠ The scenery had no tiebreak, and the near tier made it visible
+
+Reported as "the barriers across the road change which is in front and which is behind as we move".
+
+They are not barriers. The grey slabs spanning the bottom of that frame are `DECOR_TIERS.near` —
+scenery passing close to the camera at 1.9x scale — and `RoadSprites` set their depth with a bare
+`-distanceIndex`. So **every prop on one segment tied**, and equal depth falls back to display-list
+order, which is pool-slot order, which changes as the visible set changes. Measured in the running
+game: a pair of `wet_cattail` both at depth **-29**, spanning most of the road between them.
+
+That is the exact defect `worldDepth.ts` exists for, left unfixed in the one pool it never touched.
+It went unnoticed while scenery was small things along the verge and became unmissable the moment
+the near tier started drawing props two hundred pixels wide.
+
+`sceneryDepth` gives each prop a sub-segment term from **`|offsetX|`**, and that is the physically
+true answer rather than an arbitrary stable one: the camera rides the centreline, so of two props on
+one segment the one further out really is further away. The list index only separates the mirror
+case — two props the same distance either side — and is a hundredth of the lateral term, so it can
+never overrule it.
+
+### ⚠ Two thirds of every lap could not hit the player
+
+Found while writing a fixture for something else, which is the only reason it was found at all.
+
+`RunScene.resolvedOnLap` is keyed by obstacle id and marks an obstacle settled **for the lap** as
+soon as the sweep passes it — correct, because the track is a ring and "already hit" cannot be a
+boolean. But `placeRunObstacles` calls `placeObstacles` once per difficulty band and **every band
+started its id counter at zero**. Two obstacles sharing an id are one obstacle as far as collision
+is concerned: passing the first disarms the second before the player reaches it.
+
+Measured on the shipped placer: **164 obstacles, 56 distinct ids, 108 of them — 66% of the lap —
+could not hit the player at all.**
+
+This is very likely most of what "some obstacles deal no damage" always was. An earlier round
+attributed that report to the `overhead` class not touching a grounded snail, which is true, was
+worth fixing, and is the smaller half. `verify:obstacles` now asserts a lap's ids are unique and
+carries the per-band counter as its control: two bands sharing one collide on 30 ids.
+
+### ⚠ Fever deleted the road instead of waiting for it
+
+Reported as "things on the road disappear earlier than they should while flying under fruit".
+
+The exit ordering cleared every obstacle inside `speed * (FEVER_EASE_MS + REACTION_MS)` — **8352
+units, 42 segments** — so the guard could come off onto empty road. The budget it bought was real
+(1031ms against a 450ms floor). What it cost was that the road is drawn **300** segments ahead, so
+the whole window was in view and the player watched rocks vanish in front of them. It also broke,
+flatly, the rule `lapLayout.ts` states without qualification: nothing already on screen is ever
+rewritten.
+
+The guard **waits** now. A fourth phase, `holding`, keeps it up after the ease until the nearest
+obstacle is more than `REACTION_MS * FEVER_CLEAR_MARGIN` away, with `FEVER_HOLD_MAX_MS` as a ceiling
+so a stretch that never opens cannot leave the player invulnerable. Nothing is removed, and the
+sentence the player can read off the screen is "the Fever held until the road opened", where "some
+of the rocks went away" is not a sentence at all.
+
+- Measured over the same 200 exits: **min 506ms, 5th percentile 549ms, median 1229ms**, against
+  **13ms** for the same simulation with the hold taken out.
+- **⚠ At `FEVER_CLEAR_MARGIN = 1` it measured 455ms against the 450ms floor** — one percent, which a
+  single tick of granularity eats. A floor a rounding can dip below is not a floor, which is the
+  lesson the row placer's own jitter already taught this project once.
+- `Obstacle.cleared` is gone rather than left unset: dead state is worse than no state, and
+  `verify:fever` asserts the field does not exist so it cannot come back quietly.
+
+### The HUD says five things instead of three
+
+Rebuilt against a reference the player supplied. What it is now:
+
+| where | readout |
+|---|---|
+| top left | `SCORE: 12,450`, stroked rather than plated |
+| under it | the distance, in metres and then kilometres |
+| under that | lives, as pips |
+| top right | the fruit gauge, drawn as a **leaf** |
+| under it | coins |
+| bottom left | `SPEED: 2.4x` on a rounded badge |
+
+- **Score and distance are two numbers on purpose.** They used to be one — distance *was* the score
+  — and they answer different questions: how far you got, and how much you were willing to leave
+  your line for. `runScore` is metres plus what the pickups paid, so a player who takes nothing sees
+  the two agree, which is the clearest possible statement of what the pickups are worth. The save
+  and the result screen still keep their record on `distance`; nothing about the economy moved.
+- **`RunState.bonus` is stored and the score is derived.** Distance is already an exact number the
+  fixed step maintains, so a second accumulator for the same quantity would be a second thing that
+  can drift from it. What cannot be derived is what the player picked up.
+- **The speed is a multiple, not a number of units.** 5760 means nothing; `2.4x` is the same fact in
+  the unit the player experiences, and it is what makes a Fever legible as a number as well as as a
+  wash.
+- **⚠ The leaf's fill is a truncated polygon, not a mask.** `setMask(geometryMask)` is a silent
+  no-op under this renderer — it warns and returns without assigning `.mask` — which this codebase
+  has now hit in four separate places. `ui/leafGauge.ts` returns the leaf *shortened*, and is pure
+  so `verify:ui` can assert the gauge fills monotonically, is empty when empty (a hair of fill draws
+  nothing rather than a hairline at the tip), and is **fattest in the middle** — below that the shape
+  would read as nearly full long before it is, which is the wrong direction for a gauge to lie in.
+- **One leaf rather than the two bars it replaces.** The gauge fills with fruit and empties as the
+  Fever runs, and those are the same object at two moments; the pair of bars asked the player to
+  read a colour to find out which question was being answered. The colour still changes, and it is
+  confirmation now rather than the whole signal.
+- **The badge's chrome is drawn in `update`, not in `layout`**, because its width follows its text
+  and the text is not written until there is a run to read. Laying it out to a fixed width is how a
+  badge ends up with its own label hanging off the end of it — which the first version did.
+
 ## ⚠ Nothing Already On Screen Is Ever Rewritten
 
 **The rule, and it is a hard one: a segment's contents may be replaced only while that segment is
@@ -1211,23 +1318,18 @@ Three steps, and none of them is optional:
 1. **the speed comes back first**, over `FEVER_EASE_MS`, while the guard is still up;
 2. **only then does the guard come off** — `feverInvulnerable` covers `active` *and* `easing`, which
    is why `easing` is a phase rather than a flag on `active`;
-3. **and the road ahead is already clear** for `REACTION_MS` past that.
+3. **and the guard then WAITS for the road**, in a fourth phase, until the nearest obstacle is more
+   than `REACTION_MS * FEVER_CLEAR_MARGIN` away.
 
 Measured over the real placer, 200 exits: the first obstacle a player can be hit by arrives at
-**minimum 1031ms, 5th percentile 1105ms, median 1803ms** against a 450ms floor. **The same
-simulation without step 3 gives a minimum of 2ms**, which is the reported class of bug and is the
-negative control the check carries, because a floor that has never rejected anything is not a floor.
+**minimum 506ms, 5th percentile 549ms, median 1229ms** against a 450ms floor. **The same simulation
+without the hold gives a minimum of 13ms**, which is the reported class of bug and is the negative
+control the check carries, because a floor that has never rejected anything is not a floor.
 
-- **Step 3 is a *removal*, not a suppression.** An obstacle inside the window is neither drawn nor
-  collided with (`Obstacle.cleared`), because a hazard that is drawn and declines to hurt anyone is
-  the same lie as one that hits from further away than it looks, read from the other side.
-- **And it happens when the ease *begins*, a second before the guard comes off.** Clearing at the
-  moment of vulnerability would delete rocks from directly in front of a snail the player is looking
-  at; clearing a second earlier does the same removal while the screen is still washed and the wake
-  is still up, so what they see is the Fever sweeping the road.
-- The window is `feverClearanceUnits` at the *current* speed, which is the Fever speed — the run only
-  slows from there, so it is an upper bound rather than an estimate. Erring long costs one row the
-  player did not have to dodge; erring short costs the hit. 8352 units cleared against 7200 needed.
+- **⚠ Step 3 used to DELETE the obstacles instead, and that shipped and was reported.** See "Four
+  Things From One Screenshot": the window is 42 segments against a road drawn 300 ahead, so the
+  player watched rocks vanish in front of them, and it broke the rule that nothing already on screen
+  is ever rewritten. Holding the guard removes nothing.
 
 ### ⚠ Two ways the speed failed to actually come back, both found by the check
 
@@ -2014,7 +2116,8 @@ use, and registered in `platform/lifecycle.ts`'s `OVERLAY_SCENES` for the same r
 
 ## The HUD
 
-`src/run/Hud.ts` — three readouts against the rail shooter's eleven. That game's HUD carried shields,
+`src/run/Hud.ts` — **five readouts, rebuilt against a reference the player supplied; see "Four
+Things From One Screenshot" for what each is and why.** Three, against the rail shooter's eleven. That game's HUD carried shields,
 score, a multiplier, a wave banner, a lock counter, a boss bar and a weapon row, and every one existed
 because the fight had a state the frame could not show. A runner's state is almost all visible: speed
 is the ground moving, position is the snail, what is coming is on screen. What is *not* visible is the

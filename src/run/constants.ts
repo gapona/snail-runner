@@ -192,6 +192,37 @@ export const FEVER_EASE_MS = 1000
 export const FEVER_SETTLE_MS = 400
 
 /**
+ * The longest the guard may wait for the road to open after the ease, in milliseconds.
+ *
+ * **A ceiling, not a duration.** The hold ends the moment the nearest obstacle is more than
+ * `REACTION_MS` away, which on the placer's own row spacing is almost always immediate — the floor
+ * it lays rows against *is* `REACTION_MS`. This exists so that a stretch that somehow never offers a
+ * gap cannot keep the player invulnerable, and it is longer than the tightest row spacing the
+ * difficulty curve can produce so it is the road that ends the Fever rather than the clock.
+ */
+export const FEVER_HOLD_MAX_MS = 1400
+
+/**
+ * How much more than `REACTION_MS` of road the Fever guard waits for before dropping.
+ *
+ * **⚠ At exactly 1 the shipped arrangement measured 455ms against a 450ms floor** — one percent of
+ * margin, which a single tick of granularity can eat: the guard drops on the tick the gap first
+ * clears, and the run travels a little further before the next obstacle is measured. A floor that a
+ * rounding can dip below is not a floor, which is the same lesson the row placer's own jitter
+ * taught. 1.15 costs a fraction of a second of Fever and buys back the margin.
+ */
+export const FEVER_CLEAR_MARGIN = 1.15
+
+/**
+ * How many segments ahead the Fever hold looks for the nearest obstacle.
+ *
+ * The reaction distance at the ordinary ceiling is 8 segments; 40 is five times that, so the scan
+ * is never the thing that decides the road is clear. It stops at the first obstacle it finds, so on
+ * a busy stretch it costs one segment and on an empty one it costs forty.
+ */
+export const NEAREST_OBSTACLE_SCAN = 40
+
+/**
  * How the speed tracks the Fever ceiling, as a fraction of the remaining gap closed per second.
  *
  * **Not `SPEED_ACCEL`, and that is the point.** The ordinary chase has a 5.9-second time constant,
@@ -242,6 +273,19 @@ export const FEVER_MAGNET_RATE = 20
  */
 export const HIT_SPEED_LOSS = MAX_SPEED * 0.1
 export const RUN_LIVES = 3
+
+/**
+ * What each pickup adds to the score, on top of the metre-per-metre the distance itself gives.
+ *
+ * **Priced by what it costs to take, not by what it does.** A coin is on the verge and costs a lane
+ * change; a fruit is the same trip and is also progress toward a Fever, so it is worth the same in
+ * points and more in consequence; a shield is the rarest thing on the road and is worth more than
+ * either. What none of them is worth is enough to make collecting beat surviving — a full lap of
+ * perfect collection is a few hundred points against the thousands a long run banks in distance.
+ */
+export const SCORE_PER_COIN = 10
+export const SCORE_PER_FRUIT = 10
+export const SCORE_PER_SHIELD = 25
 
 /**
  * The fastest the game can ever go, in world units per second.

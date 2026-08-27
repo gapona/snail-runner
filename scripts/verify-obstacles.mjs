@@ -23,6 +23,7 @@ import {
   obstacleRows,
   passableLine,
   placeObstacles,
+  placeRunObstacles,
   provePassable,
 } from '../src/run/obstacles.ts'
 import { difficultyAt, difficultyProgress, DIFFICULTY_TAU_Z } from '../src/run/difficulty.ts'
@@ -700,6 +701,36 @@ check('a shadow lies on the ground, so everything solid paints over it', () => {
   // stands at the verge and a shadow is cast on the road, so the two overlap rarely, and a
   // multiply over a prop's foot is a better outcome than a shadow drawn on top of a solid object.
   assert.ok(WORLD_LAYER.shadow > WORLD_LAYER.scenery, 'the shadow ordering against scenery is no longer the documented one')
+})
+
+check('⚠ every obstacle on a lap has an id of its own', () => {
+  const TRACK = 286800
+
+  // **`RunScene.resolvedOnLap` is keyed by id and marks an obstacle settled FOR THE LAP as soon as
+  // the sweep passes it**, so two obstacles sharing an id are one obstacle as far as collision is
+  // concerned: passing the first disarms the second before the player reaches it.
+  //
+  // `placeRunObstacles` calls `placeObstacles` once per difficulty band and every band used to
+  // start its counter at zero. Measured on the shipped placer before the fix: 164 obstacles, 56
+  // distinct ids, **108 of them — 66% of the lap — could not hit the player at all.** That is very
+  // likely most of what "some obstacles deal no damage" always was.
+  for (const [seed, offset] of [[1234, 0], [1234, TRACK], [77, 0], [9001, TRACK * 3]]) {
+    const list = placeRunObstacles(seed, TRACK, offset)
+    const ids = new Set(list.map((o) => o.id))
+
+    assert.equal(ids.size, list.length, `seed ${seed} lap ${offset / TRACK}: ${list.length} obstacles, ${ids.size} ids`)
+  }
+
+  // Shown to catch it: the per-band call with its counter reset is exactly what shipped.
+  const bandA = placeObstacles({ rng: createRng(1), fromZ: 0, toZ: 60000, density: 0.8, blockingShare: 0.1, overheadShare: 0.1, wallShare: 0.2 })
+  const bandB = placeObstacles({ rng: createRng(2), fromZ: 60000, toZ: 120000, density: 0.8, blockingShare: 0.1, overheadShare: 0.1, wallShare: 0.2 })
+  const naive = new Set([...bandA, ...bandB].map((o) => o.id))
+
+  assert.ok(
+    naive.size < bandA.length + bandB.length,
+    'two bands with no id offset came out unique, so this check would not have caught the defect',
+  )
+  console.log(`    a lap's ids are unique; two bands sharing a counter collide on ${bandA.length + bandB.length - naive.size} of them`)
 })
 
 console.log(`${passed} checks passed`)

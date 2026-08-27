@@ -12,11 +12,13 @@ import {
   billboardAppear,
   billboardFog,
   DECOR_SINK_FRACTION,
+  DECOR_TIERS,
   DRAW_DISTANCE,
   decorFog,
   decorFogCeiling,
 } from './constants'
 import { isDecorArt, type DecorTexture } from './decor'
+import { sceneryDepth } from '../run/worldDepth'
 import { getRoadTheme } from './themes'
 import type { Segment } from './track'
 
@@ -142,7 +144,7 @@ export class RoadSprites {
 
       const clip = clipY[n]
 
-      for (const sprite of segment.sprites) {
+      for (const [spriteIndex, sprite] of segment.sprites.entries()) {
         const texture = this.sizes.get(sprite.key)
 
         if (!texture) continue
@@ -190,7 +192,18 @@ export class RoadSprites {
         // calls. Breaking out early would silently report the pool as exactly big enough.
         if (used >= capacity) continue
 
-        this.place(this.slots[used], sprite.key, rect, visible, n, tint, variation, decorFogCeiling(sprite.tierScale))
+        this.place(
+          this.slots[used],
+          sprite.key,
+          rect,
+          visible,
+          n,
+          tint,
+          variation,
+          decorFogCeiling(sprite.tierScale),
+          sprite.offsetX,
+          spriteIndex,
+        )
         used++
       }
     }
@@ -235,6 +248,9 @@ export class RoadSprites {
     variation: DecorVariation,
     /** Which tier's fog ceiling this prop fades under -- see `decorFogCeiling`. */
     fogCeiling: number,
+    /** How far out it stands and where it fell in its segment's list -- see `sceneryDepth`. */
+    offsetX: number,
+    indexInSegment: number,
   ): void {
     const image = slot.image
 
@@ -261,9 +277,11 @@ export class RoadSprites {
     // The lean, around the base: the origin is bottom-centre, so an angle rotates the prop about
     // the point where it meets the ground rather than about its middle.
     image.setAngle(variation.tilt)
-    // Farther objects get a more negative depth and so are painted first. The ground mesh
-    // sits below all of them at `ROAD_MESH_DEPTH`; there is no depth buffer in play.
-    image.setDepth(-distanceIndex)
+    // Farther objects get a more negative depth and so are painted first. The ground mesh sits
+    // below all of them at `ROAD_MESH_DEPTH`; there is no depth buffer in play — which is why two
+    // props on the SAME segment need a tiebreak of their own, or the pool's own slot order decides
+    // and changes under the player. See `sceneryDepth`.
+    image.setDepth(sceneryDepth(distanceIndex, offsetX, indexInSegment, DECOR_TIERS.far.maxOffset))
     image.setVisible(true)
     // Distance haze, on the same curve the ground fades by. Applied every frame rather than
     // cached per slot: a slot's distance changes on almost every frame anyway, so a dirty check

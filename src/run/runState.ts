@@ -27,6 +27,9 @@ import {
   RUN_LIVES,
   SPEED_ACCEL,
   SPEED_BASE,
+  SCORE_PER_COIN,
+  SCORE_PER_FRUIT,
+  SCORE_PER_SHIELD,
   SPEED_CAP,
 } from './constants'
 import { addFruit as bankFruit, createFeverState, feverSpeedFactor, stepFever, type FeverState } from './fever'
@@ -54,6 +57,15 @@ export interface RunState {
   shields: number
   /** Coins collected this run. Banked into the save when the run ends. */
   coins: number
+  /**
+   * Points from what the run has *collected*, as opposed to how far it has come.
+   *
+   * **Stored rather than integrated, and the score is derived from it** — see `runScore`. Distance
+   * is already an exact number the fixed step maintains, so adding a second accumulator for the
+   * same quantity would be a second thing that can drift from it. What cannot be derived is what
+   * the player picked up, and that is all this holds.
+   */
+  bonus: number
   /**
    * The fruit gauge and the Fever it pays for — see `fever.ts`.
    *
@@ -91,6 +103,15 @@ export interface RunStepOptions {
    * whose size depends on the frame rate.
    */
   drag?: number
+  /**
+   * Whether the road ahead is clear enough to drop the Fever guard. Defaults to `true`.
+   *
+   * **Passed in rather than worked out here**, because "how far is the nearest obstacle" is a
+   * question about the layout and this module has never been told the layout exists — the same
+   * split that keeps `stepRun` testable under Node. See `roadIsClear` and `fever.ts`'s exit
+   * ordering for why the guard waits on the road at all.
+   */
+  roadClear?: boolean
 }
 
 /** A run at the start line, at `SPEED_BASE`, having travelled nothing. */
@@ -104,6 +125,7 @@ export function createRunState(): RunState {
     lives: RUN_LIVES,
     shields: 0,
     coins: 0,
+    bonus: 0,
     fever: createFeverState(),
     over: false,
   }
@@ -142,17 +164,29 @@ export function takeHit(state: RunState): RunState {
 
 /** Grants a one-hit absorber. */
 export function addShield(state: RunState): RunState {
-  return { ...state, shields: state.shields + 1 }
+  return { ...state, shields: state.shields + 1, bonus: state.bonus + SCORE_PER_SHIELD }
 }
 
 /** Banks one fruit, which may start a Fever. All of the rule is in `fever.ts`. */
 export function eatFruit(state: RunState): RunState {
-  return { ...state, fever: bankFruit(state.fever) }
+  return { ...state, fever: bankFruit(state.fever), bonus: state.bonus + SCORE_PER_FRUIT }
+}
+
+/**
+ * What the run is worth: the ground it has covered plus what it picked up along it.
+ *
+ * **Two readouts rather than one, because they answer different questions.** Distance is how far
+ * you got and is the record the save keeps; the score is that plus what you were willing to leave
+ * your line for. A player who never takes a pickup sees the two numbers agree, which is itself the
+ * clearest possible statement of what the pickups are worth.
+ */
+export function runScore(state: RunState): number {
+  return Math.floor(state.distance / 100) + state.bonus
 }
 
 /** Banks one coin. */
 export function earnCoin(state: RunState): RunState {
-  return { ...state, coins: state.coins + 1 }
+  return { ...state, coins: state.coins + 1, bonus: state.bonus + SCORE_PER_COIN }
 }
 
 /**
@@ -192,7 +226,7 @@ export function stepRun(state: RunState, dtMs: number, options: RunStepOptions):
   const remainder = runFixedSteps(state.stepRemainderMs, dtMs, (dtSec) => {
     // Fever is ticked in the same tick it raises the ceiling in, so the last tick of a Fever is
     // still boosted and the first tick after it is not — no off-by-one frame either way.
-    fever = stepFever(fever, dtSec * 1000).state
+    fever = stepFever(fever, dtSec * 1000, options.roadClear ?? true).state
 
     const factor = feverSpeedFactor(fever)
     const cap = base * factor

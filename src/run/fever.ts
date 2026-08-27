@@ -37,6 +37,8 @@ import {
   FEVER_EASE_MS,
   FEVER_FRUIT_TARGET,
   FEVER_MAGNET_Z,
+  FEVER_CLEAR_MARGIN,
+  FEVER_HOLD_MAX_MS,
   FEVER_MS,
   FEVER_SETTLE_MS,
   FEVER_SPEED_FACTOR,
@@ -51,7 +53,7 @@ import {
  * both. Collapsing them would make "how much Fever is left" and "am I safe" the same number, which
  * is the bug this file is mostly about.
  */
-export type FeverPhase = 'idle' | 'active' | 'easing'
+export type FeverPhase = 'idle' | 'active' | 'easing' | 'holding'
 
 export interface FeverState {
   /** Fruit banked toward the next Fever, `0..FEVER_FRUIT_TARGET`. */
@@ -95,10 +97,20 @@ export interface FeverStep {
 }
 
 /** Advances by `dtMs` of **simulated** time. Called from inside `stepRun`'s fixed tick. */
-export function stepFever(state: FeverState, dtMs: number): FeverStep {
+export function stepFever(state: FeverState, dtMs: number, roadClear = true): FeverStep {
   if (state.phase === 'idle') return { state, easingStarted: false, ended: false }
 
   const msRemaining = state.msRemaining - dtMs
+
+  // **The hold ends on the road, not on the clock** — that is the whole of step 2. The clock is
+  // only a ceiling, so a run that somehow never finds a gap still leaves Fever.
+  if (state.phase === 'holding') {
+    if (roadClear || msRemaining <= 0) {
+      return { state: { ...state, phase: 'idle', msRemaining: 0 }, easingStarted: false, ended: true }
+    }
+
+    return { state: { ...state, msRemaining }, easingStarted: false, ended: false }
+  }
 
   if (msRemaining > 0) return { state: { ...state, msRemaining }, easingStarted: false, ended: false }
 
@@ -112,7 +124,21 @@ export function stepFever(state: FeverState, dtMs: number): FeverStep {
     }
   }
 
-  return { state: { ...state, phase: 'idle', msRemaining: 0 }, easingStarted: false, ended: true }
+  return {
+    state: { ...state, phase: 'holding', msRemaining: FEVER_HOLD_MAX_MS },
+    easingStarted: false,
+    ended: false,
+  }
+}
+
+/**
+ * Whether the road ahead is clear enough to drop the guard, given the nearest obstacle.
+ *
+ * `REACTION_MS` at the *current* speed, which is the ordinary ceiling by the time the hold begins —
+ * the ease has already brought the run back. `Infinity` for an empty road.
+ */
+export function roadIsClear(nearestAheadUnits: number, speed: number): boolean {
+  return nearestAheadUnits >= (speed * REACTION_MS * FEVER_CLEAR_MARGIN) / 1000
 }
 
 /**
@@ -127,7 +153,7 @@ export function stepFever(state: FeverState, dtMs: number): FeverStep {
  * ramp leaves a fixed error above it.
  */
 export function feverSpeedFactor(state: FeverState): number {
-  if (state.phase === 'idle') return 1
+  if (state.phase === 'idle' || state.phase === 'holding') return 1
   if (state.phase === 'active') return FEVER_SPEED_FACTOR
 
   const ramp = Math.max(1, FEVER_EASE_MS - FEVER_SETTLE_MS)
@@ -146,18 +172,7 @@ export function feverMagnet(state: FeverState): boolean {
   return state.phase !== 'idle'
 }
 
-/**
- * How much of the road ahead has to be clear when the ease begins, in world units.
- *
- * Everything the run covers between here and the guard coming off, plus a full `REACTION_MS` past
- * it. `speedNow` is the Fever speed and the speed only falls from here, so the product is an upper
- * bound on the distance rather than an estimate of it — which is the direction an error has to
- * fall in, since the cost of clearing slightly too much is one row the player did not have to
- * dodge and the cost of clearing too little is the hit this whole file exists to prevent.
- */
-export function feverClearanceUnits(speedNow: number): number {
-  return (speedNow * (FEVER_EASE_MS + REACTION_MS)) / 1000
-}
+
 
 /**
  * How hard a pickup `aheadZ` in front is pulled toward the snail's line, `0..1`.

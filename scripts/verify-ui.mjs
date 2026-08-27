@@ -9,6 +9,7 @@
 // browser; the two hit-area traps every widget in it has to handle are documented in CLAUDE.md
 // "Responsive Layout" and are properties of Phaser's `Container`, not of this arithmetic.
 import assert from 'node:assert/strict'
+import { leafFill, leafOutline } from '../src/ui/leafGauge.ts'
 import { clampVolume, DEFAULT_MUSIC_VOLUME, DEFAULT_SOUND_VOLUME, gainFor, isSilent } from '../src/audio/volume.ts'
 import { isTap, TAP_SLOP_PX } from '../src/ui/gesture.ts'
 import {
@@ -321,6 +322,58 @@ check('the slop scales with the viewport, so a phone tap is not harder', () => {
 
   assert.ok(isTap(press, point, 1))
   assert.ok(!isTap(press, point, 0.8), 'the narrow-screen slop did not shrink with the scale')
+})
+
+check('the leaf gauge fills monotonically and is empty when it is empty', () => {
+  // The one thing a gauge may not do is read as full before it is, or as non-empty when it is —
+  // both of which fall out of the shape rather than out of the drawing, which is why the shape is
+  // its own module.
+  const W = 200
+  const H = 84
+  let previous = -1
+
+  for (let i = 0; i <= 50; i++) {
+    const fill = i / 50
+    const points = leafFill(W, H, fill)
+    const covered = points.length === 0 ? 0 : Math.max(...points.map((p) => p.x))
+
+    assert.ok(covered >= previous - 1e-9, `the fill went backwards at ${fill}`)
+    previous = covered
+    for (const point of points) {
+      assert.ok(point.x <= W + 1e-9 && Math.abs(point.y) <= H / 2 + 1e-9, 'the fill left the leaf')
+    }
+  }
+
+  assert.equal(leafFill(W, H, 0).length, 0, 'an empty gauge drew something')
+  // A hair of fill is nothing rather than a stray hairline at the tip, which reads as a gauge that
+  // is never quite empty.
+  assert.equal(leafFill(W, H, 0.002).length, 0)
+
+  const full = leafFill(W, H, 1)
+  const outline = leafOutline(W, H)
+
+  assert.ok(Math.abs(Math.max(...full.map((p) => p.x)) - W) < 1e-9, 'a full gauge does not reach the tip')
+  assert.ok(outline.length > 8 && Math.abs(outline[0].y) < 1e-9, 'the leaf does not start at a point')
+  console.log(`    a ${W}x${H} leaf: ${outline.length} outline points, widest ${Math.max(...outline.map((p) => Math.abs(p.y))).toFixed(1)}px either side of the rib`)
+})
+
+check('the leaf is fattest in the middle, so the fill is not misleading at either end', () => {
+  // Below 1 the shape fattens toward the tips and the gauge reads nearly full long before it is,
+  // which is the wrong direction for a gauge to lie in. Measured as where the widest point falls.
+  const W = 200
+  const H = 84
+  const outline = leafOutline(W, H, 200).slice(0, 201)
+  let widest = 0
+  let at = 0
+
+  for (const point of outline) {
+    if (Math.abs(point.y) > widest) {
+      widest = Math.abs(point.y)
+      at = point.x / W
+    }
+  }
+
+  assert.ok(Math.abs(at - 0.5) < 0.06, `the leaf is widest at ${(at * 100).toFixed(0)}% along it`)
 })
 
 console.log(`${passed} checks passed`)

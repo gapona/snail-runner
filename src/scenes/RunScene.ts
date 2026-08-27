@@ -44,7 +44,7 @@ import { RampSprites } from '../run/RampSprites'
 import { Dust } from '../run/Dust'
 import { LapLayout, type LapContent } from '../run/lapLayout'
 import {
-  feverClearanceUnits,
+  roadIsClear,
   feverInvulnerable,
   feverMagnet,
   magnetPull,
@@ -61,6 +61,7 @@ import {
   FEVER_MAGNET_RATE,
   FEVER_MAGNET_Z,
   HIT_INVULNERABLE_Z,
+  NEAREST_OBSTACLE_SCAN,
   JUMP_LAUNCH_V,
   KEYBOARD_POINT_SPEED,
   LANDING_HITSTOP_MS,
@@ -370,9 +371,6 @@ export class RunScene extends Phaser.Scene {
       if (!here) continue
 
       for (const obstacle of here) {
-        // Swept off the road by a Fever landing — it is not drawn either, so colliding with it
-        // would be colliding with nothing the player can see. See `Obstacle.cleared`.
-        if (obstacle.cleared) continue
         if (this.resolvedOnLap.get(obstacle.id) === lap) continue
 
         // Not there yet.
@@ -471,7 +469,7 @@ export class RunScene extends Phaser.Scene {
    * screen is still washed and the wake is still up, so what the player sees is the Fever sweeping
    * the road rather than the road forgetting itself.
    */
-  private onFeverPhase(before: FeverPhase, after: FeverPhase, playerZ: number): void {
+  private onFeverPhase(before: FeverPhase, after: FeverPhase): void {
     if (before === after) return
 
     if (before === 'idle') {
@@ -482,26 +480,37 @@ export class RunScene extends Phaser.Scene {
       return
     }
 
-    if (before === 'active' && after === 'easing') this.clearRoadAhead(playerZ)
   }
 
   /**
-   * Sweeps every obstacle inside the landing window off the road.
+   * How far ahead the nearest obstacle is, in world units. `Infinity` for an empty road.
    *
-   * The window is `feverClearanceUnits` at the *current* speed, which is the Fever speed — the run
-   * only slows from here, so the product is an upper bound on how far it actually travels rather
-   * than a guess at it. Erring long costs one row the player did not have to dodge; erring short
-   * costs the hit this whole arrangement exists to prevent, so the bound goes that way on purpose.
-   *
-   * Walks the lap's whole list rather than the segment index: it runs once per Fever, about twice a
-   * minute, and the window can straddle the seam — which is the case a segment walk gets wrong.
+   * Walks forward from the snail by segment, the same index everything else uses, and stops at the
+   * first one it finds — so the cost is how far the gap is rather than how long the track is.
+   * Bounded at `NEAREST_OBSTACLE_SCAN` segments because nothing needs a bigger answer than "further
+   * than the reaction distance".
    */
-  private clearRoadAhead(playerZ: number): void {
-    const units = feverClearanceUnits(this.run.speed)
+  private nearestObstacleAhead(playerZ: number): number {
+    const segmentCount = this.world.track.length
+    const first = Math.floor(playerZ / SEGMENT_LENGTH)
 
-    for (const obstacle of this.lap.liveObstacles()) {
-      if (wrapZ(obstacle.z - playerZ, this.world.trackLength) <= units) obstacle.cleared = true
+    for (let step = 0; step < NEAREST_OBSTACLE_SCAN; step++) {
+      const here = this.lap.obstacles.get((((first + step) % segmentCount) + segmentCount) % segmentCount)
+
+      if (!here) continue
+
+      let nearest = Infinity
+
+      for (const obstacle of here) {
+        const ahead = wrapZ(obstacle.z - playerZ, this.world.trackLength)
+
+        if (ahead >= 0) nearest = Math.min(nearest, ahead)
+      }
+
+      if (Number.isFinite(nearest)) return nearest
     }
+
+    return Infinity
   }
 
   /**
@@ -854,8 +863,12 @@ export class RunScene extends Phaser.Scene {
     this.run = stepRun(this.run, delta, {
       trackLength: this.world.trackLength,
       drag: isOffRoad(this.player.offsetX) ? OFFROAD_DRAG : 0,
+      // **The Fever guard waits on the road rather than on a clock.** Cheap to ask every frame —
+      // it walks forward only as far as the reaction distance and stops at the first thing it
+      // finds — and it is only read at all while the run is in the `holding` phase.
+      roadClear: roadIsClear(this.nearestObstacleAhead(playerZ), this.run.speed),
     })
-    this.onFeverPhase(feverWas, this.run.fever.phase, playerZ)
+    this.onFeverPhase(feverWas, this.run.fever.phase)
     // **The magnet runs after the step and before the draw**, so a pickup is pulled and then drawn
     // where it was pulled to. Doing it after the draw would put the sprite one frame behind the
     // position the collection test is using, which at Fever speed is a whole blob's width.
