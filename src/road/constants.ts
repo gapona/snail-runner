@@ -513,6 +513,138 @@ export const BIOME_SKYLINE_WEIGHT = 0.15
 /** Size of the strip `scripts/build-sprites.py` composites. Width matters — see `layoutSkyline`. */
 export const SKYLINE_TEXTURE_SIZE = { width: 3072, height: 384 } as const
 
+/**
+ * Where the sun sits and how big it is drawn, as fractions of the frame.
+ *
+ * **Pinned to the frame, and that is a property of the projection rather than a simplification.**
+ * `projectInto` puts a point at `screenWidth / 2 + scale * (x - cameraX) * screenWidth / 2` and
+ * `scale` goes to zero with distance, so **every** infinitely distant point projects to the exact
+ * centre of the frame at every camera position. This projection has no way to represent a
+ * *direction*, only a position — so an object at infinity cannot drift when the road bends, and
+ * its place in the frame cannot be derived from an azimuth. `x` and `y` are a composition
+ * decision and are written as one.
+ *
+ * **Sized off the frame's HEIGHT, never its width**, because the sky is a share of the height:
+ * measured off the width this would be a pinhead on an ultrawide frame and half the sky on a
+ * portrait phone.
+ *
+ * `size` covers the whole drawn image — disc *and* rays — so growing it grows both together.
+ * Placed off-centre and high for what is around it: the distance readout is centred at the top,
+ * the shield pips sit top-left, and the mountain range tops out around 0.32 of the frame.
+ */
+export const SUN = { x: 0.76, y: 0.2, size: 0.3 } as const
+
+/**
+ * Smallest gap between the sun and the frame's edge, as a fraction of the frame's width.
+ *
+ * **⚠ `SUN.x` is a fraction of the WIDTH and `SUN.size` a fraction of the HEIGHT, and on a
+ * portrait frame those two diverge far enough to push the sun off the screen.** At 390x844 the
+ * drawn image is 253px against a 390px frame, so a centre at `0.76` of the width puts its right
+ * edge at 423 — thirty-three pixels outside. It fit before only because the sun was smaller: the
+ * defect arrived the moment it was grown, and no aspect anybody had open would have shown it.
+ *
+ * The fix is a clamp rather than a smaller sun or an `x` moved inwards for everyone, because both
+ * of those pay for the narrowest frame on every other one. Sizing stays off the height — that
+ * rule is right, and measured off the width this would be a pinhead on an ultrawide frame.
+ */
+export const SUN_EDGE_MARGIN = 0.02
+
+/**
+ * Where the sun's centre actually goes, with the frame's own width taken into account.
+ *
+ * Pure and exported so `verify:road` can sweep it at every supported aspect rather than assert
+ * against the raw fraction, which is the number that is wrong.
+ */
+export function sunCenterX(width: number, height: number): number {
+  const halfDrawn = (height * SUN.size) / 2
+  const margin = width * SUN_EDGE_MARGIN
+
+  return Math.min(Math.max(width * SUN.x, halfDrawn + margin), width - halfDrawn - margin)
+}
+
+/** Diameter of the generated sun texture, in pixels. */
+export const SUN_TEXTURE_SIZE = 320
+
+/**
+ * Where the disc ends and the halo begins, as a fraction of the texture's radius.
+ *
+ * **Two stops close together rather than one long ramp**, because a sun is an object with an edge
+ * and a single falloff draws a fuzzy ball with none. The halo that follows is the long tail, and
+ * it is what stops the edge reading as a sticker cut out of the sky.
+ *
+ * The gap between them is what "cartoon" actually means here, mechanically: a wide gap is an
+ * airbrushed glow, a narrow one is a drawn shape. Tightened from `0.30..0.37` to `0.32..0.35`, so
+ * the edge is a line rather than a fade while the halo behind it is untouched.
+ */
+export const SUN_DISC_STOP = 0.32
+export const SUN_EDGE_STOP = 0.35
+
+/**
+ * How far the core is pushed towards white, as `0..1`.
+ *
+ * A sun's disc is white-hot and its *halo* carries the colour — drawn in one flat tint the whole
+ * thing reads as a pale sticker, which is what the first version was. The core is still derived
+ * from the theme rather than hardcoded, so a cool night glow still gives a cool moon.
+ *
+ * **Whitening moves a colour towards white, i.e. towards zero chroma**, so raising it can only
+ * move the sun *away* from the reserved threat band, never into it. That is why this number is
+ * free to be tuned by eye while the colour it is applied to is not.
+ *
+ * **⚠ Two numbers, because one of them made the disc white and a white disc is not a cartoon
+ * sun.** Pushed to 0.72 everywhere the sun came out bright and colourless — brighter, which was
+ * the ask, and read as a bare bulb: the rays were the only warm thing left in the object. The hot
+ * centre keeps the high number and the disc's own rim keeps most of the theme's colour, so the
+ * disc is yellow with a white core rather than uniformly pale. That gradient across the disc is
+ * also what a drawn sun has and a photographed one does not.
+ */
+export const SUN_CORE_WHITEN = 0.84
+export const SUN_RIM_WHITEN = 0.34
+
+/** Where the hot centre gives way to the disc's own colour, as a fraction of the texture radius. */
+export const SUN_CORE_STOP = 0.14
+
+/**
+ * The spikes around the disc.
+ *
+ * **Rays are what make this read as drawn rather than as a light source**, and they are the one
+ * part of the sun that is a shape rather than a gradient. Everything about them is stated as a
+ * fraction of the texture radius or as an angle, so the whole thing scales with `SUN.size` and
+ * with the viewport without a second set of numbers.
+ *
+ * - `count` is **even on purpose**: the lengths alternate, so an odd count would put two long
+ *   rays next to each other where the ring closes. `verify:road` asserts it.
+ * - `innerRadius` sits **inside `SUN_DISC_STOP`**, so every ray's root is covered by the disc
+ *   drawn over it. A ray that started outside the disc would show its own base as a hard edge
+ *   floating just off the sun, which reads as a crack rather than as light.
+ * - `tipTaper` is the tip's width as a fraction of the base's. Not zero: a needle-sharp ray reads
+ *   as a lens flare, and a blunt one reads as drawn. This is the single number that most decides
+ *   whether the sun looks like a child's drawing or like a photograph artefact.
+ * - `halfAngle` has to leave a real gap at `count` rays or the spikes merge into a collar. The
+ *   check compares it against the spacing rather than trusting the pair.
+ */
+export const SUN_RAYS = {
+  count: 12,
+  halfAngle: (9.5 * Math.PI) / 180,
+  innerRadius: 0.24,
+  longLength: 0.9,
+  shortLength: 0.62,
+  tipTaper: 0.46,
+  /** Alpha at the root. The gradient along the ray takes it to zero at the tip. */
+  alpha: 0.9,
+} as const
+
+/** One ray's angle and length, so the geometry can be checked without a canvas. */
+export function sunRay(index: number): { angle: number; length: number } {
+  const wrapped = ((index % SUN_RAYS.count) + SUN_RAYS.count) % SUN_RAYS.count
+
+  return {
+    angle: (wrapped / SUN_RAYS.count) * Math.PI * 2,
+    // Alternating, which is the whole reason `count` must be even.
+    length: wrapped % 2 === 0 ? SUN_RAYS.longLength : SUN_RAYS.shortLength,
+  }
+}
+
+
 export const BILLBOARD_FADE_IN_FRACTION = 0.28
 
 /**

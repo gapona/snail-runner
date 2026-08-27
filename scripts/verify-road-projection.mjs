@@ -62,6 +62,14 @@ const MIN_HOSTILE_HUE_GAP = 30
 import { quadWriteAction } from '../src/road/meshGuard.ts'
 import { BIOMES, BIOME_IDS, biomeById, biomeForSegment, biomeIndexForSegment, biomeIndex, biomeRunSegments, MIN_BIOME_RUN_SEGMENTS, groundPairForTheme, MIN_GROUND_CONTRAST, GROUND_ALTERNATION, setBiomeLayout, skylineBiomeTint, SKYLINE_SEAM_BLEND_SEGMENTS, GROUND_SHADES_PER_BIOME, GROUND_SHADE_SPREAD, groundShadesForTheme, groundShadeFor, GROUND_PATCH_SEGMENTS, GROUND_PATCH_MIN_SEGMENTS, GROUND_PATCH_MAX_SEGMENTS } from '../src/road/biomes.ts'
 import {
+  SUN,
+  sunCenterX,
+  SUN_CORE_STOP,
+  SUN_CORE_WHITEN,
+  SUN_RIM_WHITEN,
+  SUN_DISC_STOP,
+  SUN_RAYS,
+  sunRay,
   BIOME_SKYLINE_WEIGHT,
   CAMERA_DEPTH,
   CAMERA_HEIGHT,
@@ -2834,6 +2842,98 @@ check('the marks reach across the verge but still crowd the band the player read
 
   console.log(
     `    ${offsets.length} marks: ${(near * 100).toFixed(0)}% inside the old 2.2 band, ${(wide * 100).toFixed(0)}% past 6, widest ${Math.max(...offsets).toFixed(1)} of ${DECAL_MAX_OFFSET}`,
+  )
+})
+
+
+check('the sun is a drawn object: even rays, roots under the disc, nothing outside the texture', () => {
+  // Every one of these is a way the sun stops reading as drawn and starts reading as an artefact,
+  // and none of them is visible from the constants without doing the arithmetic.
+  assert.equal(SUN_RAYS.count % 2, 0, `${SUN_RAYS.count} rays cannot alternate: the ring closes with two long ones adjacent`)
+
+  const spacing = (Math.PI * 2) / SUN_RAYS.count
+  const angles = []
+
+  for (let i = 0; i < SUN_RAYS.count; i++) {
+    const ray = sunRay(i)
+
+    angles.push(ray.angle)
+    assert.ok(
+      ray.length === SUN_RAYS.longLength || ray.length === SUN_RAYS.shortLength,
+      `ray ${i} is ${ray.length} long, which is neither of the two lengths`,
+    )
+    assert.notEqual(ray.length, sunRay(i + 1).length, `rays ${i} and ${i + 1} are the same length`)
+    // Wrapping is what makes "alternating" a property of the ring rather than of the list.
+    assert.equal(sunRay(i).length, sunRay(i + SUN_RAYS.count).length, `ray ${i} does not wrap`)
+  }
+
+  for (let i = 1; i < angles.length; i++) {
+    assert.ok(Math.abs(angles[i] - angles[i - 1] - spacing) < 1e-12, `rays ${i - 1} and ${i} are not evenly spaced`)
+  }
+
+  // A ray whose root sits outside the disc shows its own base as a hard edge floating off the sun.
+  assert.ok(
+    SUN_RAYS.innerRadius < SUN_DISC_STOP,
+    `rays start at ${SUN_RAYS.innerRadius} but the disc ends at ${SUN_DISC_STOP}, so every root is drawn in open sky`,
+  )
+  // And one that reaches past the texture is cropped square by the canvas.
+  assert.ok(SUN_RAYS.longLength <= 1, `the longest ray reaches ${SUN_RAYS.longLength} of the texture radius and is cut off by its edge`)
+
+  // The spikes have to stay separate or they merge into a collar around the disc.
+  const gap = spacing - SUN_RAYS.halfAngle * 2
+
+  assert.ok(gap > SUN_RAYS.halfAngle, `only ${((gap * 180) / Math.PI).toFixed(1)} degrees between rays ${((SUN_RAYS.halfAngle * 360) / Math.PI).toFixed(1)} degrees wide`)
+
+  // Shown to reject the arrangement it is written against: twice the rays at the same width close
+  // the gap completely.
+  assert.ok(
+    (Math.PI * 2) / (SUN_RAYS.count * 2) - SUN_RAYS.halfAngle * 2 <= SUN_RAYS.halfAngle,
+    'doubling the ray count is not being rejected, so the spacing rule is measuring nothing',
+  )
+
+  // The hot centre has to end inside the disc, or "core" and "disc" are the same stop and the
+  // gradient across the disc -- the thing that makes it drawn rather than photographed -- is gone.
+  assert.ok(
+    SUN_CORE_STOP < SUN_DISC_STOP,
+    `the hot centre reaches ${SUN_CORE_STOP} and the disc ends at ${SUN_DISC_STOP}, so the disc has no colour of its own`,
+  )
+  assert.ok(SUN_CORE_WHITEN > SUN_RIM_WHITEN, 'the disc is not hotter in the middle than at its rim')
+
+  // A blunt tip is what separates a drawn ray from a lens flare; a needle is the failure.
+  assert.ok(SUN_RAYS.tipTaper > 0.15, `a tip ${SUN_RAYS.tipTaper} of the base reads as a flare, not as a drawing`)
+
+  console.log(
+    `    ${SUN_RAYS.count} rays, ${((SUN_RAYS.halfAngle * 360) / Math.PI).toFixed(0)} degrees wide with ${((gap * 180) / Math.PI).toFixed(0)} between; ${SUN_RAYS.longLength}/${SUN_RAYS.shortLength} long from a disc ending at ${SUN_DISC_STOP}`,
+  )
+})
+
+check('the sun stays inside the frame at every supported aspect, and out of the HUD rows', () => {
+  // Sized off the frame's HEIGHT: measured off the width it is a pinhead on an ultrawide frame
+  // and half the sky on a portrait phone. This check is what makes that claim testable, since the
+  // failure only shows at an aspect nobody happened to open.
+  const viewports = [[1920, 1080], [1568, 772], [3440, 1440], [844, 390], [390, 844]]
+  let worstTop = 1
+  let offFrameWithoutClamp = 0
+
+  for (const [width, height] of viewports) {
+    const drawn = height * SUN.size
+    const left = sunCenterX(width, height) - drawn / 2
+    const right = sunCenterX(width, height) + drawn / 2
+    const top = height * SUN.y - drawn / 2
+    const bottom = height * SUN.y + drawn / 2
+
+    assert.ok(left > 0 && right < width, `at ${width}x${height} the sun runs from ${left.toFixed(0)} to ${right.toFixed(0)}`)
+    // Shown to bite: the unclamped fraction is what put the sun off a portrait frame's edge.
+    if (width * SUN.x + drawn / 2 > width) offFrameWithoutClamp += 1
+    assert.ok(top > 0, `at ${width}x${height} the sun's top edge is at ${top.toFixed(0)}`)
+    // The horizon is where the ground starts; a sun crossing it is a sun behind the road.
+    assert.ok(bottom < height * HORIZON_Y, `at ${width}x${height} the sun reaches ${bottom.toFixed(0)} against a horizon at ${(height * HORIZON_Y).toFixed(0)}`)
+    worstTop = Math.min(worstTop, top / height)
+  }
+
+  assert.ok(offFrameWithoutClamp > 0, 'no supported aspect needs the clamp, so `sunCenterX` is untested')
+  console.log(
+    `    sun spans ${(SUN.size * 100).toFixed(0)}% of frame height; ${offFrameWithoutClamp} of ${viewports.length} aspects would put it off the edge unclamped; closest its top edge comes is ${(worstTop * 100).toFixed(1)}%`,
   )
 })
 

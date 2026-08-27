@@ -1,6 +1,21 @@
 import * as Phaser from 'phaser'
 import { createRng } from '../race/rng'
-import { BIOME_SKYLINE_WEIGHT, HORIZON_Y, ROAD_MESH_DEPTH, SKYLINE_LAYER } from './constants'
+import {
+  BIOME_SKYLINE_WEIGHT,
+  HORIZON_Y,
+  ROAD_MESH_DEPTH,
+  SKYLINE_LAYER,
+  SUN,
+  SUN_CORE_STOP,
+  SUN_CORE_WHITEN,
+  SUN_RIM_WHITEN,
+  SUN_DISC_STOP,
+  SUN_EDGE_STOP,
+  SUN_RAYS,
+  SUN_TEXTURE_SIZE,
+  sunCenterX,
+  sunRay,
+} from './constants'
 import { blendColor, getRoadTheme, getRoadThemeId } from './themes'
 
 /** Depths: sky behind the ground, glow and vignette in front of it but behind everything else. */
@@ -31,7 +46,6 @@ const LAYER_PARALLAX = [0.04, 0.12, 0.26] as const
  * Drawn between sky layer 0 and layer 1, so the haze bands pass in *front* of it. A sun with the
  * haze behind it is a lamp stuck on the glass.
  */
-const SUN = { x: 0.76, y: 0.19, size: 0.2 } as const
 
 /** Texture key for the built mountain strip, loaded by `Preloader` from `assets/sky/skyline.png`. */
 export const SKYLINE_TEXTURE = 'skyline'
@@ -196,7 +210,10 @@ export class Backdrop {
     // the renderer a few frames later.
     this.sun.setTexture(sunTextureKey())
     this.sun.setDisplaySize(height * SUN.size, height * SUN.size)
-    this.sun.setPosition(width * SUN.x, height * SUN.y)
+    // Clamped rather than placed at the bare fraction: `SUN.x` is a share of the width and
+    // `SUN.size` a share of the height, and on a portrait frame those diverge enough to push
+    // the sun off the edge. See `sunCenterX`.
+    this.sun.setPosition(sunCenterX(width, height), height * SUN.y)
 
     this.layoutSkyline()
     this.drawGlow()
@@ -509,27 +526,11 @@ export function ensureVignetteTexture(scene: Phaser.Scene): void {
   canvasTexture.refresh()
 }
 
-/** Diameter of the generated sun texture, in pixels. */
-const SUN_TEXTURE_SIZE = 256
 
-/**
- * Where the disc ends and the halo begins, as a fraction of the texture's radius.
- *
- * **Two stops close together rather than one long ramp**, because a sun is an object with an edge
- * and a single falloff draws a fuzzy ball with none. The halo that follows is the long tail, and it
- * is what stops the edge reading as a sticker cut out of the sky.
- */
-const SUN_DISC_STOP = 0.3
-const SUN_EDGE_STOP = 0.37
 
-/**
- * How far the core is pushed towards white, as `0..1`.
- *
- * A sun's disc is white-hot and its *halo* carries the colour — drawn in one flat tint the whole
- * thing reads as a pale sticker, which is what the first version was. The core is still derived
- * from the theme rather than hardcoded, so a cool night glow still gives a cool moon.
- */
-const SUN_CORE_WHITEN = 0.55
+
+
+
 
 function sunTextureKey(): string {
   return `sun-${getRoadThemeId()}`
@@ -559,20 +560,85 @@ export function ensureSunTexture(scene: Phaser.Scene): void {
   const rgb = `${(colour >> 16) & 0xff}, ${(colour >> 8) & 0xff}, ${colour & 0xff}`
   const gradient = context.createRadialGradient(half, half, 0, half, half, half)
 
-  const whiten = (channel: number) => Math.round(channel + (255 - channel) * SUN_CORE_WHITEN)
-  const core =
-    `${whiten((colour >> 16) & 0xff)}, ${whiten((colour >> 8) & 0xff)}, ${whiten(colour & 0xff)}`
+  const whiten = (channel: number, amount: number) => Math.round(channel + (255 - channel) * amount)
+  const towardsWhite = (amount: number) =>
+    `${whiten((colour >> 16) & 0xff, amount)}, ${whiten((colour >> 8) & 0xff, amount)}, ${whiten(colour & 0xff, amount)}`
+  const core = towardsWhite(SUN_CORE_WHITEN)
+  const rim = towardsWhite(SUN_RIM_WHITEN)
 
+  // Hot in the middle, the theme's own colour by the disc's edge. One flat tint across the whole
+  // disc is a sticker; a single long falloff is a fuzzy ball with no edge at all. See the two
+  // whiten constants for why this is two numbers rather than one.
   gradient.addColorStop(0, `rgba(${core}, 1)`)
-  gradient.addColorStop(SUN_DISC_STOP, `rgba(${core}, 1)`)
+  gradient.addColorStop(SUN_CORE_STOP, `rgba(${core}, 1)`)
+  gradient.addColorStop(SUN_DISC_STOP, `rgba(${rim}, 1)`)
+  // Tighter than it was: a broad halo washes over the rays' roots and takes the spikes back off
+  // the object they belong to. It is still a long tail, just one that ends before they do.
   gradient.addColorStop(SUN_EDGE_STOP, `rgba(${rgb}, 0.34)`)
-  gradient.addColorStop(0.5, `rgba(${rgb}, 0.1)`)
+  gradient.addColorStop(0.46, `rgba(${rgb}, 0.09)`)
   gradient.addColorStop(1, `rgba(${rgb}, 0)`)
 
   context.clearRect(0, 0, size, size)
+
+  // **Rays first, disc second, and the order is the whole reason the roots are invisible.**
+  // Every ray starts inside `SUN_DISC_STOP`, so the opaque core painted over them covers where
+  // they begin; drawn the other way round each spike would show its own base as a hard edge
+  // sitting just off the sun, which reads as a crack rather than as light.
+  drawSunRays(context, half, rgb)
+
   context.fillStyle = gradient
   context.fillRect(0, 0, size, size)
   canvasTexture.refresh()
+}
+
+/**
+ * The spikes, drawn as tapering trapezoids fading to nothing at the tip.
+ *
+ * **A trapezoid rather than a triangle, and that is what `SUN_RAYS.tipTaper` is for.** A ray that
+ * comes to a point reads as a lens flare — an artefact of a camera, which this world does not
+ * have — while a blunt one reads as something drawn. The alpha ramp along its length is what
+ * keeps the blunt end from looking cut off.
+ *
+ * Each ray is drawn in the rotated frame rather than by computing four corners in the texture's,
+ * so the geometry here is two radii and a half-angle and cannot disagree with `sunRay`.
+ */
+function drawSunRays(context: CanvasRenderingContext2D, half: number, rgb: string): void {
+  const inner = SUN_RAYS.innerRadius * half
+
+  context.save()
+  context.translate(half, half)
+
+  for (let index = 0; index < SUN_RAYS.count; index++) {
+    const ray = sunRay(index)
+    const outer = ray.length * half
+    const baseHalf = Math.tan(SUN_RAYS.halfAngle) * inner
+    const tipHalf = baseHalf * SUN_RAYS.tipTaper + (outer - inner) * 0.012
+
+    context.save()
+    context.rotate(ray.angle)
+
+    const along = context.createLinearGradient(inner, 0, outer, 0)
+
+    // **Held near full for most of the ray, then dropped.** A gradient that falls away from the
+    // root makes every spike taper to nothing whatever `tipTaper` says about its width, which is
+    // the starburst the trapezoid was chosen to avoid: the shape has to be visible for the shape
+    // to be doing any work.
+    along.addColorStop(0, `rgba(${rgb}, ${SUN_RAYS.alpha})`)
+    along.addColorStop(0.72, `rgba(${rgb}, ${(SUN_RAYS.alpha * 0.72).toFixed(3)})`)
+    along.addColorStop(1, `rgba(${rgb}, 0)`)
+
+    context.fillStyle = along
+    context.beginPath()
+    context.moveTo(inner, -baseHalf)
+    context.lineTo(outer, -tipHalf)
+    context.lineTo(outer, tipHalf)
+    context.lineTo(inner, baseHalf)
+    context.closePath()
+    context.fill()
+    context.restore()
+  }
+
+  context.restore()
 }
 
 /** Removes the sun texture of `themeId`, alongside its sky set. */

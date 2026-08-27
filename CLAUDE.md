@@ -1340,11 +1340,46 @@ holding a destroyed texture. **Zero bytes**, and verified live across all seven 
 - **Two gradient stops close together, not one long ramp.** A sun is an object with an edge and a
   single falloff draws a fuzzy ball with none; the first version was exactly that, a pale dot. The
   core is also pushed towards white (`SUN_CORE_WHITEN`) because a sun's disc is white-hot and its
-  *halo* carries the colour — flat-tinted, the whole thing reads as a sticker.
+  *halo* carries the colour — flat-tinted, the whole thing reads as a sticker. The gap between the
+  two stops is what "cartoon" means here mechanically: wide is an airbrushed glow, narrow is a
+  drawn shape, and it was tightened to 0.32..0.35 for exactly that.
 - Sized off the frame's **height**, because the sky is a share of the height: measured off the width
   it would be a pinhead on an ultrawide frame and half the sky on a portrait phone. Placed off-centre
   and high for what is around it — the distance readout is centred at the top, the shield pips sit
   top-left, and the range tops out around 0.32 of the frame.
+- **It has rays now, and they are the one part of it that is a shape rather than a gradient.**
+  `SUN_RAYS`: twelve spikes, alternating long and short, drawn as tapering trapezoids under the
+  disc. Four things about them are arithmetic rather than taste, and `verify:road` holds each:
+  - **The count is even.** The lengths alternate, so an odd count puts two long rays next to each
+    other where the ring closes.
+  - **Every root starts inside `SUN_DISC_STOP`** and the disc is painted over them. A ray that
+    began outside would show its own base as a hard edge floating just off the sun, which reads as
+    a crack rather than as light.
+  - **`tipTaper` is 0.46, not 0.** A ray that comes to a point reads as a lens flare — an artefact
+    of a camera, which this world does not have — and a blunt one reads as drawn. Paired with an
+    alpha held near full to 0.72 of the ray's length: a gradient that falls away from the root
+    makes every spike taper to nothing whatever its width says, which is the starburst the
+    trapezoid was chosen to avoid.
+  - **The spikes have to stay separate**, so the half-angle is checked against the spacing rather
+    than trusted. 19 degrees wide with 11 between, and the check is shown to reject twice the rays
+    at the same width.
+- **⚠ Two whiten constants, because one of them made the disc white and a white disc is not a
+  cartoon sun.** Pushed to 0.72 everywhere the sun came out bright and colourless — brighter, which
+  was the ask, and reading as a bare bulb with the rays the only warm thing left in it.
+  `SUN_CORE_WHITEN` (0.84) keeps the hot centre and `SUN_RIM_WHITEN` (0.34) leaves the disc's own
+  rim most of the theme's colour, so it is yellow with a white core. That gradient across the disc
+  is what a drawn sun has and a photographed one does not.
+- **⚠ Growing the sun pushed it off the edge of a portrait frame, and nothing but a sweep would
+  have found it.** `SUN.x` is a fraction of the WIDTH and `SUN.size` a fraction of the HEIGHT; at
+  390x844 the drawn image is 253px against a 390px frame, so a centre at 0.76 of the width put its
+  right edge 33px outside. It fit before only because the sun was smaller. `sunCenterX` clamps the
+  centre rather than shrinking the sun or moving `x` inwards for everyone — both of those pay for
+  the narrowest frame on every other one — and `verify:road` asserts that at least one supported
+  aspect still needs the clamp, so it cannot go dormant unnoticed.
+- **Known and accepted: on `night` this stops reading as a moon.** Rays are a sun's mark, so the
+  cool blue orb the old soft ball gave that theme is now a radiant star. Nothing branches on the
+  theme and nothing should — the alternative is deriving ray length from the glow's own luminance,
+  which is a mechanism for a look nobody has asked for. Recorded rather than hidden.
 - Depth sits between sky layer 0 and layer 1, so the haze bands pass in **front** of it. A sun with
   the haze behind it is a lamp stuck on the glass.
 
