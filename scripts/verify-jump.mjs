@@ -25,9 +25,13 @@ import {
   JUMP_GRAVITY,
   JUMP_LAUNCH_V,
   OBSTACLE_BANDS,
+  MASCOT_ASPECT,
   PLAYER_BODY_H,
+  PLAYER_HALF_WIDTHS,
+  PLAYER_WIDTH,
 } from '../src/run/constants.ts'
 import { FIXED_STEP_MS } from '../src/race/constants.ts'
+import { ROAD_WIDTH } from '../src/road/constants.ts'
 
 let passed = 0
 function check(name, fn) {
@@ -295,6 +299,30 @@ check('the shadow reports height: it spreads as it fades, and never fades to not
 
   console.log(
     `    ground: scale ${shadowScale(0).toFixed(2)} alpha ${shadowAlpha(0).toFixed(3)}; apex: scale ${shadowScale(JUMP_APEX).toFixed(2)} alpha ${shadowAlpha(JUMP_APEX).toFixed(3)}; ink ${ground.toFixed(2)} -> ${apex.toFixed(2)} (shrink-and-fade would give ${shrunk.toFixed(2)})`,
+  )
+})
+
+check('⚠ the drawn box is the proportion of the art, so the mascot cannot be stretched', () => {
+  // **Nothing asserted this, and that is how it broke.** A round widened `PLAYER_HALF_WIDTHS` to
+  // make the snail readable on a phone and left `PLAYER_BODY_H` alone: the box went to 420x180
+  // against art that is 224x139, a **45% horizontal stretch**, and it was reported at once as the
+  // snail looking flat. The three axes are solved from one height and one measured aspect now, so
+  // the stretch is not a thing that can be typed — but a check is what says so out loud.
+  const aspect = PLAYER_WIDTH / PLAYER_BODY_H
+
+  assert.ok(
+    Math.abs(aspect - MASCOT_ASPECT) < 1e-9,
+    `the drawn box is ${aspect.toFixed(3)}:1 against art at ${MASCOT_ASPECT.toFixed(3)}:1`,
+  )
+  // And the collision half-width is that same box, not a number of its own -- the pancake bug in
+  // the other direction is a box wider than the sprite, which gets you hit by things you cleared.
+  assert.ok(Math.abs(PLAYER_HALF_WIDTHS * 2 * ROAD_WIDTH - PLAYER_WIDTH) < 1e-9)
+
+  // Shown to reject: the pair that shipped for one round.
+  assert.ok(Math.abs(420 / 180 - MASCOT_ASPECT) > 0.5, 'the stretched pair would pass this check')
+  console.log(
+    `    ${PLAYER_WIDTH.toFixed(0)}x${PLAYER_BODY_H} at ${aspect.toFixed(2)}:1, ` +
+      `${(PLAYER_HALF_WIDTHS * 100).toFixed(1)}% of the road's full width (it spans two half-widths)`,
   )
 })
 

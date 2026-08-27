@@ -64,47 +64,58 @@ export function halfWidthsAtLane(screenFraction: number): number {
 }
 
 /**
- * Half the snail's width, in road half-widths — and, through `PLAYER_WIDTH` below, its **drawn**
- * width too.
+ * The mascot's own proportion, measured off the shipped render.
  *
- * `offsetX` spans `[-1, 1]` across the asphalt, so `2 * ROAD_WIDTH` = 4000 world units is the
- * full carriageway and the snail is 280 of them across: 7% of the road. That leaves room for
- * three clearly separated lines through any obstacle without the road having to be marked into
- * lanes, which is what keeps an obstacle a choice rather than a reflex test.
- *
- * **⚠ Raised from 0.07 because the mascot was too small, and a phone is where that showed.**
- * Measured through the real projection: at 390x844 the snail came out **23x15 pixels** against
- * 113x72 at 1920x945, because everything on the road is scaled by the frame's *width* and 390 is a
- * fifth of 1920. There is no lever that fixes that on the phone alone — the drawn size IS the
- * collision box (below), the box is world-space and must be the same game on every device, and a
- * camera zoom would push the player's own lane off the edge of a narrow frame, since the lane
- * already fills 78% of it at every aspect.
- *
- * So the mascot is genuinely bigger everywhere: **1/9 of the road's width rather than 1/14**, which
- * is 35 pixels on a phone and 170 on a desktop. It is a real difficulty change — `hits` adds this to
- * the obstacle's own half-width, so every hitbox is about 13% wider — and it is safe rather than
- * merely small, because `provePassable` re-proves every row against whatever this number is and
- * redraws the ones that no longer have a line through them. `verify:obstacles` prints the table.
- *
- * **The collision width and the drawn width are the same number, and that is enforced rather than
- * remembered** — see `PLAYER_WIDTH`. The first version of this let the texture's own pixel size
- * decide how wide the snail looked (via `SPRITE_SCALE`, which is world units per texture pixel),
- * and the two promptly disagreed by a factor of two and a half: a snail 720 units wide on screen
- * and 180 tall by the collision model, i.e. a pancake that got hit by things it visibly cleared.
+ * `snail-0.png` is 224x139. **This is an external fact, not a choice**, and it is what the drawn box
+ * has to be — a box of a different shape stretches the sprite into it, which is the "flat snail" a
+ * player reported after a round widened the box and left the height alone.
  */
-export const PLAYER_HALF_WIDTHS = 0.105
+export const MASCOT_ASPECT = 224 / 139
+
 
 /**
- * The snail's drawn footprint in world units — width from `PLAYER_HALF_WIDTHS`, height from
- * `PLAYER_BODY_H`.
+ * How tall the snail's body is, in world units — the band `[y, y + PLAYER_BODY_H]` that `hits`
+ * tests against, and the drawn height `PlayerView` uses.
  *
- * **The drawing is derived from the collision box, never the other way round.** `PlayerView` hands
- * these to `billboardRectInto` (divided by `SPRITE_SCALE`, which is the unit that function's
- * texture-size arguments are in), so the sprite on screen is exactly the box the obstacle test
- * uses. Redrawing the art at a different pixel size changes nothing about how big the snail is;
- * only these two numbers do.
+ * **⚠ Raised from 180 with `PLAYER_HALF_WIDTHS`, and the round that raised only the width was
+ * wrong.** Widening the box without the height left a drawn footprint of 420x180 — **2.33:1 against
+ * the art's 1.61:1, a 45% horizontal stretch** — and it was reported immediately as the snail
+ * looking flat. The drawn box IS the collision box here, so the two axes are not independent: the
+ * mascot can only get bigger by getting bigger in both, which means moving the band a grounded
+ * snail has to pass under.
+ *
+ * 261 is `PLAYER_WIDTH / 1.61`, i.e. the art's own proportion. `OBSTACLE_BANDS.overhead.yLow` moved
+ * with it to keep the same 39% of a body height of daylight underneath, and `verify:jump` holds the
+ * three-class inequalities that fall out — a grounded snail clears an overhead, an airborne one
+ * does not, and neither of those is a flag anywhere.
  */
-export const PLAYER_WIDTH = PLAYER_HALF_WIDTHS * 2 * ROAD_WIDTH
+export const PLAYER_BODY_H = 261
+
+/**
+ * The snail's drawn footprint in world units, **solved from the height and the art's proportion.**
+ *
+ * Derived rather than chosen so the two can never disagree: a stretched sprite is not a thing that
+ * can be typed here any more.
+ */
+export const PLAYER_WIDTH = PLAYER_BODY_H * MASCOT_ASPECT
+
+/**
+ * Half the snail's width, in road half-widths — **derived from the drawn width, not the other way
+ * round.**
+ *
+ * The rule is unchanged and only its direction moved: the collision width and the drawn width are
+ * the same number, enforced rather than remembered. What changed is which of them is typed. The
+ * first version of this let the texture's own pixel size decide how wide the snail looked (via
+ * `SPRITE_SCALE`) and the two promptly disagreed by a factor of two and a half: a snail 720 units
+ * wide on screen and 180 tall by the collision model, i.e. a pancake that got hit by things it
+ * visibly cleared. The second version typed the half-width and left the height, which stretched the
+ * sprite the other way. Solving both from one height and one measured aspect ends the argument.
+ *
+ * At 0.075 the snail is about a thirteenth of the road, so a row of three obstacles still leaves
+ * lanes, which is what keeps an obstacle a choice rather than a reflex test.
+ */
+export const PLAYER_HALF_WIDTHS = PLAYER_WIDTH / (2 * ROAD_WIDTH)
+
 
 /**
  * The last `offsetX` at which the snail is still entirely on the asphalt, and the hard limit
@@ -394,15 +405,6 @@ export const JUMP_APEX = 430
 export const JUMP_GRAVITY = (8 * JUMP_APEX) / Math.pow(JUMP_AIR_MS / 1000, 2)
 export const JUMP_LAUNCH_V = (JUMP_GRAVITY * (JUMP_AIR_MS / 1000)) / 2
 
-/**
- * The snail's own height, in world units — its body occupies `[y, y + PLAYER_BODY_H]`.
- *
- * This is the *other* half of every collision: an obstacle carries a `[yLow, yHigh]` band and a
- * hit is those two intervals overlapping. 180 against a 320 apex means a grounded snail's back is
- * at 180 and an airborne one's foot clears 180 for most of the flight — which is what separates
- * the three obstacle classes arithmetically rather than by a flag.
- */
-export const PLAYER_BODY_H = 180
 
 /* ------------------------------------------------------------------ *
  * Obstacles
@@ -460,7 +462,11 @@ export const OBSTACLE_BANDS = {
   // `verify:jump` holds, and low enough that the gap reads as a gap to go through. The arithmetic
   // the three classes rest on is untouched: a grounded snail is [0, 180] and still clears it, an
   // airborne one is [430, 610] and still meets it.
-  overhead: { yLow: 250, yHigh: 560 },
+  // **⚠ 362, up from 250 with `PLAYER_BODY_H`.** The number that matters is not this one but the
+  // gap under it: a grounded snail is `[0, PLAYER_BODY_H]` and has to pass beneath, and what reads
+  // as a gap is that clearance measured against the snail's own height. It was 70 units under a
+  // 180-tall body (39%); it is 101 under a 261-tall one, which is the same 39%.
+  overhead: { yLow: 362, yHigh: 560 },
 } as const
 
 export type ObstacleKind = keyof typeof OBSTACLE_BANDS

@@ -956,13 +956,35 @@ and 390 is a fifth of 1920. Three ways out were considered and two are closed:
   other direction: the player would see themselves clip a rock and take nothing, which reads as the
   game dropping a hit.
 
-So the mascot is genuinely bigger everywhere: **`PLAYER_HALF_WIDTHS` 0.07 → 0.105**, which is 1/9 of
-the road's width rather than 1/14. **35x22 on a phone and 172x107 on a desktop.** It is a real
-difficulty change — `hits` adds this to the obstacle's own half-width, so every hitbox is about 13%
-wider — and it is safe rather than merely small, because `provePassable` re-proves every row against
-whatever this number is and redraws the ones that lose their line. The difficulty table comes out
-unchanged: density, class shares and the reaction budget are properties of the row spacing, not of
-the snail.
+So the mascot is genuinely bigger everywhere. **⚠ And the first attempt at that shipped flat**,
+because it raised `PLAYER_HALF_WIDTHS` alone: the drawn box went to **420x180 against art that is
+224x139**, a 45% horizontal stretch, and it was reported at once.
+
+The two axes are not independent — the drawn box *is* the collision box — so the mascot can only get
+bigger by getting bigger in both, which means moving the band a grounded snail passes under. All
+three numbers are now solved from one:
+
+```
+PLAYER_BODY_H     261            chosen; the only size decision
+MASCOT_ASPECT     224 / 139      measured off the shipped render; an external fact
+PLAYER_WIDTH      = H * aspect   421
+PLAYER_HALF_WIDTHS = W / 2R      0.105, i.e. 10.5% of the road's full width
+```
+
+`OBSTACLE_BANDS.overhead.yLow` moved 250 → 362 with it, keeping the daylight under an overhead at
+the same **39% of a body height** it had before; the three-class table falls straight out and
+`verify:jump` holds it — grounded clears `low`'s apex test and passes under an overhead, airborne
+does the opposite, and neither is a flag anywhere. `PICKUP_HEIGHT` went 90 → 130, which is still the
+body's centre, so the arc chain's own offset is unchanged in meaning.
+
+**Nothing asserted the aspect, which is how it broke.** `verify:jump` does now, and is shown to
+reject the 420x180 pair. On screen the mascot is **35x22 on a phone and 173x107 on a desktop**.
+
+It is a real difficulty change — `hits` adds the half-width to the obstacle's own, so every hitbox is
+about 13% wider — and it is safe rather than merely small, because `provePassable` re-proves every
+row against whatever these numbers are and redraws the ones that lose their line. The difficulty
+table comes out unchanged: density, class shares and the reaction budget are properties of the row
+spacing, not of the snail.
 
 **Pickups are the one thing that could be scaled per frame, and the reason is a rule that already
 existed.** A pickup's collection box is deliberately twice its icon — the single place in this game

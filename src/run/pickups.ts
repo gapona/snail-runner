@@ -71,7 +71,7 @@ export const PICKUP_WEIGHTS: Record<PickupKind, number> = {
  * it* and not by jumping — a pickup that needed a jump would fight the obstacle model, which
  * spends the jump on something else.
  */
-export const PICKUP_HEIGHT = 90
+export const PICKUP_HEIGHT = 130
 
 /**
  * How wide a pickup's collection box is, in half-widths.
