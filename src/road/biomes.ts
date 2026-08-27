@@ -19,9 +19,12 @@
  *  - **A prop set**, which `decorateTrack` draws from. Scenery is desaturated and tinted at draw
  *    time by the theme, so a prop never needs a per-theme variant either.
  *
- * The ground colours come in pairs for the same reason the road's do: they alternate on the
- * `RUMBLE_LENGTH` rhythm, which is what stops a flat expanse from reading as motionless.
+ * The ground colours are authored as a pair — see `GROUND_ALTERNATION` for why only one of them
+ * reaches the screen, and `GROUND_SHADES_PER_BIOME` for what is drawn instead.
  */
+
+// `color.ts` imports no phaser either, so this stays on the testable side of the line.
+import { contrastRatio, fromOklab, relativeLuminance, toOklab } from './color'
 
 /**
  * Smallest contrast ratio between a biome's ground and the asphalt it lies beside.
@@ -55,6 +58,232 @@ export const MIN_GROUND_CONTRAST = 1.6
  */
 export const GROUND_ALTERNATION = 0
 
+/**
+ * How many palette columns each biome's ground occupies.
+ *
+ * **Two was one shade with a knob turned off**, not a texture. `GROUND_ALTERNATION` collapsed the
+ * authored pair into a single colour, so every biome drew as one flat expanse across the largest
+ * surface in the frame — which is what "the ground has no fibre" means, mechanically.
+ *
+ * Five, because a `Mesh2D` cannot express this any other way: it has one object-wide tint, no
+ * per-vertex tint and no second UV set, so a per-segment ground colour has to be a column in the
+ * palette (see `PALETTE_COLUMNS`). Adding columns costs a wider 1px-per-texel texture and
+ * **nothing else** — no draw call, no pass, no shader. The same argument put distance fog on
+ * this texture's other axis.
+ *
+ * Named rather than written into `PALETTE_COLUMNS` as a literal: three call sites derive their
+ * arithmetic from it, and a bare `* 2` in one of them is how a palette silently stops lining up
+ * with the columns actually baked into it.
+ */
+export const GROUND_SHADES_PER_BIOME = 5
+
+/**
+ * The five shades, as offsets from the biome's own ground colour in OKLab.
+ *
+ * **⚠ Lightness and chroma are moved INDEPENDENTLY, and that is the whole reason this is a
+ * table rather than a ramp.** A set spread along one axis — five steps of brightness, or five
+ * steps of saturation — reads as one colour under a gradient, because the eye has a single
+ * ordering to collapse them onto. Shade 1 is darker *and* duller, shade 3 lighter *and* richer,
+ * shade 4 lighter *and* duller: no monotone relation between the two columns, so no ordering the
+ * eye can flatten. Hue is deliberately untouched — five hues is five materials, and this is one
+ * material lit and worn unevenly.
+ *
+ * The numbers are OKLab units, where `L` runs 0..1 and chroma is roughly 0..0.4 for anything the
+ * ground is made of. `verify:road` holds the delivered set apart on both axes rather than
+ * trusting these, because what actually reaches the screen has been through the theme's light,
+ * the separation push against the asphalt and the fog blend.
+ */
+export const GROUND_SHADE_SPREAD: readonly { lightness: number; chroma: number }[] = [
+  { lightness: -0.052, chroma: +0.014 },
+  { lightness: -0.024, chroma: -0.011 },
+  { lightness: 0, chroma: 0 },
+  { lightness: +0.026, chroma: +0.009 },
+  { lightness: +0.055, chroma: -0.016 },
+]
+
+/** Moves a colour by an OKLab lightness and chroma offset, keeping its hue. */
+function shiftLightnessAndChroma(colour: number, lightness: number, chromaDelta: number): number {
+  const lab = toOklab(colour)
+  const current = Math.hypot(lab.a, lab.b)
+  // A grey has no hue to preserve, so a chroma offset has no direction to point in. Left alone
+  // rather than given an arbitrary one: `signal` is an almost monochrome theme by design.
+  const scale = current > 1e-6 ? Math.max(0, current + chromaDelta) / current : 1
+
+  return fromOklab({
+    L: Math.min(1, Math.max(0, lab.L + lightness)),
+    a: lab.a * scale,
+    b: lab.b * scale,
+  })
+}
+
+/**
+ * The `GROUND_SHADES_PER_BIOME` colours a biome's ground is drawn in, under one theme.
+ *
+ * **Derived from the pair rather than authored per biome, and the order matters.** The pair is
+ * what carries this biome's identity and what `groundPairForTheme` has already pushed clear of
+ * the asphalt — so the spread runs on its *output*, not on the raw authored colour. Spreading
+ * first would hand the separation rule five inputs and let it push each one a different distance,
+ * which is how a biome ends up with one shade that has quietly merged with the road.
+ *
+ * **⚠ The lightness spread is ANCHORED at the pair and runs away from the road, never centred
+ * on it.** Centred is the obvious reading of a spread and it walks the far end straight across
+ * the asphalt's own brightness: measured on the first version, `day`/`forest` delivered a shade
+ * at **1.00:1** against the road — the exact arrangement `MIN_GROUND_CONTRAST` exists to forbid,
+ * on the default theme, and invisible to the old check because that only ever measured the pair.
+ * Anchoring costs nothing: the range is the same, the darkest (or lightest) shade is simply the
+ * pair itself, which has already been cleared, and every other shade is further from the road
+ * rather than nearer. The direction is decided once for the whole set from the pair's own lean,
+ * exactly as the separation push decides it — splitting a set across the road's brightness is
+ * the one arrangement guaranteed to make part of it invisible.
+ */
+export function groundShadesForTheme(
+  ground: readonly [number, number],
+  roadDark: number,
+  roadLight: number,
+  alternation?: number,
+  groundLight?: number,
+): number[] {
+  const pair = groundPairForTheme(ground, roadDark, roadLight, alternation, groundLight)
+  const roadHi = Math.max(relativeLuminance(roadDark), relativeLuminance(roadLight))
+  const brighten = relativeLuminance(pair[0]) >= roadHi
+
+  const offsets = GROUND_SHADE_SPREAD.map((offset) => offset.lightness)
+  const anchor = brighten ? Math.min(...offsets) : Math.max(...offsets)
+
+  return GROUND_SHADE_SPREAD.map((offset) => {
+    const lightness = offset.lightness - anchor
+    const shade = shiftLightnessAndChroma(pair[0], lightness, offset.chroma)
+
+    return clearOfRoad(shade, pair[0], roadDark, roadLight, brighten, offset.chroma)
+  })
+}
+
+/**
+ * Nudges one shade further from the road until it clears `MIN_GROUND_CONTRAST`.
+ *
+ * **⚠ The chroma half of the spread moves luminance too, and that is enough to matter at the
+ * boundary.** `groundPairForTheme` pushes a pair to *exactly* the floor and stops, so a biome
+ * sitting on it has no headroom at all: on `ice`/`crystal` a chroma offset of +0.014 took the
+ * anchor shade to **1.59:1** against a floor of 1.60. Anchoring the lightness spread cannot
+ * prevent that, because the offending shade is the anchor itself.
+ *
+ * Only the shade that actually falls short moves, and it moves in the set's own direction — so
+ * it ends up further from its neighbours rather than collapsed onto them, which is what a naive
+ * clamp to the floor would do to every violating shade at once.
+ */
+function clearOfRoad(
+  shade: number,
+  reference: number,
+  roadDark: number,
+  roadLight: number,
+  brighten: boolean,
+  chromaDelta: number,
+): number {
+  const nearest = (colour: number) =>
+    Math.min(contrastRatio(colour, roadDark), contrastRatio(colour, roadLight))
+
+  if (nearest(shade) >= MIN_GROUND_CONTRAST) return shade
+
+  const base = toOklab(reference).L
+  const step = brighten ? 0.004 : -0.004
+  let lightness = toOklab(shade).L - base
+
+  // Bounded: 60 steps is 0.24 of OKLab lightness, which is further than any ground could need and
+  // still terminates if a theme is ever authored where no amount of pushing can clear the road.
+  for (let i = 0; i < 60; i++) {
+    lightness += step
+
+    const moved = shiftLightnessAndChroma(reference, lightness, chromaDelta)
+
+    if (nearest(moved) >= MIN_GROUND_CONTRAST) return moved
+  }
+
+  return shade
+}
+
+/**
+ * How many segments one patch of ground covers — the wavelength of the noise the shade is drawn
+ * from, not a hard run length, so what comes out varies either side of it.
+ *
+ * **A segment is 200 world units, so this is what the number means on screen:** fourteen of them
+ * is 2800 units, about 0.8s of ground at `SPEED_CAP` and 1.9s at `SPEED_BASE`. Measured on the
+ * shipped value, patches run a **median of 6 segments and a mean of 8.6**, and only **2.1% of the
+ * ground sits in a patch shorter than three** — that last figure is the one that was tuned for.
+ * At a spacing of 10 it is 8.3%, and those one- and two-segment slivers are precisely the
+ * per-segment ripple this whole step exists to remove: at this projection a one-segment patch is
+ * a horizontal band across the verge, which is a stripe, not ground.
+ *
+ * The upper bound is the visible verge. Past about twenty the patches are longer than what is on
+ * screen at once and stop reading as patches at all — the ground just changes colour.
+ */
+export const GROUND_PATCH_SEGMENTS = 14
+
+/** The band `verify:road` holds the delivered mean patch length inside. */
+export const GROUND_PATCH_MIN_SEGMENTS = 5
+export const GROUND_PATCH_MAX_SEGMENTS = 15
+
+/** Deterministic hash of one integer to `0..1`. The lattice `groundNoise` interpolates between. */
+function hash01(index: number): number {
+  let h = Math.trunc(index) | 0
+
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b)
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b)
+
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296
+}
+
+/**
+ * One octave of value noise along the track, in `0..1`.
+ *
+ * Smoothstep between lattice points rather than linear: a linear interpolation has a corner at
+ * every lattice point, and a corner in the value is an extra shade boundary wherever it happens
+ * to sit near one — i.e. more of exactly the slivers `GROUND_PATCH_SEGMENTS` was tuned against.
+ *
+ * **One octave, and the single octave is what does the weighting.** Interpolating between two
+ * uniform draws does not give a uniform result: it concentrates towards the middle of the range,
+ * so mapping it evenly onto the five shades delivers roughly **15/24/24/22/15 percent** of the
+ * ground rather than a flat fifth each. That is the wanted distribution and it comes free — the
+ * middle three shades carry the ground and the two ends of `GROUND_SHADE_SPREAD`, which are the
+ * colours furthest from the biome's own, are the occasional patch.
+ *
+ * **⚠ An explicit weights table was tried first and removed.** Mapping the noise through a
+ * cumulative `[1,3,4,3,1]` looked like it stated the intent, and it does not deliver it: the
+ * noise is already non-uniform, so the two distributions compound and shade 0 came out at 1827
+ * of 40000 segments against the 3333 the table claimed. A weights table that does not produce
+ * its own weights is worse than no table, because the next person reads it and believes it.
+ */
+function groundNoise(index: number): number {
+  const x = index / GROUND_PATCH_SEGMENTS
+  const cell = Math.floor(x)
+  const t = x - cell
+  const eased = t * t * (3 - 2 * t)
+
+  return hash01(cell) + (hash01(cell + 1) - hash01(cell)) * eased
+}
+
+/**
+ * Which of a biome's shades a segment is drawn in — deterministic, from the index alone.
+ *
+ * **⚠ Deliberately NOT the rumble alternation, and deliberately not a bare hash either.** The
+ * stripes are a rhythm and have to stay one: a regular light/dark beat across the ground is what
+ * read as a moiré over the whole picture and is why `GROUND_ALTERNATION` is 0. But a per-segment
+ * hash is the opposite failure and just as wrong — it gives every segment an independent shade,
+ * and at this projection a one-segment patch is a horizontal band across the verge. It was built
+ * that way first and photographed, and the ripple is exactly what the frame showed.
+ *
+ * So the shade comes from a noise octave along the track: neighbouring segments read nearly the
+ * same value and therefore usually land on the same shade, which is what makes a patch.
+ *
+ * A hash-backed lattice rather than an RNG stream, for the reason `decorVariation` gives: a
+ * seeded stream has to be walked in order to reach its nth value, and what is wanted here is an
+ * answer for one coordinate, computable in any order, the same on the next lap and at every
+ * viewport size.
+ */
+export function groundShadeFor(index: number): number {
+  return Math.min(GROUND_SHADES_PER_BIOME - 1, Math.floor(groundNoise(index) * GROUND_SHADES_PER_BIOME))
+}
+
+
 /** One biome: what its ground looks like and what stands on it. */
 export interface Biome {
   id: string
@@ -86,6 +315,17 @@ export interface Biome {
    * threat reservation and a luminance floor; the darkest today is `night` x `forest` at 0.110.
    */
   decorTint: number
+  /**
+   * Which ground marks this stretch may carry, in order of how common they should be — the same
+   * "listed twice appears twice as often" knob `props` uses, and readable in the data.
+   *
+   * **A puddle in the dunes is the same failure a palm tree on a glacier is.** The four original
+   * marks were surface marks and could go anywhere because the field never left the asphalt; it
+   * reaches across the verge now, so what is on the ground has to be something this ground could
+   * plausibly have. Strings rather than the `DecalKind` union, because `decals.ts` imports this
+   * file to answer the per-segment question and a type import back the other way is a cycle.
+   */
+  decals: readonly string[]
 }
 
 
@@ -109,6 +349,7 @@ export const BIOMES: readonly Biome[] = [
     props: ['decor-for_pine', 'decor-for_pine', 'decor-for_birch', 'decor-for_fern', 'decor-for_fern', 'decor-for_mushroom', 'decor-for_bramble', 'decor-for_boulder'],
     /** leaf green -- the only biome whose props are mostly foliage. */
     decorTint: 0x8fc98a,
+    decals: ['tuft', 'tuft', 'scatter', 'stain', 'stones', 'puddle'],
   },
   {
     id: 'dunes',
@@ -116,6 +357,7 @@ export const BIOMES: readonly Biome[] = [
     props: ['decor-dune_rock', 'decor-dune_grass', 'decor-dune_grass', 'decor-dune_cactus', 'decor-dune_bone', 'decor-dune_shrub', 'decor-dune_shrub', 'decor-dune_spire'],
     /** dry sand, the warmest of the eight. */
     decorTint: 0xe8c68a,
+    decals: ['scatter', 'scatter', 'stones', 'stain', 'crack'],
   },
   {
     id: 'wetland',
@@ -128,6 +370,7 @@ export const BIOMES: readonly Biome[] = [
     props: ['decor-wet_reeds', 'decor-wet_reeds', 'decor-wet_stump', 'decor-wet_lily', 'decor-wet_willow', 'decor-wet_cattail', 'decor-wet_cattail'],
     /** green water rather than green leaf: cooler and less saturated than forest. */
     decorTint: 0x8fd0bc,
+    decals: ['puddle', 'puddle', 'tuft', 'stain', 'scatter'],
   },
   {
     id: 'ridge',
@@ -135,6 +378,7 @@ export const BIOMES: readonly Biome[] = [
     props: ['decor-rid_scree', 'decor-rid_scree', 'decor-rid_monolith', 'decor-rid_arch', 'decor-rid_cairn', 'decor-rid_lichen', 'decor-rid_snag', 'decor-rid_snag'],
     /** cold stone. Barely a hue at all, which is the point -- rock reads by light. */
     decorTint: 0xb8c4d2,
+    decals: ['stones', 'stones', 'scatter', 'crack', 'stain'],
   },
   {
     id: 'ashen',
@@ -146,6 +390,7 @@ export const BIOMES: readonly Biome[] = [
     props: ['decor-ash_stump', 'decor-ash_mound', 'decor-ash_slab', 'decor-ash_spar', 'decor-ash_vent', 'decor-ash_scrub', 'decor-ash_scrub', 'decor-ash_slab'],
     /** warm dead grey, lifted so `night` does not crush it past visibility. */
     decorTint: 0xc2bdb5,
+    decals: ['crack', 'crack', 'stain', 'scatter', 'stones'],
   },
   {
     // The ninth. Ground is a deep sea-green rather than another blue or another green: `forest` and
@@ -158,6 +403,7 @@ export const BIOMES: readonly Biome[] = [
      *  lands on a prop, and two dark factors crush it to a silhouette; `verify:road` holds every
      *  one of the 9x7 products above a luminance floor and out of the reserved threat band. */
     decorTint: 0xa6dcc6,
+    decals: ['tuft', 'puddle', 'stain', 'scatter', 'stones'],
   },
   {
     id: 'crystal',
@@ -170,6 +416,7 @@ export const BIOMES: readonly Biome[] = [
     /** blue-violet, **not** red-violet: at `0xc0a8e0` the product with `dusk` was
      *     `#a36f65`, inside the reserved threat band. The first thing the new sweep rejected. */
     decorTint: 0xaeb2ec,
+    decals: ['stones', 'scatter', 'crack', 'stain'],
   },
   {
     id: 'coast',
@@ -187,6 +434,7 @@ export const BIOMES: readonly Biome[] = [
     props: ['decor-coa_stack', 'decor-coa_stack', 'decor-coa_kelp', 'decor-coa_palm', 'decor-coa_reef', 'decor-coa_reef', 'decor-coa_drift'],
     /** pale sea light. */
     decorTint: 0xa4cfe8,
+    decals: ['scatter', 'scatter', 'puddle', 'stones', 'stain'],
   },
   {
     id: 'ruins',
@@ -196,6 +444,7 @@ export const BIOMES: readonly Biome[] = [
     props: ['decor-rui_rubble', 'decor-rui_rubble', 'decor-rui_column', 'decor-rui_wall', 'decor-rui_arch', 'decor-rui_statue', 'decor-rui_obelisk'],
     /** weathered warm stone, a shade browner than `dunes`. */
     decorTint: 0xdcc9a6,
+    decals: ['crack', 'crack', 'stones', 'scatter', 'stain', 'skid'],
   },
 ] as const
 

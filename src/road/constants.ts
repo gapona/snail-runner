@@ -7,7 +7,7 @@
  * — see CLAUDE.md "Known Issues Fixed" for the same rule applied to the platform layer).
  */
 
-import { BIOMES } from './biomes'
+import { BIOMES, GROUND_SHADES_PER_BIOME } from './biomes'
 
 /** Depth of one track segment, in world units. */
 export const SEGMENT_LENGTH = 200
@@ -105,27 +105,33 @@ export const ROAD_HILL = { NONE: 0, LOW: 20, MEDIUM: 40, HIGH: 60 } as const
 export const ROAD_PALETTE = [0x1d1f26, 0x24262f, 0x4a7fd6, 0xf2f2f5, 0x969698]
 
 /**
- * Columns in the palette texture: the road's own colours, then two ground shades per biome.
+ * Columns in the palette texture: the road's own colours, then each biome's ground shades.
  *
  * **Biome ground rides in the same texture as everything else**, which is the whole reason the
  * ground can vary along the track at all. `Mesh2D` carries one object-wide tint and no
  * per-vertex tint, so a per-segment ground colour cannot be a tint; it has to be a UV. Adding
  * columns costs one wider texture and nothing else — no extra draw call, no second mesh, no
  * shader. Same argument that put distance fog on the Y axis of this texture.
+ *
+ * The multiplier is `GROUND_SHADES_PER_BIOME` rather than a literal, because `createRoadPalette`
+ * derives which biome a column belongs to by dividing by the same number: a bare `2` in one of
+ * the two is a palette whose columns no longer mean what the mesh thinks they mean, and nothing
+ * about the resulting picture says which half is wrong.
  */
-export const PALETTE_COLUMNS = ROAD_PALETTE.length + BIOMES.length * 2
+export const PALETTE_COLUMNS = ROAD_PALETTE.length + BIOMES.length * GROUND_SHADES_PER_BIOME
 
 /**
- * The palette column for a biome's ground, on the alternating rumble rhythm.
+ * The palette column for one of a biome's ground shades.
  *
- * The alternation is not decoration: a flat expanse of one colour beside the road reads as
- * motionless however fast the camera is moving, which is the same reason the road itself
- * alternates and the surface is rungged rather than plain.
+ * `shade` comes from `groundShadeFor(segment.index)` — a hash, deliberately not the rumble
+ * alternation this function used to take. See `groundShadeFor` for why the ground may not share
+ * the stripes' beat.
  */
-export function groundPaletteIndex(biome: number, alternate: boolean): number {
-  const clamped = Math.min(BIOMES.length - 1, Math.max(0, biome))
+export function groundPaletteIndex(biome: number, shade: number): number {
+  const clampedBiome = Math.min(BIOMES.length - 1, Math.max(0, biome))
+  const clampedShade = Math.min(GROUND_SHADES_PER_BIOME - 1, Math.max(0, Math.trunc(shade)))
 
-  return ROAD_PALETTE.length + clamped * 2 + (alternate ? 0 : 1)
+  return ROAD_PALETTE.length + clampedBiome * GROUND_SHADES_PER_BIOME + clampedShade
 }
 
 /**
@@ -140,8 +146,13 @@ export function groundPaletteIndex(biome: number, alternate: boolean): number {
  * the sides of the frame put every far-placed prop past the end of the ground it is supposed to
  * stand on, which draws as scenery hanging in the sky. `verify:road` now asserts the relationship
  * rather than leaving it to a comment, because a comment is exactly what failed here.
+ *
+ * **Raised 40 -> 56 with the decal field, and it now has a second thing to clear.** A mark past
+ * the end of the ground is drawn on sky exactly as a prop would be, so `DECAL_MAX_OFFSET` joins
+ * `DECOR_TIERS.far.maxOffset` in the relationship the check asserts. The extra width costs
+ * nothing per frame: the ground is two quads a segment whatever they span.
  */
-export const GROUND_EXTENT = 40
+export const GROUND_EXTENT = 56
 
 /**
  * How far every prop is planted BELOW the ground it stands on, as a fraction of its own height.

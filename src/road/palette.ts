@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser'
-import { BIOMES, groundPairForTheme } from './biomes'
+import { BIOMES, GROUND_SHADES_PER_BIOME, groundShadesForTheme } from './biomes'
 import { FOG_STEPS, PALETTE_COLUMNS, PALETTE_INDEX } from './constants'
 import { blendColor, getRoadTheme } from './themes'
 
@@ -9,7 +9,7 @@ import { blendColor, getRoadTheme } from './themes'
 export { paletteU, paletteV, fogStepFor } from './constants'
 
 /**
- * Builds the road's palette as a `4 x FOG_STEPS` texture: one column per colour, one row per
+ * Builds the road's palette as a `PALETTE_COLUMNS x FOG_STEPS` texture: one column per colour, one row per
  * step of distance fog.
  *
  * **Both dimensions exist for the same reason: `Mesh2D` has no per-vertex tint.** It carries a
@@ -45,18 +45,18 @@ export function createRoadPalette(scene: Phaser.Scene, key: string): Phaser.Text
     const amount = FOG_STEPS <= 1 ? 0 : row / (FOG_STEPS - 1)
 
     for (let column = 0; column < width; column++) {
-      // The road's own colours first, then two ground shades per biome. Biome ground is faded
+      // The road's own colours first, then `GROUND_SHADES_PER_BIOME` shades per biome. Ground is faded
       // by the theme's fog exactly as the road is, which is what makes a forest in `ice` a cold
       // forest without anyone authoring one: the place is the biome, the light is the theme.
       const base = column < theme.road.length
         ? theme.road[column]
-        : groundPairForTheme(
-            BIOMES[Math.floor((column - theme.road.length) / 2)].ground,
+        : groundShadesForTheme(
+            BIOMES[Math.floor((column - theme.road.length) / GROUND_SHADES_PER_BIOME)].ground,
             theme.road[PALETTE_INDEX.ASPHALT_DARK],
             theme.road[PALETTE_INDEX.ASPHALT_LIGHT],
             undefined,
             theme.groundLight,
-          )[(column - theme.road.length) % 2]
+          )[(column - theme.road.length) % GROUND_SHADES_PER_BIOME]
       const faded = blendColor(base, theme.fog, amount)
 
       context.fillStyle = `#${faded.toString(16).padStart(6, '0')}`

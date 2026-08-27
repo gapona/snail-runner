@@ -48,7 +48,7 @@ import {
   THREAT_MIN_CHROMA,
   THREAT_MIN_HUE_DEGREES,
 } from '../src/road/themes.ts'
-import { chroma, contrastRatio, deltaE, hueDistance, multiplyTint, relativeLuminance, toOklab } from '../src/road/color.ts'
+import { chroma, contrastRatio, deltaE, fromOklab, hueDistance, multiplyTint, relativeLuminance, toOklab } from '../src/road/color.ts'
 import { KIT } from '../src/ui/kitPalette.ts'
 
 /**
@@ -60,7 +60,7 @@ import { KIT } from '../src/ui/kitPalette.ts'
  */
 const MIN_HOSTILE_HUE_GAP = 30
 import { quadWriteAction } from '../src/road/meshGuard.ts'
-import { BIOMES, BIOME_IDS, biomeById, biomeForSegment, biomeIndexForSegment, biomeIndex, biomeRunSegments, MIN_BIOME_RUN_SEGMENTS, groundPairForTheme, MIN_GROUND_CONTRAST, GROUND_ALTERNATION, setBiomeLayout, skylineBiomeTint, SKYLINE_SEAM_BLEND_SEGMENTS } from '../src/road/biomes.ts'
+import { BIOMES, BIOME_IDS, biomeById, biomeForSegment, biomeIndexForSegment, biomeIndex, biomeRunSegments, MIN_BIOME_RUN_SEGMENTS, groundPairForTheme, MIN_GROUND_CONTRAST, GROUND_ALTERNATION, setBiomeLayout, skylineBiomeTint, SKYLINE_SEAM_BLEND_SEGMENTS, GROUND_SHADES_PER_BIOME, GROUND_SHADE_SPREAD, groundShadesForTheme, groundShadeFor, GROUND_PATCH_SEGMENTS, GROUND_PATCH_MIN_SEGMENTS, GROUND_PATCH_MAX_SEGMENTS } from '../src/road/biomes.ts'
 import {
   BIOME_SKYLINE_WEIGHT,
   CAMERA_DEPTH,
@@ -550,7 +550,11 @@ check('paletteU: samples the exact centre of texel i, never an edge', () => {
   // of the texture, which reads as scenery-coloured asphalt rather than as an error.
   const count = PALETTE_COLUMNS
 
-  assert.equal(count, ROAD_PALETTE.length + BIOMES.length * 2, 'PALETTE_COLUMNS does not cover road plus biome ground')
+  assert.equal(
+    count,
+    ROAD_PALETTE.length + BIOMES.length * GROUND_SHADES_PER_BIOME,
+    'PALETTE_COLUMNS does not cover road plus biome ground',
+  )
   // **Deliberately not a literal.** This was `17`, and adding two biomes broke a test that was
   // measuring nothing except how many biomes there were when it was written — the line above
   // already asserts the only relationship that matters. What is worth pinning is that the strip
@@ -573,15 +577,15 @@ check('paletteU: samples the exact centre of texel i, never an edge', () => {
   const seen = new Set()
 
   for (let biome = 0; biome < BIOMES.length; biome++) {
-    for (const alternate of [true, false]) {
-      const column = groundPaletteIndex(biome, alternate)
+    for (let shade = 0; shade < GROUND_SHADES_PER_BIOME; shade++) {
+      const column = groundPaletteIndex(biome, shade)
 
       assert.ok(column >= ROAD_PALETTE.length && column < count, `biome ${biome} ground column ${column} is outside the strip`)
       assert.ok(!seen.has(column), `biome ${biome} shares palette column ${column}`)
       seen.add(column)
     }
   }
-  assert.equal(seen.size, BIOMES.length * 2)
+  assert.equal(seen.size, BIOMES.length * GROUND_SHADES_PER_BIOME)
 
   for (let i = 0; i < count; i++) {
     const u = paletteU(i)
@@ -679,6 +683,12 @@ check('scenery keeps off the ground strip and inside the configured band', () =>
   assert.ok(
     GROUND_EXTENT > DECOR_TIERS.far.maxOffset,
     `scenery reaches ${DECOR_TIERS.far.maxOffset} half-widths but the ground stops at ${GROUND_EXTENT}`,
+  )
+  // The decal field joined this relationship when it stopped being a strip down the middle of the
+  // road: a mark past the end of the ground is drawn on sky exactly as a prop would be.
+  assert.ok(
+    GROUND_EXTENT > DECAL_MAX_OFFSET,
+    `marks reach ${DECAL_MAX_OFFSET} half-widths but the ground stops at ${GROUND_EXTENT}`,
   )
 
   // The near verge must not be thinned by the wider band — see `DECOR.OFFSET_BIAS`. Measured as
@@ -2530,6 +2540,301 @@ check('a pinned biome has no seam to cross, and the crossfade does not invent on
   } finally {
     setBiomeLayout({ kind: 'cycle' })
   }
+})
+
+
+// ---------------------------------------------------------------------------------------------
+// The ground's five shades: they have to be five, and they have to be five on two axes.
+// ---------------------------------------------------------------------------------------------
+
+check('every biome delivers five ground shades that differ on BOTH lightness and chroma', () => {
+  // **The failure this exists for is not "wrong colours", it is "five that read as one".** A set
+  // spread along a single axis collapses under the eye's own ordering -- five brightnesses is a
+  // gradient, five saturations is a gradient. So both axes are measured separately and both have
+  // to carry a real range; passing one and failing the other is exactly the defect.
+  const minLightnessRange = 0.05
+  const minChromaRange = 0.012
+
+  let worstL = Infinity
+  let worstC = Infinity
+  let worstLAt = ''
+  let worstCAt = ''
+
+  for (const id of themeIds()) {
+    const theme = THEMES[id]
+
+    for (const biome of BIOMES) {
+      const shades = groundShadesForTheme(
+        biome.ground,
+        theme.road[PALETTE_INDEX.ASPHALT_DARK],
+        theme.road[PALETTE_INDEX.ASPHALT_LIGHT],
+        undefined,
+        theme.groundLight,
+      )
+
+      assert.equal(shades.length, GROUND_SHADES_PER_BIOME, `${id}/${biome.id} delivered ${shades.length} shades`)
+      assert.equal(new Set(shades).size, GROUND_SHADES_PER_BIOME, `${id}/${biome.id} has two shades of the same colour`)
+
+      const lightness = shades.map((c) => toOklab(c).L)
+      const chromas = shades.map((c) => chroma(c))
+      const lRange = Math.max(...lightness) - Math.min(...lightness)
+      const cRange = Math.max(...chromas) - Math.min(...chromas)
+
+      if (lRange < worstL) { worstL = lRange; worstLAt = `${id}/${biome.id}` }
+      if (cRange < worstC) { worstC = cRange; worstCAt = `${id}/${biome.id}` }
+    }
+  }
+
+  assert.ok(worstL >= minLightnessRange, `${worstLAt} spreads its five shades over only ${worstL.toFixed(4)} of lightness`)
+  assert.ok(worstC >= minChromaRange, `${worstCAt} spreads its five shades over only ${worstC.toFixed(4)} of chroma`)
+
+  // A check that has never rejected anything is not evidence: a spread that moves lightness alone
+  // -- the obvious way to write this table, and the one that reads as a gradient -- must fail the
+  // chroma half while sailing through the lightness half.
+  const flat = GROUND_SHADE_SPREAD.map((offset) => ({ lightness: offset.lightness, chroma: 0 }))
+  const theme = THEMES[DEFAULT_ROAD_THEME]
+  const pair = groundPairForTheme(
+    BIOMES[0].ground,
+    theme.road[PALETTE_INDEX.ASPHALT_DARK],
+    theme.road[PALETTE_INDEX.ASPHALT_LIGHT],
+    undefined,
+    theme.groundLight,
+  )
+  const flatChromas = flat.map((offset) => {
+    const lab = toOklab(pair[0])
+
+    return chroma(fromOklab({ L: Math.min(1, Math.max(0, lab.L + offset.lightness)), a: lab.a, b: lab.b }))
+  })
+
+  assert.ok(
+    Math.max(...flatChromas) - Math.min(...flatChromas) < minChromaRange,
+    'a lightness-only spread is not being rejected, so the chroma half of this check is measuring nothing',
+  )
+
+  console.log(
+    `    tightest spread across the 63 biome/theme pairs: ${worstL.toFixed(4)} lightness (${worstLAt}), ${worstC.toFixed(4)} chroma (${worstCAt})`,
+  )
+})
+
+check('every ground shade still clears the asphalt, so five columns cannot hide a merged one', () => {
+  // `MIN_GROUND_CONTRAST` used to be asked of one colour per biome. There are five now, and the
+  // spread moves lightness -- so the shade nearest the road is not the one the pair was checked
+  // on, and a set that passes on its middle can still have an end that has merged with the road.
+  let worst = Infinity
+  let worstAt = ''
+
+  for (const id of themeIds()) {
+    const theme = THEMES[id]
+    // `contrastRatio` takes COLOURS and relativeLuminance-es them itself. Handing it two
+    // luminances instead returns 1.00 for everything, which reads exactly like a ground that has
+    // merged with the road -- this check's first run "found" that on day/forest and the defect
+    // was here.
+    const dark = theme.road[PALETTE_INDEX.ASPHALT_DARK]
+    const light = theme.road[PALETTE_INDEX.ASPHALT_LIGHT]
+    const roadLo = relativeLuminance(dark) <= relativeLuminance(light) ? dark : light
+    const roadHi = roadLo === dark ? light : dark
+
+    for (const biome of BIOMES) {
+      for (const shade of groundShadesForTheme(
+        biome.ground,
+        theme.road[PALETTE_INDEX.ASPHALT_DARK],
+        theme.road[PALETTE_INDEX.ASPHALT_LIGHT],
+        undefined,
+        theme.groundLight,
+      )) {
+        const near = contrastRatio(shade, roadLo) < contrastRatio(shade, roadHi) ? roadLo : roadHi
+        const ratio = contrastRatio(shade, near)
+
+        if (ratio < worst) { worst = ratio; worstAt = `${id}/${biome.id}` }
+      }
+    }
+  }
+
+  assert.ok(worst >= MIN_GROUND_CONTRAST, `${worstAt} has a ground shade at ${worst.toFixed(2)}:1 against the asphalt`)
+  console.log(`    worst ground shade against its own asphalt: ${worst.toFixed(2)}:1 (${worstAt}), floor ${MIN_GROUND_CONTRAST}`)
+})
+
+check('the ground is drawn in patches, not in per-segment ripple', () => {
+  // Deterministic: the same segment answers the same on the next lap and at every viewport.
+  for (const index of [0, 1, 7, 158, 159, 1433, 99999]) {
+    assert.equal(groundShadeFor(index), groundShadeFor(index), `segment ${index} is not deterministic`)
+  }
+
+  const sample = 40000
+  const counts = new Array(GROUND_SHADES_PER_BIOME).fill(0)
+  const runs = []
+  let run = 1
+
+  for (let i = 0; i < sample; i++) {
+    const shade = groundShadeFor(i)
+
+    assert.ok(Number.isInteger(shade) && shade >= 0 && shade < GROUND_SHADES_PER_BIOME, `segment ${i} chose shade ${shade}`)
+    counts[shade] += 1
+
+    if (i > 0 && shade === groundShadeFor(i - 1)) run += 1
+    else if (i > 0) { runs.push(run); run = 1 }
+  }
+
+  // Every column is actually drawn -- a column nobody ever sees is a column that is not there --
+  // and the middle three carry more of the ground than the two ends. That second half is not a
+  // preference expressed anywhere in the code: it falls out of the noise, which concentrates
+  // towards the middle of its range, and it is asserted here so that if the noise is ever
+  // replaced by something uniform the ground quietly becoming five equal materials is caught.
+  for (const [shade, n] of counts.entries()) {
+    assert.ok(n > sample * 0.08, `shade ${shade} covers ${n} of ${sample} segments -- effectively unused`)
+  }
+  assert.ok(
+    Math.min(counts[1], counts[2], counts[3]) > Math.max(counts[0], counts[4]),
+    `the ends of the spread are as common as its middle (${counts.join('/')}) -- the ground reads as five materials, not one`,
+  )
+
+  // **The acceptance for this step, and the thing the previous one failed.** A per-segment hash
+  // gives a mean run of ~1.25 segments, which at this projection is horizontal ripple across the
+  // verge; patches have to be long enough to read as ground and short enough to still be patches.
+  const mean = runs.reduce((sum, r) => sum + r, 0) / runs.length
+
+  assert.ok(
+    mean >= GROUND_PATCH_MIN_SEGMENTS && mean <= GROUND_PATCH_MAX_SEGMENTS,
+    `patches average ${mean.toFixed(1)} segments, outside ${GROUND_PATCH_MIN_SEGMENTS}..${GROUND_PATCH_MAX_SEGMENTS}`,
+  )
+
+  // Varied, not a metronome: patches all of one length would be a stripe pattern with extra steps.
+  const spread = Math.sqrt(runs.reduce((sum, r) => sum + (r - mean) ** 2, 0) / runs.length)
+
+  assert.ok(spread > 1, `every patch is ${mean.toFixed(1)} segments long (spread ${spread.toFixed(2)}) -- that is a pattern, not noise`)
+
+  // **No periodicity at the lattice spacing.** The noise repeats its *scale* every
+  // `GROUND_PATCH_SEGMENTS`; if it repeated its *values* there, the ground would be one patch
+  // stamped down the whole track. Sampled at multiples of the spacing, agreement must stay near
+  // what independent draws give.
+  const chance = counts.reduce((sum, n) => sum + (n / sample) ** 2, 0)
+
+  for (let k = 1; k <= 5; k++) {
+    const lag = k * GROUND_PATCH_SEGMENTS
+    let same = 0
+
+    for (let i = 0; i < sample; i++) if (groundShadeFor(i) === groundShadeFor(i + lag)) same += 1
+
+    const rate = same / sample
+
+    assert.ok(rate < chance * 1.6, `the ground repeats itself every ${lag} segments on ${(rate * 100).toFixed(1)}% of them, against ${(chance * 100).toFixed(0)}% by chance`)
+  }
+
+  // Shown to reject both failure modes it sits between: the per-segment hash this replaced, and
+  // a modulo. Neither can produce a patch.
+  const hashed = (i) => {
+    let h = Math.trunc(i) | 0
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b)
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b)
+    return ((h ^ (h >>> 16)) >>> 0) % GROUND_SHADES_PER_BIOME
+  }
+
+  for (const [name, fn] of [['a per-segment hash', hashed], ['a modulo', (i) => i % GROUND_SHADES_PER_BIOME]]) {
+    let control = 1
+    const controlRuns = []
+
+    for (let i = 1; i < 4000; i++) {
+      if (fn(i) === fn(i - 1)) control += 1
+      else { controlRuns.push(control); control = 1 }
+    }
+
+    const controlMean = controlRuns.reduce((sum, r) => sum + r, 0) / controlRuns.length
+
+    assert.ok(
+      controlMean < GROUND_PATCH_MIN_SEGMENTS,
+      `${name} averages ${controlMean.toFixed(2)}-segment runs, which this check is failing to reject`,
+    )
+  }
+
+  // The figure `GROUND_PATCH_SEGMENTS` was actually tuned on: a one- or two-segment patch is a
+  // horizontal band across the verge, i.e. the ripple, so what matters is how little ground is
+  // in one -- not the mean, which a few very long patches flatter.
+  const sliverShare = runs.filter((r) => r <= 2).reduce((sum, r) => sum + r, 0) / sample
+  const sorted = [...runs].sort((a, b) => a - b)
+
+  assert.ok(sliverShare < 0.05, `${(sliverShare * 100).toFixed(1)}% of the ground sits in patches under three segments`)
+
+  console.log(
+    `    patches: median ${sorted[sorted.length >> 1]}, mean ${mean.toFixed(1)}, longest ${Math.max(...runs)} segments; ${(sliverShare * 100).toFixed(1)}% of ground in slivers; coverage ${counts.map((n) => `${((100 * n) / sample).toFixed(0)}%`).join('/')}`,
+  )
+})
+
+
+check('a mark only ever lands on ground that could have made it', () => {
+  // A puddle in the dunes is the same failure a palm tree on a glacier is, and it became possible
+  // the moment the field left the asphalt. Every biome names its own set; nothing may draw from
+  // outside it.
+  for (const biome of BIOMES) {
+    assert.ok(biome.decals.length >= 3, `${biome.id} names only ${biome.decals.length} marks`)
+    for (const kind of biome.decals) {
+      assert.ok(DECAL_KINDS.includes(kind), `${biome.id} names a mark "${kind}" that does not exist`)
+    }
+  }
+
+  const track = buildRunCircuit()
+  const length = track.length
+  const used = new Map()
+
+  for (let i = 0; i < length; i++) {
+    const decal = decalAt(i, length)
+
+    if (!decal) continue
+
+    const biome = biomeForSegment(i, length)
+
+    assert.ok(
+      biome.decals.includes(decal.kind),
+      `segment ${i} is ${biome.id} and carries a ${decal.kind}, which ${biome.id} does not have`,
+    )
+    used.set(biome.id, (used.get(biome.id) ?? new Set()).add(decal.kind))
+  }
+
+  // And every biome actually uses the set it names -- a list that never reaches the ground is a
+  // list nobody can tell is wrong.
+  for (const biome of BIOMES) {
+    const seen = used.get(biome.id) ?? new Set()
+
+    assert.ok(seen.size >= 3, `${biome.id} only ever drew ${seen.size} of its ${biome.decals.length} marks over a whole lap`)
+  }
+
+  // Shown to bite: without the biome argument the placer falls back to the whole vocabulary, and
+  // that has to be visibly a different answer or this check is measuring nothing.
+  let wrongForBiome = 0
+
+  for (let i = 0; i < length; i++) {
+    const anywhere = decalAt(i, 0)
+
+    if (anywhere && !biomeForSegment(i, length).decals.includes(anywhere.kind)) wrongForBiome += 1
+  }
+  assert.ok(wrongForBiome > 0, 'the unrestricted placer never picks a mark the biome lacks, so the restriction is untested')
+
+  console.log(`    marks drawn per biome: ${BIOMES.map((b) => `${b.id} ${(used.get(b.id) ?? new Set()).size}/${b.decals.length}`).join(', ')}`)
+})
+
+check('the marks reach across the verge but still crowd the band the player reads', () => {
+  // Widening the field is the point of the step; leaving the offsets uniform across it would make
+  // the near verge -- the only part read at speed -- six times emptier than it was. Same trade,
+  // and the same fix, as `DECOR.OFFSET_BIAS`.
+  const track = buildRunCircuit()
+  const length = track.length
+  const offsets = []
+
+  for (let i = 0; i < length; i++) {
+    const decal = decalAt(i, length)
+
+    if (decal) offsets.push(Math.abs(decal.offsetX))
+  }
+
+  const near = offsets.filter((o) => o <= 2.2).length / offsets.length
+  const wide = offsets.filter((o) => o > 6).length / offsets.length
+
+  assert.ok(near > 0.25, `only ${(near * 100).toFixed(0)}% of marks are inside the old 2.2 band -- the road has been emptied to fill the verge`)
+  assert.ok(wide > 0.05, `only ${(wide * 100).toFixed(0)}% of marks are past 6 half-widths -- the field did not actually widen`)
+  assert.ok(Math.max(...offsets) > DECAL_MAX_OFFSET * 0.8, 'nothing gets near the edge of the field, so its width is nominal')
+
+  console.log(
+    `    ${offsets.length} marks: ${(near * 100).toFixed(0)}% inside the old 2.2 band, ${(wide * 100).toFixed(0)}% past 6, widest ${Math.max(...offsets).toFixed(1)} of ${DECAL_MAX_OFFSET}`,
+  )
 })
 
 console.log(`${passed} checks passed`)

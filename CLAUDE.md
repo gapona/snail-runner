@@ -5158,6 +5158,121 @@ build-derived silhouettes.**
     the frame the next call photographs. Pause the scene before screenshotting; a paused scene still
     renders.
 
+## The Ground Has Fibre
+
+`GROUND_SHADES_PER_BIOME`, `GROUND_SHADE_SPREAD`, `groundShadesForTheme` and `groundShadeFor` in
+`src/road/biomes.ts`; `PALETTE_COLUMNS`/`groundPaletteIndex` in `road/constants.ts`; the widened
+field in `road/decals.ts`. **The largest surface in the frame was one flat colour**, and it had
+been since biomes existed — the authored light/dark pair collapses because `GROUND_ALTERNATION` is
+0, so a biome was, mechanically, one number.
+
+### Five columns per biome, not two
+
+- **The palette is `PALETTE_COLUMNS x FOG_STEPS` = 50 x 48.** Five road colours, then
+  `BIOMES.length * GROUND_SHADES_PER_BIOME` = 9 x 5 ground columns. **The multiplier is the named
+  constant in both places that use it** — `PALETTE_COLUMNS` and `createRoadPalette`'s own
+  `column - road.length` arithmetic — because a bare `2` left in one of them is a palette whose
+  columns no longer mean what the mesh thinks they mean, and nothing about the resulting picture
+  says which half is wrong.
+- **This is still the only mechanism available.** `Mesh2D` has one object-wide tint, no per-vertex
+  tint and no second UV set, so a per-segment ground colour has to be a column. Five costs a wider
+  1px-per-texel texture and **nothing else**: no draw call, no pass, no shader.
+- **⚠ The five shades move lightness and chroma INDEPENDENTLY, and that is the whole reason
+  `GROUND_SHADE_SPREAD` is a table rather than a ramp.** A set spread along one axis collapses
+  under the eye's own ordering — five brightnesses is a gradient, five saturations is a gradient.
+  Shade 1 is darker *and* duller, shade 3 lighter *and* richer, shade 4 lighter *and* duller: no
+  monotone relation between the columns, so no ordering to flatten. Hue is untouched, because five
+  hues is five materials and this is one material worn unevenly. Delivered across the 63
+  biome/theme pairs, the tightest spread is **0.0971 of OKLab lightness** (`dusk`/`fungal`) and
+  **0.0169 of chroma** (`ember`/`ruins`); `verify:road` holds both floors separately and is shown
+  to reject a lightness-only table.
+- **⚠ The lightness spread is anchored at the pair and runs *away* from the road, never centred on
+  it.** Centred is the obvious reading and it walks the far end across the asphalt's own
+  brightness: the first version delivered `day`/`forest` at **1.00:1**, the exact arrangement
+  `MIN_GROUND_CONTRAST` forbids, on the default theme. Anchoring costs nothing — same range, and
+  the anchor shade is the pair itself, already cleared.
+- **⚠ And the chroma half moves luminance too, which is enough to matter at the boundary.**
+  `groundPairForTheme` pushes to *exactly* the floor and stops, so a biome sitting on it has no
+  headroom: `ice`/`crystal` came back at **1.59:1** against 1.60. `clearOfRoad` nudges only the
+  shade that falls short, in the set's own direction, so it ends up further from its neighbours
+  rather than collapsed onto them. Worst delivered today: **1.60:1** (`day`/`coast`).
+
+### The column a segment picks
+
+- **A noise octave along the track, never the rumble alternation and never a bare hash.** The
+  stripes are a rhythm and have to stay one — a regular beat across the ground is the moiré
+  `GROUND_ALTERNATION` was switched off over. A per-segment hash is the opposite failure and just
+  as wrong: at this projection a one-segment patch is a horizontal band across the verge. **It was
+  built that way first and photographed, and the ripple is exactly what the frame showed.**
+- `GROUND_PATCH_SEGMENTS` is 14 — the noise's lattice spacing, not a hard run length.
+  **The figure it was tuned on is the sliver share, not the mean**: patches run a median of 6 and
+  a mean of 8.6 segments, and only **2.1% of the ground sits in a patch shorter than three**. At a
+  spacing of 10 that figure is 8.3%, and those one- and two-segment patches *are* the ripple.
+- **⚠ An explicit weights table was tried and removed.** Mapping the noise through a cumulative
+  `[1,3,4,3,1]` looked like it stated the intent and did not deliver it: value noise interpolated
+  between two uniform draws is already concentrated toward the middle, so the two distributions
+  compound and shade 0 came out at **1827 of 40000 segments against the 3333 the table claimed**.
+  The single octave does the weighting on its own — delivered coverage is **16/24/24/21/14 percent**
+  — and `verify:road` asserts the middle three outweigh the two ends, so a uniform replacement
+  turning the ground into five equal materials would be caught.
+- Deterministic from the index alone, hash-backed rather than an RNG stream, for the reason
+  `decorVariation` gives: the same patch on the next lap, at every viewport, in any pool slot.
+
+### The marks reach across the verge
+
+- **`DECAL_MAX_OFFSET` was 2.2 — the road plus the lip of the verge — and from there out to
+  `GROUND_EXTENT` the ground carried nothing at all.** That is what "flat" actually was: not a
+  missing texture, a marked strip a tenth as wide as the surface it sits on. Now **13**, with
+  `GROUND_EXTENT` raised 40 → **56** so nothing is drawn on sky, and that relationship is asserted
+  rather than left in a comment — the second time that comment has gone stale.
+- **`DECAL_OFFSET_BIAS` = 2.1, for the reason `DECOR.OFFSET_BIAS` exists**: a uniform draw across
+  a field six times wider is a field six times emptier where it is looked at. Measured over a lap,
+  **44% of marks still land inside the old 2.2 band and 32% past 6 half-widths.**
+- `DECAL_DENSITY` rose 0.17 → **0.52** in the same pass and had to: the density is a chance per
+  *segment*, so widening the field alone would have emptied the road to fill the verge. 756 marks
+  over a 1434-segment lap, **peak demand 58 against a pool of 96**.
+- **Seven kinds, and the split is the point.** The original four are *surface* marks — a stain, a
+  crack, a skid, some scatter — authored when a decal could not leave the asphalt. The field
+  reaches across the verge now, so the vocabulary grew the three things ground has that road does
+  not: `stones`, `tuft`, `puddle`. Still procedural, still **zero bytes**.
+  - `stones` and `puddle` both draw their highlight with `destination-out` rather than adding one.
+    The mesh multiplies, so everything drawn *removes* light and there is no way to put any back;
+    taking alpha back out of the upper face is what makes a stone an object on the surface rather
+    than a hole in it, and what separates a puddle from the `stain` already in the set.
+- **A puddle in the dunes is the same failure a palm tree on a glacier is**, and it became possible
+  the moment the field left the asphalt. `Biome.decals` names each stretch's set, in order of
+  commonness, the same "listed twice appears twice as often" knob `Biome.props` uses.
+  `verify:road` asserts nothing draws outside its biome's set **and** that every biome actually
+  uses at least three of the marks it names over a lap — a list that never reaches the ground is a
+  list nobody can tell is wrong.
+
+### Cost
+
+Measured with `performance.now()` **around `DecalMesh.render` itself**, batched over 300 stepped
+frames — never from a frame rate, because an unfocused tab has its rAF throttled and a hidden one
+suspends it outright, so an fps figure taken under automation says nothing about what anything
+cost. `WorldRenderCost` carries `decalMs` separately from `decorMs` for the same reason: the two
+are sized by different things, and a change to one is invisible inside a total that is mostly the
+other.
+
+| | per frame | peak marks drawn |
+|---|---|---|
+| before (2.2-wide field, 4 kinds) | 0.0417ms | 22 of a pool of 32 |
+| after (13-wide field, 7 kinds) | 0.0851ms | 44 of a pool of 96 |
+
+Twice the cost of a number that was already a four-hundredth of a 16ms budget. The five palette
+columns cost nothing measurable at all — they are a wider 1px-per-texel texture sampled by the
+same UVs the mesh was already writing.
+
+### What this did not fix
+
+**The far verge is still flat colour, and the numbers say why rather than the eye.** Perspective
+compresses distance, so a 14-segment patch covers most of the near ground and the along-track
+variation lands where it is a few pixels tall; and `DECAL_OFFSET_BIAS` deliberately crowds the
+marks into the band the player reads, which leaves the ground out towards `GROUND_EXTENT` carrying
+almost nothing. What steps 1-3 bought is a road and a near verge that read as ground; the outer
+field is unchanged in kind.
+
 ## The Economy: A Cap That Knows Which Track You Are On
 
 `coinCapFor` + `levelContentValue` in `src/game/levels.ts`, `SCORE_PER_COIN` and `coinsForRun` in

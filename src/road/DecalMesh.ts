@@ -93,7 +93,9 @@ export class DecalMesh {
 
     for (let n = 0; n < DECAL_DRAW_SEGMENTS && n < DRAW_DISTANCE; n++) {
       const index = baseIndex + n
-      const decal = decalAt(index)
+      // The track's length is what turns a segment index into a biome, and the biome is what
+      // decides which marks may lie here at all -- see `Biome.decals`.
+      const decal = decalAt(index, track.length)
 
       if (!decal) continue
 

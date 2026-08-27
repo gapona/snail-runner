@@ -15,7 +15,7 @@ import {
   RUMBLE_WIDTH_FRACTION,
 } from './constants'
 import { logWarning } from '../platform/yt'
-import { biomeForSegment, biomeIndex } from './biomes'
+import { biomeForSegment, biomeIndex, groundShadeFor } from './biomes'
 import { quadWriteAction } from './meshGuard'
 import { createRoadPalette } from './palette'
 import { projectInto, type ScreenPoint } from './project'
@@ -294,6 +294,10 @@ export class RoadMesh {
         // Derived from the segment index rather than stored on the segment: it costs nothing to
         // ask and cannot drift out of sync with itself. See `biomeForSegment`.
         biomeIndex(biomeForSegment(segment.index, track.length).id),
+        // Keyed on the segment's own index, so the patch a piece of ground belongs to is a
+        // property of that piece of ground: it is the same on the next lap, at every viewport
+        // size and in whatever pool slot the segment happens to land.
+        groundShadeFor(segment.index),
       )
       maxY = s2.y
     }
@@ -338,10 +342,13 @@ export class RoadMesh {
     rung: boolean,
     fogV: number,
     biome: number,
+    shade: number,
   ): void {
     const roadU = paletteU(alternate ? PALETTE_INDEX.ASPHALT_DARK : PALETTE_INDEX.ASPHALT_LIGHT)
     const rumbleU = paletteU(alternate ? PALETTE_INDEX.RUMBLE_DARK : PALETTE_INDEX.RUMBLE_LIGHT)
-    const groundU = paletteU(groundPaletteIndex(biome, alternate))
+    // The ground does NOT ride the rumble beat -- see `groundShadeFor`. `alternate` still
+    // drives the asphalt and the stripes above, which is the rhythm it was always for.
+    const groundU = paletteU(groundPaletteIndex(biome, shade))
 
     const near = slot * QUADS_PER_SEGMENT
     const rumble1 = s1.w * RUMBLE_WIDTH_FRACTION

@@ -72,6 +72,9 @@ export function createDecalAtlas(scene: Phaser.Scene): string {
       if (kind === 'stain') drawStain(context, inner, rng)
       else if (kind === 'crack') drawCrack(context, inner, rng)
       else if (kind === 'skid') drawSkid(context, inner, rng)
+      else if (kind === 'stones') drawStones(context, inner, rng)
+      else if (kind === 'tuft') drawTuft(context, inner, rng)
+      else if (kind === 'puddle') drawPuddle(context, inner, rng)
       else drawScatter(context, inner, rng)
 
       context.restore()
@@ -164,6 +167,105 @@ function drawScatter(context: CanvasRenderingContext2D, size: number, rng: () =>
     context.ellipse(x, y, radius * (0.8 + rng() * 0.6), radius, rng() * Math.PI, 0, Math.PI * 2)
     context.fill()
   }
+}
+
+/**
+ * Loose stones: a few chunky blobs with a lighter crown, not the even sprinkle `scatter` is.
+ *
+ * **The crown is what makes it a stone rather than a hole.** These are drawn with a multiply
+ * blend, so everything here removes light; a solid dark ellipse is a mark in the ground. Lifting
+ * the alpha to near nothing across the upper part of each blob leaves the ground showing through
+ * where a lit face would be, and the eye reads the pair as an object sitting on the surface.
+ */
+function drawStones(context: CanvasRenderingContext2D, size: number, rng: () => number): void {
+  for (let i = 0; i < 7; i++) {
+    const radius = size * (0.06 + rng() * 0.09)
+    const x = size * (0.12 + rng() * 0.76)
+    const y = size * (0.15 + rng() * 0.7)
+    const tilt = rng() * Math.PI
+
+    context.fillStyle = `rgba(0, 0, 0, ${(0.45 + rng() * 0.3).toFixed(2)})`
+    context.beginPath()
+    context.ellipse(x, y, radius * (1 + rng() * 0.5), radius, tilt, 0, Math.PI * 2)
+    context.fill()
+
+    // The lit face: drawn back out of the mark rather than added over it, since a multiply blend
+    // has no way to put light back.
+    context.save()
+    context.globalCompositeOperation = 'destination-out'
+    context.fillStyle = 'rgba(0, 0, 0, 0.75)'
+    context.beginPath()
+    context.ellipse(x, y - radius * 0.34, radius * 0.72, radius * 0.42, tilt, 0, Math.PI * 2)
+    context.fill()
+    context.restore()
+  }
+}
+
+/**
+ * A tuft of growth: blades from a common root, thinning as they rise.
+ *
+ * Drawn as tapering strokes rather than filled shapes -- a blade is a line, and the taper is what
+ * keeps it from reading as a crack, which is the one other mark in the set made of thin dark
+ * strokes. Cracks branch and wander; these all leave one point and stay straight.
+ */
+function drawTuft(context: CanvasRenderingContext2D, size: number, rng: () => number): void {
+  for (let clump = 0; clump < 3; clump++) {
+    const rootX = size * (0.2 + rng() * 0.6)
+    const rootY = size * (0.62 + rng() * 0.3)
+
+    for (let blade = 0; blade < 7; blade++) {
+      const lean = (rng() - 0.5) * size * 0.3
+      const height = size * (0.16 + rng() * 0.2)
+
+      context.strokeStyle = `rgba(0, 0, 0, ${(0.4 + rng() * 0.35).toFixed(2)})`
+      context.lineWidth = size * (0.012 + rng() * 0.014)
+      context.lineCap = 'round'
+      context.beginPath()
+      context.moveTo(rootX, rootY)
+      context.quadraticCurveTo(rootX + lean * 0.4, rootY - height * 0.6, rootX + lean, rootY - height)
+      context.stroke()
+    }
+  }
+}
+
+/**
+ * Standing water: one soft body with a bright rim.
+ *
+ * **The rim is the whole read, and it is subtractive like the stone's crown.** Water is darker
+ * than the ground it lies in and its edge catches the sky; with only the dark body this is a
+ * stain, which is already in the set. Taking the alpha back out around the perimeter is what
+ * separates the two.
+ */
+function drawPuddle(context: CanvasRenderingContext2D, size: number, rng: () => number): void {
+  const cx = size * 0.5
+  const cy = size * 0.5
+  const rx = size * (0.26 + rng() * 0.12)
+  const ry = size * (0.17 + rng() * 0.1)
+
+  context.fillStyle = 'rgba(0, 0, 0, 0.62)'
+  context.beginPath()
+  // A lobed outline rather than an ellipse: standing water takes the shape of the ground under
+  // it, and a perfect ellipse reads as a printed dot.
+  for (let step = 0; step <= 28; step++) {
+    const angle = (step / 28) * Math.PI * 2
+    const wobble = 0.82 + Math.sin(angle * 3 + rng() * 0.01) * 0.12 + rng() * 0.06
+    const x = cx + Math.cos(angle) * rx * wobble
+    const y = cy + Math.sin(angle) * ry * wobble
+
+    if (step === 0) context.moveTo(x, y)
+    else context.lineTo(x, y)
+  }
+  context.closePath()
+  context.fill()
+
+  context.save()
+  context.globalCompositeOperation = 'destination-out'
+  context.strokeStyle = 'rgba(0, 0, 0, 0.8)'
+  context.lineWidth = size * 0.022
+  context.beginPath()
+  context.ellipse(cx, cy, rx * 0.78, ry * 0.74, 0, 0, Math.PI * 2)
+  context.stroke()
+  context.restore()
 }
 
 /**

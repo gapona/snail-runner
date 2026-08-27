@@ -39,6 +39,21 @@ export interface WorldViewOptions {
 export interface WorldRenderCost {
   roadMs: number
   decorMs: number
+  /**
+   * What `DecalMesh.render` cost this frame, on its own.
+   *
+   * Separated from `decorMs` because the ground marks and the billboards are sized by different
+   * things — the decals by `DECAL_DRAW_SEGMENTS` and their own density, the sprites by how many
+   * decorated segments fall in the visible band — so a change to one is invisible inside a total
+   * that is mostly the other.
+   *
+   * **Timed with `performance.now()` around the call, never inferred from a frame rate.** A tab
+   * that is not focused has its rAF throttled and in a hidden one suspended outright, so an fps
+   * figure taken under automation says nothing about what anything cost. Compare the batched
+   * per-frame figure rather than the percentiles: `performance.now()` is clamped to ~100us in a
+   * page that is not cross-origin isolated, which is coarser than a single one of these calls.
+   */
+  decalMs: number
 }
 
 /**
@@ -199,6 +214,9 @@ export class WorldView {
     // Marks on the ground before the things standing on it: they read this frame's projections out
     // of the mesh pass exactly as the billboards do, and they are painted under them.
     this.decalMesh.render(this.track, this.roadMesh.baseIndex, this.roadMesh.clipY)
+
+    const decalMs = performance.now() - decorStarted
+
     this.roadSprites.render(this.track, this.roadMesh.baseIndex, this.roadMesh.clipY, width, height)
     // The biome under the *camera*, not the one filling the frame: two are visible at every
     // boundary, and the air belongs to the one the player is in. Cheap to call every frame — the
@@ -214,7 +232,7 @@ export class WorldView {
       multiplyTint(skylineBiomeTint(this.roadMesh.baseIndex, this.track.length), getRoadTheme().decorTint),
     )
 
-    return { roadMs, decorMs: performance.now() - decorStarted }
+    return { roadMs, decorMs: performance.now() - decorStarted, decalMs }
   }
 
   /** How many scenery slots the last frame wanted, for the DEV pool-pressure report. */

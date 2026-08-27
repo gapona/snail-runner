@@ -20,12 +20,25 @@
  * whole identity is that it is darker.
  */
 
-/** The four marks. Their shapes are drawn procedurally — see `decalArt.ts`. */
-export const DECAL_KINDS = ['stain', 'crack', 'skid', 'scatter'] as const
+/**
+ * The seven marks. Their shapes are drawn procedurally — see `decalArt.ts`.
+ *
+ * **Four of these are road marks and three are ground marks, and the split is the point.** The
+ * first four were authored when a decal could only be within `2.2` half-widths of the centreline,
+ * i.e. on the asphalt or on the very edge of the verge — a stain, a crack, a skid and some
+ * scatter are all things that happen to a *surface*. The field reaches across the verge now, and
+ * a skid mark out there would be a lie about what made it. So the vocabulary grew the three
+ * things ground has that road does not: loose stones, a tuft of growth, and standing water.
+ *
+ * Which of them a stretch may use is the biome's business — see `Biome.decals`. A puddle in the
+ * dunes and a tuft on a lava field are the same failure the prop lists exist to prevent.
+ */
+export const DECAL_KINDS = ['stain', 'crack', 'skid', 'scatter', 'stones', 'tuft', 'puddle'] as const
 
 export type DecalKind = (typeof DECAL_KINDS)[number]
 
 import { DRAW_DISTANCE, FOG_STEPS, fogStepFor } from './constants'
+import { biomeForSegment } from './biomes'
 
 /**
  * The opacities the atlas is drawn at, one row per entry.
@@ -87,7 +100,7 @@ export const DECAL_DRAW_SEGMENTS = 110
  * It lives here rather than on `DecalMesh` because a check cannot import that file — it imports
  * phaser — and a pool ceiling nothing can measure is the shape of the problem it exists to avoid.
  */
-export const DECAL_POOL_SIZE = 32
+export const DECAL_POOL_SIZE = 96
 
 /**
  * How far into its own fade a mark this far away is, `0..1`.
@@ -108,11 +121,41 @@ export function decalFade(distanceIndex: number): number {
   return Math.min(1, fogStepFor(distanceIndex) / (FOG_STEPS - 1) / end)
 }
 
-/** Chance that a segment starts a decal. Tuned for one mark every few metres, not a carpet. */
-export const DECAL_DENSITY = 0.17
+/**
+ * Chance that a segment starts a decal.
+ *
+ * **Raised from 0.17 with the field, and the two had to move together.** Widening
+ * `DECAL_MAX_OFFSET` spreads the same marks over six times the area — the density is a chance
+ * per *segment*, so it says nothing about how far across the ground they scatter. Left alone, the
+ * effect of reaching across the verge would have been to make the road itself emptier, which is
+ * the opposite of the change. `verify:road` sweeps the lap and prints what this actually delivers
+ * against `DECAL_POOL_SIZE`.
+ */
+export const DECAL_DENSITY = 0.52
 
-/** How far either side of the centreline a decal may sit, in road half-widths. */
-export const DECAL_MAX_OFFSET = 2.2
+/**
+ * How far either side of the centreline a decal may sit, in road half-widths.
+ *
+ * **Was 2.2, which is the road plus the lip of the verge — and from there out to
+ * `GROUND_EXTENT` the ground carried nothing at all.** That is the flat expanse: not a missing
+ * texture, a marked strip a tenth as wide as the surface it sits on.
+ *
+ * Bounded by where the ground actually is rather than by the frame: a mark past `GROUND_EXTENT`
+ * would be drawn on sky. Kept well inside it because the far tier of scenery starts at 20 and a
+ * mark under a distant silhouette is a mark nobody resolves.
+ */
+export const DECAL_MAX_OFFSET = 13
+
+/**
+ * How the offsets crowd the near verge, as an exponent on a `0..1` draw.
+ *
+ * **A uniform draw across a field six times wider is a field six times emptier where it is
+ * looked at.** `DECOR.OFFSET_BIAS` exists for the identical reason and this is the same trick:
+ * raising a `0..1` value to a power above 1 pulls it toward zero, so most marks stay in the band
+ * the player reads and the rest fill the ground out to the edge of the frame. `verify:road`
+ * measures the share that still lands inside the old 2.2 band rather than trusting the exponent.
+ */
+export const DECAL_OFFSET_BIAS = 2.1
 
 /** Size range, in road half-widths. A decal is wider than it is long — see `lengthSegments`. */
 export const DECAL_HALF_WIDTH = { min: 0.18, max: 0.62 } as const
@@ -167,18 +210,28 @@ function unit(h: number, axis: number): number {
  * them answers. That is what stops two decals from being generated inside each other, and it is
  * why the renderer walks segments rather than asking each visible one what it is showing.
  */
-export function decalAt(segmentIndex: number): DecalPlacement | null {
+export function decalAt(segmentIndex: number, trackLength = 0): DecalPlacement | null {
   const h = hash(segmentIndex)
 
   if (unit(h, 0) >= DECAL_DENSITY) return null
 
   const between = (axis: number, min: number, max: number) => min + unit(h, axis) * (max - min)
-  const kindIndex = Math.min(DECAL_KINDS.length - 1, Math.floor(unit(h, 1) * DECAL_KINDS.length))
+
+  // **The biome decides which marks exist here, exactly as it decides which props stand here.**
+  // Listed in order of commonness and picked uniformly, so a kind named twice appears twice as
+  // often -- the same cheaper-than-weights knob `Biome.props` uses, and readable in the data.
+  const allowed = trackLength > 0 ? biomeForSegment(segmentIndex, trackLength).decals : DECAL_KINDS
+  const name = allowed[Math.min(allowed.length - 1, Math.floor(unit(h, 1) * allowed.length))]
+  const kindIndex = Math.max(0, DECAL_KINDS.indexOf(name as DecalKind))
+
+  // Biased toward the near verge: `|offset|` is a biased draw and the side is its own axis, so
+  // the two do not correlate the way `between(-max, max)` would leave them.
+  const side = unit(h, 7) < 0.5 ? -1 : 1
 
   return {
     kind: DECAL_KINDS[kindIndex],
     kindIndex,
-    offsetX: between(2, -DECAL_MAX_OFFSET, DECAL_MAX_OFFSET),
+    offsetX: side * Math.pow(unit(h, 2), DECAL_OFFSET_BIAS) * DECAL_MAX_OFFSET,
     halfWidth: between(3, DECAL_HALF_WIDTH.min, DECAL_HALF_WIDTH.max),
     lengthSegments: Math.round(between(4, DECAL_LENGTH_SEGMENTS.min, DECAL_LENGTH_SEGMENTS.max)),
     flipX: unit(h, 5) < 0.5,
@@ -196,11 +249,11 @@ export function decalAt(segmentIndex: number): DecalPlacement | null {
  * that never arrives. What this cannot know is the hill clip, which needs a projection; that only
  * ever removes marks, so this is an upper bound on what a frame asks for.
  */
-export function decalsIn(fromSegment: number, segments: number): number {
+export function decalsIn(fromSegment: number, segments: number, trackLength = 0): number {
   let count = 0
 
   for (let i = 0; i < segments; i++) {
-    const decal = decalAt(fromSegment + i)
+    const decal = decalAt(fromSegment + i, trackLength)
 
     if (decal && decalRowFor(decal.strength, decalFade(i)) >= 0) count++
   }
