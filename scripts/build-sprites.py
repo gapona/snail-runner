@@ -495,7 +495,8 @@ def build_obstacles(report: list) -> None:
 
 
 PICKUP_KEYS = {
-    "pick_boost": "pickup-boost",
+    # No `boost`: Fever replaced it, and two products that differ only in how much of the same
+    # thing they give are one product with a table to memorise. See `pickups.ts`.
     "pick_shield": "pickup-shield",
     "pick_coin": "pickup-coin",
     # **Four fruits, not the five the plan asks for, and the fifth is written down rather than

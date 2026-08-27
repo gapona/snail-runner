@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict'
 import {
   addShield,
-  applyBoost,
+  eatFruit,
   createRunState,
   earnCoin,
   isRunOver,
@@ -24,8 +24,7 @@ import {
   takeHit,
 } from '../src/run/runState.ts'
 import {
-  BOOST_FACTOR,
-  BOOST_MS,
+  FEVER_SPEED_FACTOR,
   HIT_SPEED_LOSS,
   RUN_LIVES,
   SPEED_ACCEL,
@@ -160,9 +159,10 @@ check('the saturating curve closes 63% of the gap in 1/SPEED_ACCEL seconds', () 
 })
 
 check('a raised ceiling is chased, and a lowered one is fallen back to', () => {
-  // What the boost pickup does (chunk 5) is raise `speedCap`, so the curve has to work in both
-  // directions -- otherwise a boost that ends leaves the run permanently fast.
-  const boosted = SPEED_CAP * BOOST_FACTOR
+  // What Fever does is raise the ceiling, so the curve has to work in both directions -- otherwise
+  // a Fever that ends leaves the run permanently fast. Fever's own arithmetic is verify:fever's;
+  // what is checked here is that the *option* behaves, since the difficulty curve uses it too.
+  const boosted = SPEED_CAP * FEVER_SPEED_FACTOR
   let state = createRunState()
 
   for (let i = 0; i < 60 * 60; i++) state = stepRun(state, 1000 / 60, { trackLength: TRACK, speedCap: boosted })
@@ -225,13 +225,14 @@ check('runSeconds reports the wall clock the run has actually simulated', () => 
 
 console.log('the run as an economy')
 
-check('a fresh run has all its lives, no boost and no coins', () => {
+check('a fresh run has all its lives, an empty gauge and no coins', () => {
   const state = createRunState()
 
   assert.equal(state.lives, RUN_LIVES)
   assert.equal(state.shields, 0)
   assert.equal(state.coins, 0)
-  assert.equal(state.boostMsRemaining, 0)
+  assert.equal(state.fever.fruit, 0)
+  assert.equal(state.fever.phase, 'idle')
   assert.equal(isRunOver(state), false)
 })
 
@@ -291,44 +292,19 @@ check('a shield absorbs one hit instead of a life, and is spent doing it', () =>
   assert.equal(state.lives, RUN_LIVES - 1, 'the next hit did not land')
 })
 
-check('a boost raises the ceiling for BOOST_MS of simulated time, at any frame rate', () => {
-  // Counted down inside the fixed tick rather than against a wall clock, for the same reason
-  // everything else here is: a 144Hz phone must not get a shorter boost than a 60Hz one.
-  const at = (hz) => {
-    let state = applyBoost(createRunState())
-    const dt = 1000 / hz
+// The Fever ceiling, its duration, its landing and the guard are all `verify:fever`'s -- they are
+// one mechanism and splitting its assertions across two suites is how half of one gets forgotten.
+check('a fruit banks into the gauge and nothing else touches it', () => {
+  let state = createRunState()
 
-    for (let i = 0; i < Math.round((BOOST_MS / 1000) * hz); i++) {
-      state = stepRun(state, dt, { trackLength: TRACK })
-    }
+  for (let i = 0; i < 3; i++) state = eatFruit(state)
+  assert.equal(state.fever.fruit, 3)
+  assert.equal(state.fever.phase, 'idle', 'three fruit is not a Fever')
 
-    return state
-  }
+  const before = state.fever.fruit
 
-  for (const hz of [30, 60, 144]) {
-    const state = at(hz)
-
-    assert.ok(state.boostMsRemaining <= FIXED_STEP_MS, `${hz}Hz still had ${state.boostMsRemaining.toFixed(1)}ms of boost left`)
-  }
-
-  // ...and while it is running the speed climbs past the ordinary ceiling.
-  let boosted = applyBoost(drive(30, 60))
-
-  for (let i = 0; i < 90; i++) boosted = stepRun(boosted, 1000 / 60, { trackLength: TRACK })
-  assert.ok(boosted.speed > SPEED_CAP, `boosted speed ${boosted.speed.toFixed(0)} never passed the plain cap`)
-  assert.ok(boosted.speed <= SPEED_CAP * BOOST_FACTOR + 1e-9)
-})
-
-check('a second boost taken mid-boost extends it rather than being swallowed', () => {
-  let state = applyBoost(createRunState())
-
-  for (let i = 0; i < 60; i++) state = stepRun(state, 1000 / 60, { trackLength: TRACK })
-
-  const midway = state.boostMsRemaining
-
-  assert.ok(midway < BOOST_MS && midway > 0)
-  state = applyBoost(state)
-  assert.equal(state.boostMsRemaining, BOOST_MS, 'a refresh did not restore the full duration')
+  for (let i = 0; i < 600; i++) state = stepRun(state, 1000 / 60, { trackLength: TRACK })
+  assert.equal(state.fever.fruit, before, 'the gauge drained on its own — see fever.ts, it may not')
 })
 
 check('coins accumulate and are never fractional', () => {
@@ -346,7 +322,7 @@ check('every mutator is pure', () => {
   const snapshot = { ...original }
 
   takeHit(original)
-  applyBoost(original)
+  eatFruit(original)
   earnCoin(original)
   addShield(original)
   assert.deepEqual({ ...original }, snapshot)

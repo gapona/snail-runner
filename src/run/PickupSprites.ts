@@ -7,7 +7,7 @@ import {
 } from '../road/billboard'
 import { billboardAppear, billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, SPRITE_SCALE } from '../road/constants'
 import type { Segment } from '../road/track'
-import { createPickupTextures, PICKUP_TEXTURES } from './pickupArt'
+import { createPickupTextures, PICKUP_TEXTURES, pickupTexture } from './pickupArt'
 import { WORLD_LAYER, worldDepth } from './worldDepth'
 import { PICKUP_DRAW_SIZE, PICKUP_HEIGHT, type Pickup } from './pickups'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowScale } from './shadows'
@@ -65,7 +65,7 @@ export class PickupSprites {
   constructor(scene: Phaser.Scene, poolSize = PICKUP_POOL_SIZE) {
     createPickupTextures(scene)
 
-    const initialKey = PICKUP_TEXTURES.coin
+    const initialKey = PICKUP_TEXTURES.coin[0]
 
     this.slots = Array.from({ length: poolSize }, () => ({
       // Depth is set per object per frame, from distance — see `worldDepth.ts`.
@@ -147,7 +147,7 @@ export class PickupSprites {
           screenHeight,
         )
 
-        this.place(this.slots[used], PICKUP_TEXTURES[pickup.kind], rect, visible, n, shadowRect, PICKUP_HEIGHT + bob)
+        this.place(this.slots[used], pickupTexture(pickup), rect, visible, n, shadowRect, PICKUP_HEIGHT + bob)
         if (import.meta.env.DEV) {
           this.shadowMarks.push({ x: shadowRect.x, y: shadowRect.y, owner: `pickup#${pickup.id}` })
         }

@@ -30,7 +30,7 @@ import {
   PLAYER_STIFFNESS,
   PLAYER_Z,
   ROAD_EDGE,
-  BOOST_FACTOR,
+  FEVER_SPEED_FACTOR,
   SPEED_BASE,
   SPEED_CAP,
   halfWidthsAtLane,
@@ -558,7 +558,7 @@ check('width and strength both rise with speed, and a boost pushes past the ceil
   assert.ok(Math.abs(slimeIntensity(SPEED_CAP) - 1) < 1e-9)
   // Clamped *above* 1, not at it: the trail is the clearest place in the frame to show the player
   // going faster than the game's own cap.
-  assert.ok(slimeIntensity(SPEED_CAP * BOOST_FACTOR) > 1, 'a boost does not read as faster than the cap')
+  assert.ok(slimeIntensity(SPEED_CAP * FEVER_SPEED_FACTOR) > 1, 'Fever does not read as faster than the cap')
   assert.ok(slimeIntensity(SPEED_CAP * 10) <= 1.25, 'the intensity is unbounded')
 
   const slow = []

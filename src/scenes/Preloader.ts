@@ -92,7 +92,7 @@ export class Preloader extends Phaser.Scene {
     // `OBSTACLE_ART_KEYS`, not every key: a pulled render has no PNG, and asking for one would
     // spend a loader error on a deliberate gap. See `PULLED_ART`.
     for (const key of OBSTACLE_ART_KEYS) this.load.image(key, `assets/obstacle/${key}.png`)
-    for (const key of Object.values(PICKUP_TEXTURES)) {
+    for (const key of Object.values(PICKUP_TEXTURES).flat()) {
       this.load.image(key, `assets/pickup/${key}.png`)
     }
 

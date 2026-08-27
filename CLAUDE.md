@@ -98,9 +98,9 @@ is the same question in both games.
 
 ### Reading the rest of this document
 
-**The runner's own chapters are the eleven between "## UI Kit" and "## Road Renderer"** — The Run,
-The Snail, The Jump, Obstacles, Draw Order, Pickups, The Slime Trail, The Art, The Difficulty
-Curve, The End Of A Run, The HUD. Those describe this game.
+**The runner's own chapters are the twelve between "## UI Kit" and "## Road Renderer"** — The Run,
+The Snail, The Jump, Obstacles, Draw Order, Pickups, Fever, The Slime Trail, The Art, The
+Difficulty Curve, The End Of A Run, The HUD. Those describe this game.
 
 Below them, everything about the road, the billboards, the biomes, the themes, the interface kit,
 the save layer, the platform layer, the build guards and the scroll patterns is **current and
@@ -138,6 +138,10 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
 - `npm run verify:jump` — the same module's vertical: air time and apex invariant to frame rate,
   the apex within 1% of `JUMP_APEX`, and **the three obstacle classes separated by arithmetic
   rather than by a flag**. See "The Jump".
+- `npm run verify:fever` — `src/run/fever.ts`: the gauge does not drain, the guard outlives the
+  speed, and **in 200 simulated exits over the real placer's output the first obstacle a player can
+  be hit by arrives no sooner than `REACTION_MS`** — shown failing first against the same simulation
+  with the road-clearing removed. See "Fever, And The Second In Which It Ends".
 - `npm run verify:obstacles` — `src/run/obstacles.ts`: a passable line exists through every
   generated stretch, the three classes produce exactly the expected outcomes on the ground and at
   the apex, and every obstacle is readable for at least `REACTION_MS` at `SPEED_CAP`. See
@@ -823,24 +827,140 @@ that draws on the *screen* (the HUD) is on `uiCamera` and does not enter this so
 
 ## Pickups
 
-`src/run/pickups.ts`. **Three kinds — boost, shield, coin — and the rail shooter's own docstring is
+`src/run/pickups.ts`. **Three kinds — fruit, shield, coin — and the rail shooter's own docstring is
 the argument for three.** That game cut its set twice, seven to five, on a rule about *meaning*: what
 survived was what a player can predict from the icon. Of its final five, three have no equivalent
-here (no guns, no multiplier) and two collapse into one once a hit costs speed rather than health. A
-fourth would have to answer a question the first three do not, and a runner with two verbs and one
-resource does not have one.
+here (no guns, no multiplier) and two collapse into one once a hit costs speed rather than health.
 
-- **`sideAwayFrom` is kept verbatim, weights and all.** There it kept a pickup out of the line of
-  fire so collecting it was a decision rather than a side effect of aiming; here it keeps one out of
-  the gap the player was already threading. A pickup that costs nothing is scenery.
-- **The catchment box is deliberately wider than the icon** — the one place in this game where the
-  collision and the sprite are allowed to disagree, and only in that direction. An obstacle that hits
-  you from further than it looks is a lie; a coin caught from slightly further is a game that is not
-  fighting you. (The first version drew the icon *at* the catchment width and put a 640-unit coin on
-  the road, four snails wide.)
-- Coins taken in a row climb `audio/sfx.ts`'s pitch ladder — the rail shooter's lock tone, unchanged,
-  because "how many did I just get without looking away" is the same question in both games. Anything
-  that is not a coin resets the run.
+**⚠ `boost` was deleted rather than kept alongside Fever, and the rule that deleted it is that same
+one.** It raised the ceiling by 60% for three seconds; Fever raises it by 60% for six. Two products
+that differ only in *how much of the same thing* they give are one product with a table to memorise,
+and "a bit faster" against "a lot faster" is not a distinction anybody makes at speed. All of the
+run's speed lives in the fruit now, and a fruit is not fast — it is **progress toward** fast, which
+is a different sentence rather than a smaller number.
+
+That also corrects something the old docstring got wrong. It argued against a fourth kind partly on
+the grounds that a magnet would be "a number on a gauge the frame can only report as text" — true of
+a magnet sold as a pickup of its own, and false of one that is part of what Fever *is*: the frame
+reports it by visibly dragging every pickup on screen onto the snail's line.
+
+**Fruit ships as four rendered PNGs under one kind** — grapes, banana, melon, pear — chosen by
+`pickupTexture` from the pickup's own id, so a lap deals the same fruit twice and a screenshot is
+reproducible. Four *kinds* would have put four rows in the weight table for one decision.
+
+## Fever, And The Second In Which It Ends
+
+`src/run/fever.ts` (pure, `npm run verify:fever`), `FeverView.ts`, and two bars in the HUD. Eight
+fruit fill a gauge, the gauge buys six seconds of 1.6x speed with the hitbox switched off and every
+pickup on screen dragged onto the snail's line, and then it has to *stop* — which is the only part
+of this that is difficult.
+
+### ⚠ The exit is an ordering, and getting it wrong kills the player at the best moment of the run
+
+Leaving Fever at Fever speed is a guaranteed hit. The player has spent six seconds flying through
+obstacles, the guard comes off, and the next row arrives sooner than anyone can answer it — so the
+best moment of the run ends in a death they cannot explain, and they blame the game, correctly.
+Three steps, and none of them is optional:
+
+1. **the speed comes back first**, over `FEVER_EASE_MS`, while the guard is still up;
+2. **only then does the guard come off** — `feverInvulnerable` covers `active` *and* `easing`, which
+   is why `easing` is a phase rather than a flag on `active`;
+3. **and the road ahead is already clear** for `REACTION_MS` past that.
+
+Measured over the real placer, 200 exits: the first obstacle a player can be hit by arrives at
+**minimum 1031ms, 5th percentile 1105ms, median 1803ms** against a 450ms floor. **The same
+simulation without step 3 gives a minimum of 2ms**, which is the reported class of bug and is the
+negative control the check carries, because a floor that has never rejected anything is not a floor.
+
+- **Step 3 is a *removal*, not a suppression.** An obstacle inside the window is neither drawn nor
+  collided with (`Obstacle.cleared`), because a hazard that is drawn and declines to hurt anyone is
+  the same lie as one that hits from further away than it looks, read from the other side.
+- **And it happens when the ease *begins*, a second before the guard comes off.** Clearing at the
+  moment of vulnerability would delete rocks from directly in front of a snail the player is looking
+  at; clearing a second earlier does the same removal while the screen is still washed and the wake
+  is still up, so what they see is the Fever sweeping the road.
+- The window is `feverClearanceUnits` at the *current* speed, which is the Fever speed — the run only
+  slows from there, so it is an upper bound rather than an estimate. Erring long costs one row the
+  player did not have to dodge; erring short costs the hit. 8352 units cleared against 7200 needed.
+
+### ⚠ Two ways the speed failed to actually come back, both found by the check
+
+- **The ordinary chase cannot land a Fever.** `SPEED_ACCEL` has a 5.9-second time constant, so over
+  a one-second ease it sheds a sixth of the speed. `FEVER_SPEED_ACCEL = 6` (167ms) is used for the
+  whole of Fever, entry included.
+- **A first-order lag arrives at the end of a ramp still above it, by `tau * slope`.** Measured: the
+  guard came off at **3958 u/s against a 3600 u/s ceiling**, 10% over — the exact defect the ordering
+  exists to prevent, through the back door. `FEVER_SETTLE_MS = 400` finishes the ramp early and
+  spends the rest of the landing at factor 1 with the guard still up.
+- **⚠ And the first fix made it worse — 4146 u/s — because the accel was keyed on the factor.**
+  Through the settle the factor is exactly 1, so a `factor > 1` test handed the one stretch whose
+  only job is shedding the lag back to the slow chase. It is keyed on the **phase**. Live, the guard
+  drops at **3639 u/s**, 1.1% over.
+
+### The gauge does not drain, and it is spent on entry
+
+A slow leak punishes the player for playing a stretch the placer put no fruit on, and reads as the
+game taking something back. It only ever empties into a Fever. Spent on *entry* rather than on exit,
+so fruit taken during a Fever — and the magnet means there is a lot of it — counts toward the next
+one instead of being discarded.
+
+**Two bars, and collapsing them into one would be wrong in both directions.** The gauge fills and the
+Fever meter empties, they are true at the same time, and a single bar that changed meaning halfway
+would ask the player to read its colour to find out which question it is currently answering. The
+gauge is drawn even when empty, unlike the boost meter it replaced: that one was hidden because a
+permanently empty gauge is a permanent question, which is true of something that is either running or
+not and false of *progress* — a bar the player is filling has to be visible while they fill it. They
+are separated by a whole bar's height, because at 4px they read as one two-tone bar, which is the
+single readout the pair exists not to be.
+
+### The magnet moves the pickup, it does not widen the box
+
+A magnet drawn as a bigger invisible catchment is a pickup that vanishes off to one side. Pulling the
+pickup onto the snail's line leaves the ordinary `reaches` test doing the collecting, so there is one
+rule for what counts as touching something.
+
+- **⚠ `FEVER_MAGNET_RATE` is set against the time a pickup actually has, which is much less than it
+  looks.** The window is 1600 units and Fever speed is 5760 u/s, so a pickup spends **0.28 seconds**
+  inside it, and the pull is weighted by distance so the effective rate is half of the constant. At 5
+  a pickup from the far verge arrived **0.59 half-widths off the line** — it visibly leaned toward
+  the snail and was then missed, which is worse than no magnet. At 20 the same crossing lands within
+  0.07.
+
+### Fever is a visible event, and the wash is the part that had to be pulled back
+
+A Fever that is only a number is a Fever the player plays through defensively: they are invulnerable
+for six seconds and the only way to find out is to be told. `FeverView` is a warm additive wash and a
+field of speed lines radiating from the vanishing point, both on `uiCamera`.
+
+- **The palette shift is done over the finished frame rather than in the road's palette**, because
+  rebaking the palette texture is the one thing `applyTheme` is documented as unsafe to do while the
+  world is drawing — and a Fever is when it is drawing hardest.
+- **The strength follows `feverSpeedFactor` rather than the phase**, so the frame calms down over the
+  same second the run slows down in.
+- **⚠ `WASH_ALPHA` came down 0.55 → 0.38 after looking at a live frame.** Additive light washes
+  *saturation* out of everything under it, and the snail is the one object in this game allowed to be
+  saturated — thirteen times the chroma of anything it shares a frame with, precisely so the player
+  never has to search for it. At 0.55 the mascot went from orange to pale gold: the effect was
+  spending the mascot's own separation on itself.
+- The lines leave `INNER_HOLE` of the frame around the vanishing point empty. That is the strip the
+  player reads obstacles out of, and the guard comes off while the wash is still up.
+- **The trail is not in this file at all** — it comes free, because `slimeIntensity` is a function of
+  speed and clamps above 1 precisely so that going faster than the run's own ceiling has somewhere to
+  show.
+
+### `MAX_ATTAINABLE_SPEED` is unchanged, and that is deliberate
+
+`FEVER_SPEED_FACTOR` is 1.6 because that is what the boost pickup it replaces was, so every row of
+obstacles in the game is still spaced against the same top speed. Raising it would tighten the
+reaction budget on every stretch at once — a difficulty change wearing a feature's clothes.
+
+### Harness note: `scene.start('RunScene')` over a live `MainMenu` throws
+
+`Cannot read properties of undefined (reading 'glTexture')` inside the `Mesh2D` submitter — the
+documented signature of `applyTheme`'s precondition being violated, and nothing to do with themes.
+The menu renders the same world, so starting the run directly leaves its mesh holding a palette
+texture the new scene has just removed. `scene.stop('MainMenu')` first, then start, and it is clean.
+The real player path does not hit this because the menu's own handover owns the ordering.
 
 ## The Slime Trail
 

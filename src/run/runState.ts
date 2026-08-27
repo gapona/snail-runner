@@ -22,14 +22,14 @@ import { runFixedSteps } from '../race/fixedStep'
 import { FIXED_STEP_MS } from '../race/constants'
 import { wrapZ } from '../road/project'
 import {
-  BOOST_FACTOR,
-  BOOST_MS,
+  FEVER_SPEED_ACCEL,
   HIT_SPEED_LOSS,
   RUN_LIVES,
   SPEED_ACCEL,
   SPEED_BASE,
   SPEED_CAP,
 } from './constants'
+import { addFruit as bankFruit, createFeverState, feverSpeedFactor, stepFever, type FeverState } from './fever'
 
 export interface RunState {
   /** Where the camera is on the closed track, in world units, always `[0, trackLength)`. */
@@ -55,14 +55,15 @@ export interface RunState {
   /** Coins collected this run. Banked into the save when the run ends. */
   coins: number
   /**
-   * How much boost is left, in **simulated** milliseconds.
+   * The fruit gauge and the Fever it pays for — see `fever.ts`.
    *
-   * Counted down inside the fixed tick rather than against a `Date.now()` deadline, for the same
-   * reason everything else here is: a wall-clock deadline gives a backgrounded tab a boost that
-   * expires while nothing is being drawn, and gives a 144Hz phone the same boost over a different
-   * number of frames. Ticking it here makes its duration a property of the simulation.
+   * **Ticked inside the fixed step rather than against a `Date.now()` deadline**, for the same
+   * reason everything else here is: a wall-clock deadline gives a backgrounded tab a Fever that
+   * expires while nothing is being drawn, and gives a 144Hz phone the same Fever over a different
+   * number of frames. Ticking it here makes its duration a property of the simulation — which for
+   * Fever is load-bearing rather than tidy, because the guard comes off when the ease *ends*.
    */
-  boostMsRemaining: number
+  fever: FeverState
   /** Set once the last life is gone. Nothing else in this module writes it. */
   over: boolean
 }
@@ -71,14 +72,14 @@ export interface RunStepOptions {
   /** Length of the closed circuit, in world units — `WorldView.trackLength`. */
   trackLength: number
   /**
-   * The ceiling the speed is currently chasing. Defaults to `SPEED_CAP`, times `BOOST_FACTOR`
-   * while a boost is running.
+   * The ceiling the speed is currently chasing. Defaults to `SPEED_CAP`, times
+   * `feverSpeedFactor` while a Fever is running or landing.
    *
-   * **A parameter rather than a constant read inside**, so a caller can override it — but the
-   * boost does not use that: it is state, ticked down here, precisely so its duration is
-   * frame-rate independent. What the parameter is for is the difficulty curve (chunk 6) and the
-   * tests. A boost implemented as an impulse on `speed` instead of a raised ceiling would be worth
-   * almost nothing taken just after a hit, which is exactly when the player most needs it.
+   * **A parameter rather than a constant read inside**, so a caller can override it — but Fever
+   * does not use that: it is state, ticked down here, precisely so its duration is frame-rate
+   * independent. What the parameter is for is the difficulty curve and the tests. A Fever
+   * implemented as an impulse on `speed` instead of a raised ceiling would be worth almost nothing
+   * entered just after a hit, which is exactly when the gauge is most likely to fill.
    */
   speedCap?: number
   /**
@@ -103,7 +104,7 @@ export function createRunState(): RunState {
     lives: RUN_LIVES,
     shields: 0,
     coins: 0,
-    boostMsRemaining: 0,
+    fever: createFeverState(),
     over: false,
   }
 }
@@ -144,15 +145,9 @@ export function addShield(state: RunState): RunState {
   return { ...state, shields: state.shields + 1 }
 }
 
-/**
- * Starts (or refreshes) a boost.
- *
- * **Refreshes to the full duration rather than adding to it.** Stacking would let a lucky stretch
- * of pickups bank a boost that outlives the stretch that earned it, and the pickup would stop
- * being about the moment it was taken in.
- */
-export function applyBoost(state: RunState): RunState {
-  return { ...state, boostMsRemaining: BOOST_MS }
+/** Banks one fruit, which may start a Fever. All of the rule is in `fever.ts`. */
+export function eatFruit(state: RunState): RunState {
+  return { ...state, fever: bankFruit(state.fever) }
 }
 
 /** Banks one coin. */
@@ -192,15 +187,29 @@ export function stepRun(state: RunState, dtMs: number, options: RunStepOptions):
   let speed = state.speed
   let distance = state.distance
   let ticks = state.ticks
-  let boostMsRemaining = state.boostMsRemaining
+  let fever = state.fever
 
   const remainder = runFixedSteps(state.stepRemainderMs, dtMs, (dtSec) => {
-    // The boost is counted down in the same tick it raises the ceiling in, so the last tick of a
-    // boost is still boosted and the first tick after it is not — no off-by-one frame either way.
-    const cap = boostMsRemaining > 0 ? base * BOOST_FACTOR : base
+    // Fever is ticked in the same tick it raises the ceiling in, so the last tick of a Fever is
+    // still boosted and the first tick after it is not — no off-by-one frame either way.
+    fever = stepFever(fever, dtSec * 1000).state
 
-    boostMsRemaining = Math.max(0, boostMsRemaining - dtSec * 1000)
-    speed += (cap - speed) * SPEED_ACCEL * dtSec
+    const factor = feverSpeedFactor(fever)
+    const cap = base * factor
+    // **⚠ Two accelerations, and which one applies is not a nicety.** The ordinary chase has a
+    // 5.9-second time constant, so over the one-second ease it would shed a sixth of the Fever's
+    // speed and the guard would come off with the run still flying — see `FEVER_SPEED_ACCEL`. The
+    // fast approach is used for the whole of Fever, entry included, so the ceiling is something
+    // the speed rides rather than something it lags behind.
+    //
+    // **⚠ Keyed on the phase, not on the factor**, and the difference is the whole of
+    // `FEVER_SETTLE_MS`: through the settle the factor is exactly 1, so a `factor > 1` test hands
+    // the last stretch of the landing back to the slow chase — which is the one stretch whose only
+    // job is shedding the lag. Measured with that test: the guard dropped at **4146 u/s against a
+    // 3600 ceiling**, i.e. worse than having no settle at all.
+    const accel = fever.phase === 'idle' ? SPEED_ACCEL : FEVER_SPEED_ACCEL
+
+    speed += (cap - speed) * accel * dtSec
     if (drag > 0) speed -= speed * drag * dtSec
     // Nothing may push the run backwards: the ground scrolls one way, and a negative speed would
     // put the camera behind obstacles it has already passed.
@@ -216,7 +225,7 @@ export function stepRun(state: RunState, dtMs: number, options: RunStepOptions):
     distance,
     speed,
     ticks,
-    boostMsRemaining,
+    fever,
     stepRemainderMs: remainder,
   }
 }

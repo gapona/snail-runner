@@ -3,25 +3,38 @@
  *
  * **Rule: this file never imports `phaser`.** The Phaser half is `PickupSprites.ts`.
  *
- * **Three kinds, and the docstring the rail shooter left behind is why it is three.** That game
- * cut its set twice — seven to five — on a rule about *meaning*: what survived was what a player
- * can predict from the icon without being told. Its final five were more health, more shields, a
- * different gun, more speed and more points; the last three of those have no equivalent here (no
- * guns, no multiplier), and "more health" and "more shields" collapse into one thing once a hit
- * costs speed rather than health.
+ * **Three kinds, and the set was cut to three rather than grown to four.** The rail shooter this
+ * game forked from cut its own set twice — seven to five — on a rule about *meaning*: what survived
+ * was what a player can predict from the icon without being told. This one shipped with `boost`,
+ * `shield` and `coin`, and then Fever arrived and made `boost` the second answer to a question that
+ * already had one.
  *
- * So: **speed, a hit absorbed, and money.**
+ * | kind     | what it does                | why it is in the set                                     |
+ * |----------|-----------------------------|----------------------------------------------------------|
+ * | `fruit`  | fills the Fever gauge       | all of the run's speed, in one place                      |
+ * | `shield` | absorbs the next hit's life | the only way to buy back a mistake you have not made yet  |
+ * | `coin`   | one coin, banked on death   | the only thing that leaves the run                        |
  *
- * | kind     | what it does                | why it is in the set                                  |
- * |----------|-----------------------------|-------------------------------------------------------|
- * | `boost`  | raises the ceiling for 3s   | the reward is the currency the run is scored in        |
- * | `shield` | absorbs the next hit's life | the only way to buy back a mistake you have not made yet |
- * | `coin`   | one coin, banked on death   | the only thing that leaves the run                     |
+ * ## ⚠ `boost` was deleted, and the reason is the same rule that keeps the set small
  *
- * **A fourth would have to answer a question the first three do not**, and there is not one: a
- * runner has exactly two verbs (steer, jump) and one resource (speed). Anything else — a magnet, a
- * doubler, a slow-motion — is a number on a gauge the frame can only report as text, which is
- * precisely what the rail shooter cut in its own second round.
+ * It raised the ceiling by 60% for three seconds; Fever raises it by 60% for six. **Two products
+ * that differ only in how much of the same thing they give are one product the player has to
+ * memorise a table for**, and "a bit faster" versus "a lot faster" is not a distinction anyone
+ * makes at speed. So the speed is all in the fruit now: a fruit is not fast, it is *progress
+ * toward* fast, which is a different sentence rather than a smaller number.
+ *
+ * That also fixes something the old docstring was wrong about. It argued against a fourth kind on
+ * the grounds that a magnet is "a number on a gauge the frame can only report as text" — true of a
+ * magnet sold as a pickup of its own, and false of one that is part of what Fever *is*: the frame
+ * reports it by visibly dragging every pickup on screen onto the snail's line.
+ *
+ * ## Weights
+ *
+ * `coin` stays the common one because it is the only thing that survives the run, and a run that
+ * produced nothing to keep is a run with no reason to be repeated. `fruit` takes the middle share —
+ * it has to arrive often enough that a Fever is something a run *reaches* rather than something it
+ * hopes for, and rarely enough that the gauge is a gauge. `shield` stays rarest: it is worth the
+ * most in the moment and asks the least of the player to use.
  *
  * **The placement is the feature, and it fights the obstacles.** A coin lying in the gap the player
  * was already going to thread is not a decision. `sideAwayFrom` — kept from the rail shooter,
@@ -33,20 +46,20 @@ import { wrapZ } from '../road/project'
 import { PLAYER_BODY_H, PLAYER_HALF_WIDTHS, ROAD_EDGE } from './constants'
 import type { Obstacle } from './obstacles'
 
-export type PickupKind = 'boost' | 'shield' | 'coin'
+export type PickupKind = 'fruit' | 'shield' | 'coin'
 
 /** Every kind, in the order the art and the tests walk them. */
-export const PICKUP_KINDS: readonly PickupKind[] = ['boost', 'shield', 'coin']
+export const PICKUP_KINDS: readonly PickupKind[] = ['fruit', 'shield', 'coin']
 
 /**
- * How often each kind is laid down, as relative weights.
+ * How often each kind is laid down, as relative weights — see the header for the argument.
  *
- * `coin` is the common one because it is the only thing that survives the run, and a run that
- * produced nothing to keep is a run with no reason to be repeated. `shield` is the rare one: it is
- * worth the most in the moment and asks the least of the player to use.
+ * Fruit at 5 of 15 is one pickup in three, so `FEVER_FRUIT_TARGET` fruit is roughly 24 pickups of
+ * road. That is the number both halves of the pacing are tuned against, and moving either without
+ * the other moves how often a Fever happens.
  */
 export const PICKUP_WEIGHTS: Record<PickupKind, number> = {
-  boost: 3,
+  fruit: 5,
   shield: 2,
   coin: 8,
 }

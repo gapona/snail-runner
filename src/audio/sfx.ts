@@ -22,7 +22,7 @@ export const SFX = {
   LAND: 'sfx-land',
   /** Hitting something. The only noise burst in the set, so it cannot be mistaken for a reward. */
   HIT: 'sfx-hit',
-  /** A boost taken, and the run ending. */
+  /** Fever starting, and the run ending. */
   BOOST: 'sfx-boost',
   RUN_OVER: 'sfx-run-over',
   /**

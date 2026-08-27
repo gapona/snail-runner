@@ -58,6 +58,17 @@ export interface Obstacle {
    * and checking it behaves as the band says rather than as the name does.
    */
   kind: ObstacleKind
+  /**
+   * Swept off the road by a Fever landing, so it is neither drawn nor collided with.
+   *
+   * **A removal, not a suppression, and the difference is what the player sees.** The road ahead
+   * has to be empty for `REACTION_MS` after the Fever guard comes off — see `fever.ts` — and the
+   * two ways to arrange that are not equivalent: an obstacle that is drawn and declines to hurt
+   * anyone is a hazard passing through the snail, which is the same lie as one that hits from
+   * further away than it looks. It is cleared while the player is still visibly in Fever, so what
+   * they see is the wake sweeping the road rather than a rock evaporating in front of them.
+   */
+  cleared: boolean
 }
 
 /** Anything with a lane and a height — the snail, or a hypothetical one the placer is testing. */
@@ -76,7 +87,7 @@ export function createObstacle(spec: {
 }): Obstacle {
   const band = OBSTACLE_BANDS[spec.kind]
 
-  return { ...spec, yLow: band.yLow, yHigh: band.yHigh }
+  return { ...spec, yLow: band.yLow, yHigh: band.yHigh, cleared: false }
 }
 
 /**

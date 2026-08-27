@@ -149,7 +149,7 @@ export const OBSTACLE_MATERIALS = {
  * the nine biomes make every one of those the background at some point.
  */
 export const PICKUP_COLORS = {
-  boost: { light: 0x7fe6ff, mid: 0x2fbde8, dark: 0x116d8c },
+  fruit: { light: 0xe3b6f5, mid: 0xa964d8, dark: 0x5d2f80 },
   shield: { light: 0x9df2a1, mid: 0x4fc663, dark: 0x1f6b34 },
   coin: { light: 0xffd964, mid: 0xf0b024, dark: 0x8f5f0e },
 } as const

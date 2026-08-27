@@ -154,14 +154,84 @@ export const SPEED_CAP = MAX_SPEED * 0.3
 export const SPEED_ACCEL = 0.17
 
 /**
- * The boost pickup: multiplier applied to the speed ceiling, and how long it lasts.
+ * Fever: how much faster it goes, how long it lasts, and how long it takes to land.
  *
- * A multiplier on the *cap* rather than an impulse on the speed, so a boost taken at a standstill
- * (just after a hit) is worth the same as one taken at full tilt — an impulse would make the
- * pickup nearly worthless in exactly the situation the player most needs it.
+ * A multiplier on the *cap* rather than an impulse on the speed, so a Fever entered at a standstill
+ * — just after a hit, which is when the gauge is most likely to fill — is worth the same as one
+ * entered at full tilt.
+ *
+ * **`FEVER_SPEED_FACTOR` is 1.6 because that is what the boost pickup it replaces was**, and every
+ * row of obstacles in the game is spaced against `MAX_ATTAINABLE_SPEED` below. Raising it would
+ * tighten the reaction budget on every stretch at once, which is a difficulty change wearing a
+ * feature's clothes; if it is ever raised, `verify:obstacles` is what has to be re-run, not this
+ * comment.
+ *
+ * **`FEVER_EASE_MS` is a full second, and it is a safety device rather than a flourish.** The guard
+ * stays up through it (`feverInvulnerable`), so this is the time the run has to shed 60% of its
+ * speed *before* the player can be hit again. Shortening it shortens exactly that.
  */
-export const BOOST_FACTOR = 1.6
-export const BOOST_MS = 3000
+export const FEVER_SPEED_FACTOR = 1.6
+export const FEVER_MS = 6000
+export const FEVER_EASE_MS = 1000
+
+/**
+ * How much of the landing is spent at the ordinary ceiling before the guard comes off.
+ *
+ * **⚠ Not padding — a first-order lag arrives at the end of a ramp still above it, and the amount
+ * is arithmetic rather than a rounding error.** The speed follows the ceiling with a time constant
+ * of `1 / FEVER_SPEED_ACCEL`, so tracking a ramp that sheds 2160 u/s over a second leaves a steady
+ * error of `tau * slope` = 360 u/s. Measured: with the ramp running the whole ease, the guard came
+ * off at **3958 u/s against a 3600 u/s ceiling** — 10% over, which is the exact defect the ordering
+ * exists to prevent, arriving through the back door.
+ *
+ * So the ramp finishes early and the rest of the landing is spent at factor 1, with the guard still
+ * up, letting the lag decay. 400ms is 2.4 time constants, which takes the residual to under 1%.
+ * `verify:fever` asserts the number that matters — the speed at the drop — rather than this one, so
+ * re-tuning `FEVER_SPEED_ACCEL` cannot silently reintroduce it.
+ */
+export const FEVER_SETTLE_MS = 400
+
+/**
+ * How the speed tracks the Fever ceiling, as a fraction of the remaining gap closed per second.
+ *
+ * **Not `SPEED_ACCEL`, and that is the point.** The ordinary chase has a 5.9-second time constant,
+ * which is right for a run settling into its top speed and useless for a one-second landing: over
+ * `FEVER_EASE_MS` it would close a sixth of the gap, and the guard would come off with the run
+ * still at Fever speed — the death the whole exit ordering exists to prevent. At 6 the time
+ * constant is 167ms, so the speed sits on the ramp rather than lagging behind it.
+ */
+export const FEVER_SPEED_ACCEL = 6
+
+/**
+ * How many fruit fill the gauge.
+ *
+ * Pickups are laid every `PICKUP_SPACING_Z` and `fruit` is 5 of the table's 15 weight, so a fruit
+ * arrives about every 3 pickups — eight of them is a couple of minutes of ordinary play and rather
+ * less of good play, because the ones that are worth going for are the ones out near the verge.
+ */
+export const FEVER_FRUIT_TARGET = 8
+
+/**
+ * How far ahead the Fever magnet reaches, in world units.
+ *
+ * Eight segments: far enough that a pickup visibly leaves its lane and comes to the snail — which
+ * is the whole read, since a magnet that only collects is indistinguishable from a wider box — and
+ * short enough that it does not sweep the entire visible road, which would remove the steering
+ * from the reward.
+ */
+export const FEVER_MAGNET_Z = SEGMENT_LENGTH * 8
+
+/**
+ * How fast a magnetised pickup crosses to the snail's line, as a fraction of the gap per second.
+ *
+ * **⚠ Set against the time the pickup actually has, which is much less than it looks.** The window
+ * is 1600 units and Fever speed is 5760 u/s, so a pickup spends **0.28 seconds** inside it — and
+ * the pull is weighted by how close it is, so the effective rate is about half of this. At 5 a
+ * pickup from the far verge arrived **0.59 half-widths off the line**, i.e. it visibly leaned
+ * toward the snail and was then missed, which is worse than no magnet: it looks like the pickup
+ * tried and the game refused it. At 20 the same crossing lands within 0.07.
+ */
+export const FEVER_MAGNET_RATE = 20
 
 /**
  * What a hit costs, in world units per second.
@@ -176,11 +246,11 @@ export const RUN_LIVES = 3
 /**
  * The fastest the game can ever go, in world units per second.
  *
- * **`SPEED_CAP` is not that number**: a boost multiplies the ceiling, so the real top speed is 5760.
+ * **`SPEED_CAP` is not that number**: Fever multiplies the ceiling, so the real top speed is 5760.
  * Anything that has to hold at every speed — the obstacle placer's row spacing, the jump's flight
  * window, the grace period below — is solved against this rather than against the plain cap.
  */
-export const MAX_ATTAINABLE_SPEED = SPEED_CAP * BOOST_FACTOR
+export const MAX_ATTAINABLE_SPEED = SPEED_CAP * FEVER_SPEED_FACTOR
 
 
 /* ------------------------------------------------------------------ *

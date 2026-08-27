@@ -11,9 +11,17 @@
  * rasterised its five icons at 24px and measured them for confusion; three is a much easier
  * problem, solved the same way — one directional, one closed and symmetrical, one with a hole:
  *
- * - `boost` — a stack of chevrons. **The only shape with a direction.**
+ * - `fruit` — a round berry with a leaf. The only shape with something growing off it.
  * - `shield` — a rounded plate. The only closed symmetrical outline.
  * - `coin` — a ring. The only shape with a hole in it.
+ *
+ * **Fruit ships as four rendered PNGs and falls back to one drawing.** The four are grapes, a
+ * banana, a melon and a pear — different objects rather than four colours of the same one, so a
+ * stretch of road with three fruit on it does not read as a repeated stamp. Which one a pickup
+ * wears is derived from its id, so a lap deals the same fruit twice and a screenshot is
+ * reproducible. The fallback is one berry under all four keys: it exists for the frame before the
+ * loader finishes, and four hand-drawn fruits would be four things to keep in step for a case
+ * nobody sees.
  *
  * Colour is the second cue, never the first: cyan, green and gold are three easy hues, but a
  * colour-blind eye reading the three outlines gets the same answer. The binding size is a 390px
@@ -26,10 +34,37 @@ import type * as Phaser from 'phaser'
 import { INK, PICKUP_COLORS } from './artPalette'
 import type { PickupKind } from './pickups'
 
-export const PICKUP_TEXTURES: Record<PickupKind, string> = {
-  boost: 'pickup-boost',
-  shield: 'pickup-shield',
-  coin: 'pickup-coin',
+/**
+ * The four fruit renders, in the order `pickupTexture` walks them.
+ *
+ * Kept as a list rather than a fifth kind each: they are one *product* — a step toward Fever —
+ * and splitting them into kinds would put four rows in the weight table for one decision.
+ */
+export const FRUIT_TEXTURES = [
+  'pickup-fruit-grapes',
+  'pickup-fruit-banana',
+  'pickup-fruit-melon',
+  'pickup-fruit-pear',
+] as const
+
+/** Every key a kind can wear. `fruit` has four; the other two have one apiece. */
+export const PICKUP_TEXTURES: Record<PickupKind, readonly string[]> = {
+  fruit: FRUIT_TEXTURES,
+  shield: ['pickup-shield'],
+  coin: ['pickup-coin'],
+}
+
+/**
+ * Which texture this pickup draws with.
+ *
+ * **Derived from the id rather than rolled**, so the same lap deals the same fruit every time it
+ * is laid — a placer that is seeded end to end and then picks its art from `Math.random` is a
+ * placer whose screenshots cannot be compared.
+ */
+export function pickupTexture(pickup: { kind: PickupKind; id: number }): string {
+  const keys = PICKUP_TEXTURES[pickup.kind]
+
+  return keys[((pickup.id % keys.length) + keys.length) % keys.length]
 }
 
 /**
@@ -47,9 +82,16 @@ type Scale = (f: number) => number
 
 export function createPickupTextures(scene: Phaser.Scene): void {
   for (const kind of Object.keys(PICKUP_TEXTURES) as PickupKind[]) {
-    const key = PICKUP_TEXTURES[kind]
+    for (const key of PICKUP_TEXTURES[kind]) {
+      if (scene.textures.exists(key)) continue
 
-    if (scene.textures.exists(key)) continue
+      drawPickup(scene, kind, key)
+    }
+  }
+}
+
+function drawPickup(scene: Phaser.Scene, kind: PickupKind, key: string): void {
+  {
 
     const size = PICKUP_CANVAS
     const g = scene.make.graphics({ x: 0, y: 0 }, false)
@@ -66,7 +108,7 @@ export function createPickupTextures(scene: Phaser.Scene): void {
     g.fillStyle(0x0d1410, 0.16)
     g.fillCircle(s(0.5), s(0.54), s(0.42))
 
-    if (kind === 'boost') drawBoost(g, s, ink, colors)
+    if (kind === 'fruit') drawFruit(g, s, ink, colors)
     else if (kind === 'shield') drawShield(g, s, ink, colors)
     else drawCoin(g, s, ink, colors)
 
@@ -82,36 +124,34 @@ interface Colors {
 }
 
 /**
- * Two stacked chevrons pointing forward.
+ * A round berry with a leaf off the top.
  *
- * **Two, because one is a triangle.** A single chevron reads as an arrowhead or as a piece of
- * scenery; two of the same shape offset along their own axis read as motion, which is what the
- * pickup does. Drawn upward-forward rather than flat-right so it never looks like a road sign.
+ * **The leaf is what makes it a fruit rather than a ball**, and it is the only thing in the set
+ * that breaks its own outline — which is what the 24px confusion test actually reads. Round, so it
+ * cannot be confused with the shield's flat-topped plate; solid, so it cannot be confused with the
+ * coin's hole.
  */
-function drawBoost(g: Phaser.GameObjects.Graphics, s: Scale, ink: number, colors: Colors): void {
-  const chevron = (dy: number, fill: number): void => {
-    const path = (): void => {
-      g.beginPath()
-      g.moveTo(s(0.2), s(0.56 + dy))
-      g.lineTo(s(0.5), s(0.22 + dy))
-      g.lineTo(s(0.8), s(0.56 + dy))
-      g.lineTo(s(0.66), s(0.56 + dy))
-      g.lineTo(s(0.5), s(0.38 + dy))
-      g.lineTo(s(0.34), s(0.56 + dy))
-      g.closePath()
-    }
+function drawFruit(g: Phaser.GameObjects.Graphics, s: Scale, ink: number, colors: Colors): void {
+  g.fillStyle(INK, 1)
+  g.fillCircle(s(0.5), s(0.58), s(0.31) + ink)
 
-    g.fillStyle(fill, 1)
-    path()
-    g.fillPath()
-    g.lineStyle(ink, INK, 1)
-    path()
-    g.strokePath()
-  }
+  g.fillStyle(colors.mid, 1)
+  g.fillCircle(s(0.5), s(0.58), s(0.31))
+  g.fillStyle(colors.dark, 1)
+  g.fillCircle(s(0.58), s(0.66), s(0.22))
+  g.fillStyle(colors.light, 1)
+  g.fillCircle(s(0.4), s(0.48), s(0.12))
 
-  // The trailing one first and duller, so the leading one overlaps it and the pair has a front.
-  chevron(0.26, colors.mid)
-  chevron(0.06, colors.light)
+  // The stalk and the leaf, in ink and in the shield's own green — the one colour borrowed across
+  // the set, because a leaf that is not green is not read as a leaf at any size.
+  g.fillStyle(INK, 1)
+  g.fillRect(s(0.47), s(0.16), Math.max(2, ink * 0.9), s(0.16))
+  g.fillStyle(0x4fc663, 1)
+  g.fillEllipse(s(0.63), s(0.2), s(0.26), s(0.13))
+  g.fillStyle(INK, 1)
+  g.fillEllipse(s(0.63), s(0.2), s(0.26), s(0.13))
+  g.fillStyle(0x4fc663, 1)
+  g.fillEllipse(s(0.63), s(0.2), s(0.26) - ink, s(0.13) - ink)
 }
 
 /**

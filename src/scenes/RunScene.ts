@@ -6,7 +6,7 @@ import { bindLayout } from '../ui/layout'
 import { WorldView } from '../run/WorldView'
 import {
   addShield,
-  applyBoost,
+  eatFruit,
   createRunState,
   earnCoin,
   isRunOver,
@@ -22,13 +22,23 @@ import { addFreeze, isFrozen, type Freezable } from '../run/hitstop'
 import { hits, placeRunObstacles, type Obstacle } from '../run/obstacles'
 import { ObstacleSprites } from '../run/ObstacleSprites'
 import { placePickups, reaches, type Pickup } from '../run/pickups'
+import {
+  feverClearanceUnits,
+  feverInvulnerable,
+  feverMagnet,
+  magnetPull,
+  type FeverPhase,
+} from '../run/fever'
 import { PickupSprites } from '../run/PickupSprites'
+import { FeverView } from '../run/FeverView'
 import { Hud } from '../run/Hud'
 import { stepSlime, type SlimePoint } from '../run/slime'
 import { SlimeTrail } from '../run/SlimeTrail'
 import { createRng } from '../race/rng'
 import {
   HITSTOP_MS,
+  FEVER_MAGNET_RATE,
+  FEVER_MAGNET_Z,
   HIT_INVULNERABLE_Z,
   JUMP_LAUNCH_V,
   KEYBOARD_POINT_SPEED,
@@ -97,6 +107,7 @@ export class RunScene extends Phaser.Scene {
   private pickups!: Pickup[]
   private pickupsBySegment!: Map<number, Pickup[]>
   private pickupSprites!: PickupSprites
+  private feverView!: FeverView
   private hud!: Hud
   /**
    * The slime trail's world-space points, and the ribbon that draws them.
@@ -188,6 +199,7 @@ export class RunScene extends Phaser.Scene {
     this.slimeTrail = new SlimeTrail(this)
     this.obstacleSprites = new ObstacleSprites(this)
     this.pickupSprites = new PickupSprites(this)
+    this.feverView = new FeverView(this)
     this.playerView = new PlayerView(this)
     // Screen-space, so it goes on `uiCamera` and is hidden from the world camera.
     this.hud = new Hud(this)
@@ -196,7 +208,7 @@ export class RunScene extends Phaser.Scene {
     // snail is a *world* object and belongs on `cameras.main` with the road.
     this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height)
     this.uiCamera.ignore(this.worldObjects())
-    this.cameras.main.ignore(this.hud.gameObjects)
+    this.cameras.main.ignore([...this.hud.gameObjects, ...this.feverView.gameObjects])
 
     if (import.meta.env.DEV) {
       // A static import inside a DEV branch, not a gated call: gating the *call* leaves the module
@@ -251,6 +263,7 @@ export class RunScene extends Phaser.Scene {
       this.slimeTrail.destroy()
       this.obstacleSprites.destroy()
       this.pickupSprites.destroy()
+      this.feverView.destroy()
       this.hud.destroy()
       this.world.destroy()
     })
@@ -326,6 +339,9 @@ export class RunScene extends Phaser.Scene {
       if (!here) continue
 
       for (const obstacle of here) {
+        // Swept off the road by a Fever landing — it is not drawn either, so colliding with it
+        // would be colliding with nothing the player can see. See `Obstacle.cleared`.
+        if (obstacle.cleared) continue
         if (this.resolvedOnLap.get(obstacle.id) === lap) continue
 
         // Not there yet.
@@ -406,13 +422,82 @@ export class RunScene extends Phaser.Scene {
         if (!reaches(this.player, pickup)) continue
 
         pickup.taken = true
-        if (pickup.kind === 'boost') this.run = applyBoost(this.run)
+        if (pickup.kind === 'fruit') this.run = eatFruit(this.run)
         else if (pickup.kind === 'shield') this.run = addShield(this.run)
         else this.run = earnCoin(this.run)
         // The streak ladder: each coin in a row sounds one interval higher, so the player can hear
         // how many they have taken without looking away from the road. Reset by a gap.
         playSfx(pickup.kind === 'coin' ? SFX.STREAK : SFX.PICKUP, { detune: this.streakDetune(pickup.kind) })
       }
+    }
+  }
+
+  /**
+   * Reacts to Fever changing phase — and the middle branch is the one that keeps the player alive.
+   *
+   * **The road is cleared when the ease *begins*, not when the guard comes off**, and the two are a
+   * second apart. Clearing at the moment of vulnerability would delete rocks from directly in front
+   * of a snail the player is looking at; clearing a second earlier does the same removal while the
+   * screen is still washed and the wake is still up, so what the player sees is the Fever sweeping
+   * the road rather than the road forgetting itself.
+   */
+  private onFeverPhase(before: FeverPhase, after: FeverPhase, playerZ: number): void {
+    if (before === after) return
+
+    if (before === 'idle') {
+      // The one sound in the vocabulary that already meant "you just got faster" — it was the
+      // boost pickup's, and Fever is what became of that.
+      playSfx(SFX.BOOST)
+
+      return
+    }
+
+    if (before === 'active' && after === 'easing') this.clearRoadAhead(playerZ)
+  }
+
+  /**
+   * Sweeps every obstacle inside the landing window off the road.
+   *
+   * The window is `feverClearanceUnits` at the *current* speed, which is the Fever speed — the run
+   * only slows from here, so the product is an upper bound on how far it actually travels rather
+   * than a guess at it. Erring long costs one row the player did not have to dodge; erring short
+   * costs the hit this whole arrangement exists to prevent, so the bound goes that way on purpose.
+   *
+   * Walks the lap's whole list rather than the segment index: it runs once per Fever, about twice a
+   * minute, and the window can straddle the seam — which is the case a segment walk gets wrong.
+   */
+  private clearRoadAhead(playerZ: number): void {
+    const units = feverClearanceUnits(this.run.speed)
+
+    for (const obstacle of this.obstacles) {
+      if (wrapZ(obstacle.z - playerZ, this.world.trackLength) <= units) obstacle.cleared = true
+    }
+  }
+
+  /**
+   * Drags pickups inside the magnet window onto the snail's line.
+   *
+   * **It moves the pickup rather than widening the collection box**, which is the whole difference
+   * between a magnet and a bigger invisible catchment: the player watches the coins come to them,
+   * and `reaches` still does the collecting, so there is one rule for what counts as touching
+   * something. The move is permanent — a pickup that was pulled halfway when the Fever ended has
+   * genuinely moved, which is the honest outcome and costs nothing, since the placer relays the lap
+   * anyway.
+   *
+   * The rate is exponential in the frame delta rather than linear, so a dropped frame pulls the
+   * same distance as the two frames it replaced.
+   */
+  private pullPickups(playerZ: number, delta: number): void {
+    const rate = 1 - Math.exp((-FEVER_MAGNET_RATE * delta) / 1000)
+
+    for (const pickup of this.pickups) {
+      if (pickup.taken) continue
+
+      const ahead = wrapZ(pickup.z - playerZ, this.world.trackLength)
+
+      if (ahead > FEVER_MAGNET_Z) continue
+
+      pickup.offsetX += (this.player.offsetX - pickup.offsetX) * rate * magnetPull(ahead)
     }
   }
 
@@ -458,9 +543,17 @@ export class RunScene extends Phaser.Scene {
     if (isRunOver(this.run)) this.endRun()
   }
 
-  /** Whether the snail is still inside the grace distance from its last hit. */
+  /**
+   * Whether the snail can be hit at all.
+   *
+   * Two sources, and they are deliberately different shapes: the grace after a hit is a
+   * **distance** (see `HIT_INVULNERABLE_Z` — a duration covered a different number of rows at
+   * every speed), and Fever's guard is a **phase**, because what it has to outlive is the landing
+   * rather than a stretch of road. Both are read here so nothing downstream has to know there are
+   * two.
+   */
   private isInvulnerable(): boolean {
-    return this.run.distance < this.invulnerableUntilDistance
+    return this.run.distance < this.invulnerableUntilDistance || feverInvulnerable(this.run.fever)
   }
 
   /**
@@ -603,10 +696,17 @@ export class RunScene extends Phaser.Scene {
       addFreeze(this.playerFreeze, time, LANDING_HITSTOP_MS)
       playSfx(SFX.LAND)
     }
+    const feverWas = this.run.fever.phase
+
     this.run = stepRun(this.run, delta, {
       trackLength: this.world.trackLength,
       drag: isOffRoad(this.player.offsetX) ? OFFROAD_DRAG : 0,
     })
+    this.onFeverPhase(feverWas, this.run.fever.phase, playerZ)
+    // **The magnet runs after the step and before the draw**, so a pickup is pulled and then drawn
+    // where it was pulled to. Doing it after the draw would put the sprite one frame behind the
+    // position the collection test is using, which at Fever speed is a whole blob's width.
+    if (feverMagnet(this.run.fever)) this.pullPickups(playerZ, delta)
 
     // **The world is told where the camera is, not how fast to go.** `WorldView.advance` integrates
     // a speed of its own, which is right for the menu (it rides on a script) and wrong here: the
@@ -650,6 +750,7 @@ export class RunScene extends Phaser.Scene {
     if (import.meta.env.DEV && this.reactionSeen) this.recordReaction(time)
 
     this.hud.update(this.run, width)
+    this.feverView.update(this.run.fever, delta, width, height)
 
     if (import.meta.env.DEV && this.debugMarks && !this.marksVisible) {
       // Cleared once when it is switched off, or the last labelled frame stays on screen.
