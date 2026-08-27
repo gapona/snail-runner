@@ -890,8 +890,16 @@ Not one segment holds a row in both laps, so the rows do not merely change shape
 Reported as two things that are one thing: barriers appearing in view that the player then hits, and
 walls whose blocks change on the fly while the wall stays.
 
-**It reads as happening "at a biome seam" because it does.** `BIOME_RUN_SEGMENTS` divides the lap
-evenly, so **segment 0 is a biome boundary by construction** and the lap seam always falls on one.
+**⚠ It reads as happening "at a biome seam", and the first explanation written here for that was
+wrong.** This section claimed segment 0 is a biome boundary by construction. Measured, it is not:
+the boundaries fall at 159, 318 … 1431, and both segment 1433 and segment 0 are biome 0 — the lap
+seam sits *inside* a biome, exactly as `biomeRunSegments`' own note says it should.
+
+What is true is sharper. 1434 does not divide by 9, so the last stretch is the **remainder: three
+segments**, 1431–1433. The genuine biome change at 1431 and the lap seam at 0 are therefore
+**167ms apart at `SPEED_CAP` and 104ms at `MAX_ATTAINABLE_SPEED`** — a tenth of a second, against 50
+seconds between one wrap and the next. The player sees the ground change colour and the road ahead
+rearrange as a single event, because for any purpose except a clock they are one.
 
 ### The fix is a delivery cursor, not a different generator
 

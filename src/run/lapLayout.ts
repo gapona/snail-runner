@@ -16,8 +16,12 @@
  * holds a row in both laps, so the rows do not merely change shape — they move. Reported as
  * barriers appearing in view that the player then hits, and as walls whose blocks change on the fly.
  *
- * It reads as happening "at the biome seam" because it does: `BIOME_RUN_SEGMENTS` divides the lap
- * evenly, so **segment 0 is a biome boundary by construction** and the lap seam is always on one.
+ * **⚠ It reads as happening "at the biome seam", and the obvious explanation for that is wrong.**
+ * Segment 0 is *not* a biome boundary — the boundaries fall at 159, 318 … 1431, and both segment
+ * 1433 and segment 0 are biome 0. What is true is that 1434 does not divide by 9, so the last
+ * stretch is the three-segment remainder: the biome changes at 1431 and the lap wraps at 0, **104ms
+ * apart at `MAX_ATTAINABLE_SPEED`** against 50 seconds between wraps. Two events a tenth of a second
+ * apart are one event to everything except a clock.
  *
  * ## The rule
  *
