@@ -92,6 +92,65 @@ check('fruit taken during a Fever counts toward the next one', () => {
   assert.equal(state.phase, 'active', 'banking fruit mid-Fever restarted it')
 })
 
+check('⚠ a Fever that ends on a full gauge starts the next one, and never idles full', () => {
+  // **A permanently full gauge is a permanent question**, which is the same objection that hid the
+  // boost meter when it was empty. Fruit collected during a Fever banks toward the next, and the
+  // magnet means there is a lot of it -- so the leaf used to come back reading 1.00 with the run
+  // idle, waiting for one further fruit before it would fire.
+  let state = createFeverState()
+
+  for (let i = 0; i < FEVER_FRUIT_TARGET; i++) state = addFruit(state)
+  for (let i = 0; i < 10; i++) state = addFruit(state)
+  assert.equal(state.fruit, 10, 'fruit taken during a Fever was not banked')
+
+  let ms = 0
+  let ignitions = 0
+  let previous = state.phase
+
+  while (ms < 60000) {
+    state = stepFever(state, DT, true).state
+    ms += DT
+    if (previous !== 'active' && state.phase === 'active') ignitions++
+    // The invariant this check exists for: an idle run never sits on a full gauge.
+    if (state.phase === 'idle') assert.ok(feverCharge(state) < 1, `idle with the gauge at ${feverCharge(state)}`)
+    previous = state.phase
+    if (state.phase === 'idle') break
+  }
+
+  assert.equal(ignitions, 1, `the banked overflow started ${ignitions} further Fevers rather than one`)
+  assert.equal(state.fruit, 10 - FEVER_FRUIT_TARGET, 'the chained Fever did not spend exactly one gauge')
+  console.log(`    10 banked mid-Fever -> one more Fever, ${state.fruit} left over, ${Math.round(ms)}ms in total`)
+})
+
+check('a chain has to be paid for in fruit, so it cannot run away', () => {
+  // Structural rather than empirical: every ignition spends `FEVER_FRUIT_TARGET`, so N Fevers back
+  // to back need 8N fruit and one Fever does not earn the next. The measurement that says so is on
+  // the placer, not here: a Fever plus its landing covers 14.1% of a lap and a lap carries 33.2
+  // fruit, which is 4.7 under the magnet against a target of 8.
+  // Started inside a Fever with three further gauges banked. **Not from `idle` with a full gauge**:
+  // that state is unreachable in play — `addFruit` ignites and so does the end of a hold — and
+  // making the step itself ignite would let a Fever start with no fruit landing to start it.
+  let state = { fruit: FEVER_FRUIT_TARGET * 3, phase: 'active', msRemaining: FEVER_MS }
+  let ignitions = 0
+  // Seeded from the state rather than from `'idle'`, or the Fever it starts inside counts as one.
+  let previous = state.phase
+  let ms = 0
+
+  while (ms < 120000) {
+    state = stepFever(state, DT, true).state
+    ms += DT
+    if (previous !== 'active' && state.phase === 'active') ignitions++
+    previous = state.phase
+    if (state.phase === 'idle' && feverCharge(state) < 1) break
+  }
+
+  // Four gauges' worth in the bank buys four Fevers and then stops, with nothing left over.
+  assert.equal(ignitions, 3, `${ignitions} further Fevers from a bank of three gauges`)
+  assert.equal(state.fruit, 0)
+  assert.ok(ms < 60000, 'the chain did not terminate')
+  console.log(`    a bank of ${FEVER_FRUIT_TARGET * 3} fruit is spent in ${ignitions} further Fevers and then stops`)
+})
+
 console.log('the shape of a Fever')
 
 check('it lasts FEVER_MS + FEVER_EASE_MS of simulated time, at any frame rate', () => {

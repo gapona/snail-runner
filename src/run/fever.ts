@@ -81,11 +81,31 @@ export function feverCharge(state: FeverState): number {
 export function addFruit(state: FeverState): FeverState {
   if (state.phase !== 'idle') return { ...state, fruit: state.fruit + 1 }
 
-  const fruit = state.fruit + 1
+  return ignite({ ...state, fruit: state.fruit + 1 })
+}
 
-  if (fruit < FEVER_FRUIT_TARGET) return { ...state, fruit }
+/**
+ * Starts a Fever if the gauge is full, and leaves the state alone if it is not.
+ *
+ * **One rule for "the gauge is full", used by the fruit that fills it and by the end of a Fever.**
+ * Two copies would be two places to disagree about what full means, and the second of them was
+ * missing entirely — see below.
+ *
+ * **⚠ A Fever used to end with a full gauge and nothing happening.** Fruit collected during one
+ * banks toward the next, and the magnet means there is a lot of it: collect eight or more and the
+ * leaf came back reading 1.00 with the run idle, waiting for one further fruit before it would
+ * fire. A permanently full gauge is a permanent question, which is the same objection that hid the
+ * boost meter when it was empty.
+ *
+ * **It cannot run away, and that is measured rather than argued.** A Fever plus its landing covers
+ * 14.1% of a lap, a lap carries 33.2 fruit, so **4.7 pass under the magnet against a target of 8** —
+ * a chain has to be paid for in fruit, and one Fever does not earn the next. What chaining does is
+ * spend an overflow the player already collected, immediately, instead of holding it hostage.
+ */
+export function ignite(state: FeverState): FeverState {
+  if (state.fruit < FEVER_FRUIT_TARGET) return state
 
-  return { fruit: fruit - FEVER_FRUIT_TARGET, phase: 'active', msRemaining: FEVER_MS }
+  return { fruit: state.fruit - FEVER_FRUIT_TARGET, phase: 'active', msRemaining: FEVER_MS }
 }
 
 export interface FeverStep {
@@ -106,7 +126,10 @@ export function stepFever(state: FeverState, dtMs: number, roadClear = true): Fe
   // only a ceiling, so a run that somehow never finds a gap still leaves Fever.
   if (state.phase === 'holding') {
     if (roadClear || msRemaining <= 0) {
-      return { state: { ...state, phase: 'idle', msRemaining: 0 }, easingStarted: false, ended: true }
+      // Straight into the next one if the gauge filled again on the way — see `ignite`.
+      const next = ignite({ ...state, phase: 'idle', msRemaining: 0 })
+
+      return { state: next, easingStarted: false, ended: next.phase === 'idle' }
     }
 
     return { state: { ...state, msRemaining }, easingStarted: false, ended: false }

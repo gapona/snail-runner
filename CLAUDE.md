@@ -1449,6 +1449,20 @@ game taking something back. It only ever empties into a Fever. Spent on *entry* 
 so fruit taken during a Fever — and the magnet means there is a lot of it — counts toward the next
 one instead of being discarded.
 
+**⚠ And a Fever that ended on a full gauge used to sit there doing nothing.** Bank eight or more
+during one and the leaf came back reading 1.00 with the run idle, waiting for one *further* fruit
+before it would fire — a permanently full gauge, which is the same objection that hid the boost
+meter when it was empty. The end of a hold now runs the same `ignite` the fruit does, so the two
+cannot disagree about what full means and the overflow the player already collected is spent instead
+of held hostage.
+
+**It cannot run away, and that is measured rather than argued.** Every ignition spends a whole gauge,
+so a chain has to be paid for in fruit — and one Fever does not earn the next: a Fever plus its
+landing covers **14.1% of a lap**, a lap carries **33.2 fruit**, so **4.7 pass under the magnet
+against a target of 8.** `verify:fever` asserts the structural half (a bank of three gauges buys
+exactly three further Fevers and then stops) and the invariant that matters on screen: an idle run
+never sits on a full gauge.
+
 **Two bars, and collapsing them into one would be wrong in both directions.** The gauge fills and the
 Fever meter empties, they are true at the same time, and a single bar that changed meaning halfway
 would ask the player to read its colour to find out which question it is currently answering. The
