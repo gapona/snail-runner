@@ -142,6 +142,10 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
   generated stretch, the three classes produce exactly the expected outcomes on the ground and at
   the apex, and every obstacle is readable for at least `REACTION_MS` at `SPEED_CAP`. See
   "Obstacles".
+- `npm run verify:sightline` — how a billboard comes out from behind a crest: that the crop is
+  measured from the top, that it slides rather than steps as the camera moves, and that a taller
+  prop clears the ridge earlier than a short one. Reimplements the mesh's own walk under Node,
+  because `RoadMesh` imports phaser. See "Coming Out From Behind A Crest".
 - `npm run verify:scroll` — `src/ui/scrollMomentum.ts` and `src/ui/scrollList.ts` (the row-list
   arithmetic and the tap-versus-drag decision) — see "Scroll Patterns" and "The Shop Scrolls".
 - `npm run verify:audio` — `src/audio/synth.ts` (WAV rendering and the fade teardown gap) and
@@ -5192,6 +5196,79 @@ build-derived silhouettes.**
     real loop by however long the tab has been idle — so a frame set up in one tool call is *not*
     the frame the next call photographs. Pause the scene before screenshotting; a paused scene still
     renders.
+
+## Coming Out From Behind A Crest
+
+Reported as billboards popping out of a hill whole, with two suspected causes in the clipping.
+`scripts/verify-sightline.mjs` was written to measure both. **Neither is a defect: the clip already
+emerges crown-first and already slides rather than steps.** What the measurement found instead is
+that the whole emergence lasts three frames, and that nothing softened the arrival.
+
+### What was measured, and what it says
+
+The check reimplements the mesh's own walk under Node — `RoadMesh` imports phaser, so nothing that
+runs in a verify script can call it — and sweeps the camera across a `ROAD_HILL.HIGH` crest a
+sixteenth of a segment at a time.
+
+- **Crown first: already correct.** Over the sweep there are **601 frames where the prop's top is
+  clear of the crest and its base is not, and it is drawn in every one of them**; the first frame it
+  appears in shows **10% of its height**. `billboardVisibleFraction` measures from the top and
+  `RoadSprites` crops `(0, 0, w, h * fraction)`, which keeps the top — a hill hides a billboard from
+  the bottom up, and that is what the code does.
+- **The crop slides, it does not step.** Worst **second** difference over the sweep is **6.9% of the
+  prop's height**, against **97.1%** for the same samples quantised to one value per segment. The
+  clip is recomputed every frame from the live camera position, so it moves continuously inside a
+  segment; and crossing a segment boundary only drops the *nearest* segment out of a running
+  minimum, which is never the minimum.
+  - **⚠ The first version of that check measured the first difference and failed on correct code.**
+    A prop 28 screen pixels tall with the horizon sliding a pixel every six world units legitimately
+    moves 7% of its own height per twelve units. That is emergence, not a step. What separates a
+    ramp from a staircase is the second difference — a straight ramp has none.
+- **Height buys visibility.** A 96px prop clears the crest **1.0 segment before** a 24px one beside
+  it, which is the property that would be absent if the clip were applied to the ground point rather
+  than to the billboard.
+- **`src/road/sightline.ts` is not in the render path at all.** It is a pure measurement of how long
+  a target stays fightable, used only by `verify:road` to reject a bend that carries the fight off
+  the side of the frame, and its own docstring says it **deliberately ignores hills**. Nothing it
+  computes reaches a sprite.
+
+### The number that names the defect
+
+**The last emergence, from fully hidden to 95% clear, takes 175 world units — 0.05s at `SPEED_CAP`,
+three frames at 60Hz.** A prop that far out is a few dozen pixels tall and the horizon sweeps its
+whole height almost at once. Three frames of a geometrically correct crop still read as a pop when
+the object arrives at full contrast. The mechanism was never the problem; the contrast was.
+
+### Haze, and why alpha is allowed to be it here
+
+`MAX_DECOR_FOG = 0.85`, separate from `MAX_BILLBOARD_FOG`, which stays at 0.12.
+
+- **The two are split rather than one being a compromise.** `MAX_BILLBOARD_FOG` is what obstacles
+  and pickups fade by and `verify:obstacles` measures what a hazard still has at the distance
+  `REACTION_MS` is counted from. A prop that is hard to see is atmosphere; a rock that is hard to see
+  is an unfair hit.
+- **⚠ The standing objection — alpha is not haze — is right and still stands.** Alpha blends a prop
+  toward *whatever is behind it* rather than toward the fog, which is why 0.30 was reported as "the
+  textures are transparent" once the world got bright. What makes it haze at the far end is that at
+  the far end those are the same colour. Measured across all seven themes: the ground's palette
+  fades to **precisely `theme.fog`** in its last row — it is the colour the ramp ends on — and the
+  sky's own horizon band sits **deltaE 0.04 to 0.18** from it. A distant prop at low alpha is
+  therefore blended toward the fog colour by arithmetic, not by luck.
+- Near props are untouched by construction: `billboardFog` is 0 at the camera and **shares
+  `FOG_CURVE` with the ground**, so a prop is faded by roughly the fraction the ground behind it has
+  already been faded by. That shared curve is load-bearing — give scenery its own and a tree
+  visibly leads or lags the ground it stands on.
+- This does not change the three frames and is not trying to. It changes what arrives in them.
+
+### The acceptance, and how it had to be taken
+
+One hill, one seed, before and after. **`RunScene.runSeed` is `Math.random()` per run, so two runs
+are two different worlds** — the first attempt at a before/after produced two unrelated frames.
+Stubbing `Math.random` around `scene.start` breaks texture generation. What works is to take both
+frames from the *same* run: the distance index is recoverable from the sprite's own depth
+(`RoadSprites` sets it to `-n`), so the old alpha can be recomputed exactly over the live frame,
+photographed, and put back. The two frames drift by one metre, because taking a screenshot forces a
+paint and a paint runs a frame.
 
 ## The Ground Has Fibre
 

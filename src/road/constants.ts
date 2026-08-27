@@ -702,6 +702,39 @@ export function billboardAppear(distanceIndex: number, drawDistance: number = DR
 export const MAX_BILLBOARD_FOG = 0.12
 
 /**
+ * The same quantity for roadside scenery, which is not on a reaction budget.
+ *
+ * **⚠ `MAX_BILLBOARD_FOG` is a combat constant and must stay one.** It is what obstacles and
+ * pickups fade by, and `verify:obstacles` measures the contrast a hazard still has at the distance
+ * `REACTION_MS` is counted from — a prop that is hard to see is atmosphere, a rock that is hard to
+ * see is an unfair hit. Scenery answers to no such floor, so the two numbers separate here rather
+ * than one being tuned as a compromise between them.
+ *
+ * **0.85, and the reason it is not the transparency defect this project already shipped twice is a
+ * measurement.** The objection on `MAX_BILLBOARD_FOG` is exactly right and still stands: alpha is
+ * not haze, because alpha blends a prop toward *whatever is behind it* rather than toward the fog.
+ * What makes it haze at the far end is that at the far end those are the same colour. Measured on
+ * all seven themes: the ground's palette fades to **precisely `theme.fog`** by its last row — it
+ * is the colour the ramp ends on — and the sky's own horizon band sits **deltaE 0.04 to 0.18**
+ * from it. So a distant prop drawn at low alpha is blended toward the fog colour by arithmetic
+ * rather than by luck.
+ *
+ * Near props are untouched by construction: `billboardFog` is `0` at the camera and the curve is
+ * shared with the ground, so a prop is faded by roughly the fraction the ground behind it has
+ * already been faded by. That shared curve is load-bearing — give scenery a curve of its own and
+ * a tree visibly leads or lags the ground it stands on.
+ *
+ * **What this does not fix, and what it is for.** A prop coming over a crest emerges correctly and
+ * continuously — `verify:sightline` measures the crop sliding rather than stepping, and a taller
+ * prop clearing the ridge a segment earlier than a short one. The whole emergence simply takes
+ * **175 world units, 0.05s at `SPEED_CAP`, three frames at 60Hz**, because a prop that far out is
+ * a few dozen pixels tall and the horizon sweeps its height quickly. Three frames of a correct
+ * crop still reads as a pop when the object arrives at full contrast; it reads as emerging when it
+ * arrives out of haze. This constant does not change the timing and is not trying to.
+ */
+export const MAX_DECOR_FOG = 0.85
+
+/**
  * The V coordinate that samples the **centre** of fog row `step`.
  *
  * Exactly the same requirement as `paletteU`, for exactly the same reason: paired with NEAREST

@@ -16,7 +16,8 @@
     "verify:obstacles": "node --import ./scripts/register-ts-loader.mjs scripts/verify-obstacles.mjs",
     "verify:audio": "node --import ./scripts/register-ts-loader.mjs scripts/verify-audio.mjs",
     "verify:ui": "node --import ./scripts/register-ts-loader.mjs scripts/verify-ui.mjs",
-    "verify:mattes": "node scripts/verify-mattes.mjs"
+    "verify:mattes": "node scripts/verify-mattes.mjs",
+    "verify:sightline": "node --import ./scripts/register-ts-loader.mjs scripts/verify-sightline.mjs"
   },
   "dependencies": {
     "phaser": "^4.2.0"

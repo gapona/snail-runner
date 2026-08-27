@@ -13,7 +13,7 @@ import {
   billboardFog,
   DECOR_SINK_FRACTION,
   DRAW_DISTANCE,
-  MAX_BILLBOARD_FOG,
+  MAX_DECOR_FOG,
 } from './constants'
 import { isDecorArt, type DecorTexture } from './decor'
 import { getRoadTheme } from './themes'
@@ -256,7 +256,9 @@ export class RoadSprites {
     // would cost more than the assignment it skips.
     // Two independent terms: the haze it is seen through, and the fade it arrives with.
     // See `BILLBOARD_FADE_IN_FRACTION` for why they are not one number.
-    image.setAlpha((1 - billboardFog(distanceIndex) * MAX_BILLBOARD_FOG) * billboardAppear(distanceIndex))
+    // `MAX_DECOR_FOG`, not `MAX_BILLBOARD_FOG`: that one is what obstacles and pickups fade by
+    // and it is held down by the reaction budget. Scenery is not on one.
+    image.setAlpha((1 - billboardFog(distanceIndex) * MAX_DECOR_FOG) * billboardAppear(distanceIndex))
     // Art gets its biome's colour under the theme's light; a generated silhouette already *is*
     // the theme's colour, and multiplying it again would darken it twice over.
     // The biome's colour under the theme's light, moved a little for this instance. A generated
