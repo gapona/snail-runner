@@ -26,16 +26,29 @@ const CANVAS = 256
 const CHEVRON = 0xf0b024
 
 /**
- * A wedge, drawn as a billboard like everything else standing on the road.
+ * The ramp, seen from behind — which is the only vantage this game has.
  *
- * **It reads by its slope, which is the one thing on the road that is not vertical.** Obstacles are
- * upright masses and pickups are floating icons; a shape whose top edge climbs from the ground to a
- * lip is the only thing in the frame that says "this goes up", and it has to say that from far
- * enough away for the player to line up on it.
+ * **⚠ The first version drew it in PROFILE and it was wrong by ninety degrees.** A wedge whose slope
+ * rises left to right is a ramp you are looking at from the side, and the player is never to the
+ * side: they are directly behind it, running at it. What they saw was a ramp lying across their
+ * path, which is a thing you hit rather than a thing you ride. Reported by pointing at a screenshot.
  *
- * Drawn in the obstacle family's own colours rather than a new hue: a ramp is made of the same
- * timber the crates and the fences are, and this game's one colour rule is that everything is muted
- * except the snail and the things it is steered towards. A ramp is not a reward.
+ * So it is drawn receding: the **near edge is wide and on the road, the far edge is narrower and
+ * raised**, and between them is the running surface going away from the camera. The narrowing is
+ * what makes it read as length rather than as a flat plate — perspective inside a billboard has to
+ * be painted, because the projection only scales the whole quad.
+ *
+ * Three things carry it at the 160-odd pixels it is actually seen at:
+ *
+ * - the **trapezoid**, which is the only shape on this road that is wider at the bottom;
+ * - the **lip**, a darker band capping the far edge, so the surface ends at a raised edge rather
+ *   than fading out;
+ * - the **chevrons**, pointing away up the slope, and they are the only saturated thing on the
+ *   object — see `CHEVRON` for why the body may not be.
+ *
+ * The billboard is about four times as wide as it is tall, so everything here is drawn tall on a
+ * square canvas and comes out flattened. That suits a ramp seen end-on, which really is foreshortened,
+ * but it means the shapes have to be few and large: fine detail arrives as a smear.
  */
 export function createRampTexture(scene: Phaser.Scene): void {
   if (scene.textures.exists(RAMP_TEXTURE)) return
@@ -44,45 +57,103 @@ export function createRampTexture(scene: Phaser.Scene): void {
   const s = (f: number): number => CANVAS * f
   // Ink weight off the geometric mean of the canvas, the rule the obstacles' own art records: a
   // fraction of the width puts a rope round a short shape and a hairline round a tall one.
-  const ink = Math.max(2, Math.sqrt(CANVAS * CANVAS) * 0.022)
-  const colors = OBSTACLE_MATERIALS.blocking
+  // **⚠ Thin, and the first value was three times this.** At 0.02 of the canvas the ink ring plus
+  // the two rails were most of what reached the screen: the ramp came out as a dark trapezoid — a
+  // hole in a pale road rather than a thing standing on it. A billboard this flat has very little
+  // interior left after a border, so the border has to be a hairline.
+  const ink = Math.max(1.5, Math.sqrt(CANVAS * CANVAS) * 0.007)
+  // **Sandstone, not crate timber.** `blocking`'s greys are what an upright mass is read against the
+  // SKY in; a ramp is read against the ROAD, which is pale warm flagstone, and a mid grey on it is a
+  // hole. `low` is the family's own sun-bleached stone and straw — warmer and lighter, so the wedge
+  // reads as something raised off the road rather than cut into it.
+  const colors = OBSTACLE_MATERIALS.low
 
-  // The slope, rising left to right, with the lip at the top of the frame — the billboard's origin
-  // is its bottom edge, so this is drawn as it stands on the road.
-  const face = [s(0.03), s(1), s(0.97), s(0.1), s(0.97), s(1)]
-
-  g.fillStyle(INK, 1)
-  g.fillTriangle(face[0] - ink, face[1] + ink, face[2] + ink, face[3] - ink, face[4] + ink, face[5] + ink)
-  g.fillStyle(colors.mid, 1)
-  g.fillTriangle(face[0], face[1], face[2], face[3], face[4], face[5])
-  // The running surface, lighter than the body: a wedge drawn in one flat colour is a triangle, and
-  // a triangle is not a thing that goes up.
-  g.fillStyle(colors.light, 1)
-  g.fillTriangle(s(0.05), s(0.99), s(0.95), s(0.12), s(0.95), s(0.34))
-  // The end wall, so the far side reads as a lip rather than as a point.
-  g.fillStyle(colors.dark, 1)
-  g.fillRect(s(0.9), s(0.12), s(0.07), s(0.87))
-
-  // **⚠ Chevrons, and they are the only saturated thing on the object.** Two rounds of looking at
-  // this in the running game: at 164 x 21 pixels a timber wedge on a pale road is invisible, and
-  // the game's own colour rule — everything muted except the snail and what it is steered towards —
-  // forbids painting the body bright. A *marking* is the way out: the road already carries pale
-  // paint, and a pair of gold chevrons climbing the slope is a road marking that says which way it
-  // goes. It is also the one shape in the frame with a direction, which is exactly what a ramp is.
-  for (let i = 0; i < 2; i++) {
-    const at = 0.3 + i * 0.3
-    // Along the slope, so the chevrons lie on the surface rather than standing on it.
-    const y = 0.99 - at * 0.84
-    const w = 0.1
-
-    g.fillStyle(CHEVRON, 1)
+  const poly = (points: number[][], color: number): void => {
+    g.fillStyle(color, 1)
     g.beginPath()
-    g.moveTo(s(at + w), s(y - 0.1))
-    g.lineTo(s(at + w * 2), s(y - 0.03))
-    g.lineTo(s(at + w), s(y + 0.04))
-    g.lineTo(s(at + w * 0.55), s(y - 0.03))
+    g.moveTo(s(points[0][0]), s(points[0][1]))
+    for (let i = 1; i < points.length; i++) g.lineTo(s(points[i][0]), s(points[i][1]))
     g.closePath()
     g.fillPath()
+  }
+
+  // Near edge at the bottom, full width; far edge at the top, pulled in — the recession.
+  const near = 0.5
+  const far = 0.3
+  const nearY = 1
+  const farY = 0.24
+  const lipY = 0.05
+  const o = ink / CANVAS
+
+  // The silhouette, in ink, one step out from everything drawn over it.
+  poly(
+    [
+      [0.5 - near - o, nearY + o],
+      [0.5 + near + o, nearY + o],
+      [0.5 + far + o, lipY - o],
+      [0.5 - far - o, lipY - o],
+    ],
+    INK,
+  )
+  // The running surface. Lighter than the body, because it is the face the light falls on and the
+  // face the player is aiming at.
+  poly(
+    [
+      [0.5 - near, nearY],
+      [0.5 + near, nearY],
+      [0.5 + far, farY],
+      [0.5 - far, farY],
+    ],
+    colors.light,
+  )
+  // The lip: the raised far edge, capping the surface. Darker, so the ramp ends on an edge rather
+  // than dissolving into the road behind it.
+  poly(
+    [
+      [0.5 - far, farY],
+      [0.5 + far, farY],
+      [0.5 + far, lipY],
+      [0.5 - far, lipY],
+    ],
+    colors.mid,
+  )
+  // Rails down both sides, so the surface has thickness and the eye has two converging lines to
+  // read the recession off.
+  for (const side of [-1, 1]) {
+    poly(
+      [
+        [0.5 + side * near, nearY],
+        [0.5 + side * (near - 0.03), nearY],
+        [0.5 + side * (far - 0.02), farY],
+        [0.5 + side * far, farY],
+      ],
+      colors.dark,
+    )
+  }
+
+  // **⚠ Chevrons, and they are the only saturated thing on the object.** Two rounds of looking at
+  // this in the running game: a timber ramp on a pale road is invisible, and the game's own colour
+  // rule — everything muted except the snail and what it is steered towards — forbids painting the
+  // body bright. A *marking* is the way out: the road already carries pale paint, and arrows
+  // pointing away up the surface are a road marking that says which way it goes.
+  for (let i = 0; i < 3; i++) {
+    const t = 0.12 + i * 0.27
+    const y = nearY - t * (nearY - farY)
+    // Narrowing with the surface, so they lie on it rather than floating over it.
+    const w = 0.3 - t * 0.14
+    const h = 0.15
+
+    poly(
+      [
+        [0.5, y - h],
+        [0.5 + w, y],
+        [0.5 + w * 0.45, y],
+        [0.5, y - h * 0.5],
+        [0.5 - w * 0.45, y],
+        [0.5 - w, y],
+      ],
+      CHEVRON,
+    )
   }
 
   g.generateTexture(RAMP_TEXTURE, CANVAS, CANVAS)

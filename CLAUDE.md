@@ -1030,6 +1030,28 @@ on every tick, so the spin would have reset to nothing on the frame after it sta
 whole state first now, and clears the three on landing rather than leaving a grounded snail holding
 a launch velocity nothing reads.
 
+### ⚠ It was drawn in profile, which is wrong by ninety degrees
+
+A wedge whose slope rises left to right is a ramp seen **from the side**, and the player is never to
+the side: they are directly behind it, running at it. What that put on screen was a ramp lying across
+the road, which is a thing you hit rather than a thing you ride. Reported by pointing at a frame.
+
+It is drawn receding now — **near edge wide and on the road, far edge narrower and raised** — with a
+darker lip capping the far end and rails down both sides giving the eye two converging lines to read
+the recession off. The perspective inside the billboard has to be *painted*, because the projection
+only scales the whole quad.
+
+The chevrons point away up the surface and narrow with it, so they lie on the ramp rather than
+floating over it. They are the only saturated thing on the object: the body stays in the obstacle
+family's muted stone because a ramp is not a reward, and the *marking* borrows the coin's own gold
+because the road already carries paint and the player already reads that colour as "go for this".
+
+**And the first recoloured version read as a hole in the road.** `blocking`'s greys are what an
+upright mass is read against the *sky* in; a ramp is read against the *road*, which is pale warm
+flagstone, and a mid grey on it is a hole. It is `low`'s sun-bleached sandstone now, with the ink
+ring cut from 0.02 of the canvas to 0.007 and the rails halved — on a billboard this flat there is
+very little interior left after a border, so the border has to be a hairline.
+
 ### ⚠ The wedge was invisible, and the rule that made it invisible was the wrong rule
 
 `RAMP_HEIGHT` was 170 on the reasoning that a ramp drawn shorter than the shortest thing that *can*
@@ -1451,10 +1473,23 @@ and each is written up on the code that fixes it:
 horizontal shear falling to zero by `WAVE_REACH`. Six independent renders would be six different
 snails, and this is the one object whose identity is the entire product.
 
-**The model kept drifting to profile, and it was right.** The game's own procedural mascot is a
-profile — `drawFoot` runs the foot horizontally and puts the stalks at x 0.19/0.30, i.e. head left —
-and the 1.56:1 aspect *is* a profile proportion. The pick is mirrored to face left so the art and
-the fallback agree; the direction is otherwise arbitrary, since the snail runs away from the camera.
+**⚠ The model kept drifting to profile, and this file used to say it was right. It was not.** The
+argument was that the procedural fallback is a profile (`drawFoot` runs the foot horizontally, stalks
+at x 0.19/0.30, head left), that the 1.56:1 aspect is a profile proportion, and that the direction is
+arbitrary "since the snail runs away from the camera". The last clause is the answer contradicting
+its own premise: if the snail runs away from the camera then the player is looking at its **back**,
+and a profile is a creature travelling across the screen while the road travels into it.
+
+Reported by a player pointing at a frame. The pick is **`snail_hero_v2`**, the one render of sixteen
+taken at that vantage — shell to the camera, head and both stalks going away, foot spread wide
+underneath — and it is **not mirrored**, because a back has no facing to agree with. Its 1.62:1 is
+within four points of the collision box's 1.56:1, so nothing about `PLAYER_WIDTH` moved. Checked at
+120, 46 and 23 pixels over magenta and mid grey: it still reads as a creature at the narrowest
+viewport the game supports.
+
+**What this leaves open, stated rather than hidden**: the procedural fallback in `snailArt.ts` is
+still a profile, so art and fallback no longer agree. That only shows if a PNG fails to load — and
+the fix is a rear-view fallback, not a mirrored render.
 
 ### ⚠ The obstacles are made things now, and it took three rounds to find out why
 
@@ -1498,16 +1533,30 @@ The related half: `text, letters, numbers` had been cut from `COMMON_NEG` on the
 sign. Both halves were true and the conclusion was still wrong — a **coin** is the one subject whose
 defining feature is that something is struck into its face. It lives in `PICKUP_NEG` now.
 
-### The shared backing disc is composited, not rendered
+### ⚠ A pickup now carries nothing behind it, and two contrast devices were removed to get there
 
-All three pickups sit on one dark plate, drawn by `build_pickups`. Its whole job is to be the
-*same* disc on all three, so a pickup separates from grey road, green grass and pale sand alike —
-which three independently rendered discs cannot be. The round that asked for it in the prompt
-returned none at all, which is the right outcome to accept rather than to prompt harder at.
+Both were argued for correctly and both were reported by a player the first time they were seen on a
+real frame. The argument each time was the same and it is a good one: a pickup has to separate from
+grey road, green grass and pale sand alike, and the eight biomes make every one of those the
+background at some point.
 
-**Its first values were wrong and were fixed by looking at the running game**: at alpha 205 under a
-0.72 glyph fit, a coin passing the camera read as a dark hole in the road with something small
-inside it. A backing plate's job is to be the thing you do not look at.
+- **A shared dark disc** was the first answer. Its first values were fixed by looking at the running
+  game — at alpha 205 under a 0.72 glyph fit a coin read as a dark hole in the road with something
+  small inside it — and even corrected it was a plate under every icon.
+- **A bright rim** replaced it: dilate the alpha, subtract the original, paint the ring near-white.
+  A morphological outline rather than a stroke, so it follows a bunch of grapes as exactly as it
+  follows a disc. On a bright world it does something worse than the disc did — it puts a **white
+  halo** round every pickup, and at the size one is actually read the halo is most of what is there.
+  Reported as "there is a white background around the icons".
+
+What carries the separation now is what the object already has: **its own ink contour** from the
+render, **its saturation** (the pickups average 69% against the obstacles' 13%, and only the mascot
+and the rewards are allowed to be saturated at all), and **the hard-edged ellipse shadow** under it,
+which is the one mark on the ground that means "something is above this spot". `GLYPH_FIT` went to
+0.98, since there is no longer a ring to leave room for.
+
+**The standing rule, paid for twice in one round: a contrast device is judged on a frame, not on the
+argument for it.**
 
 ### ⚠ Two boundary bugs, both caught by checks that already existed
 

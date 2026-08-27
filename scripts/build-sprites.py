@@ -535,33 +535,30 @@ PICKUP_KEYS = {
 #   THE SHADOW     already exists, already projected, already sized by height -- see `shadows.ts`.
 #                  It is what separates the object from the ground it floats over.
 #   THE SILHOUETTE closed and compact, which is what the fruit set was chosen on.
-RIM_WIDTH = 0.045
-# Warm white rather than pure: a neutral rim on a warm biome reads as a cut-out edge, and this has
-# to read as light catching a contour.
-RIM_COLOUR = (255, 250, 235, 230)
-# How much of the canvas the glyph fills. Higher than it was under the disc, which had to leave a
-# ring of itself showing all the way round.
-GLYPH_FIT = 0.94
-
-
-def _rim(glyph: Image.Image, width_px: int) -> Image.Image:
-    """A bright outline around whatever is opaque in `glyph`, as its own RGBA layer.
-
-    Dilating the alpha and subtracting the original is the whole of it -- a morphological outline
-    rather than a stroke, so it follows a bunch of grapes as exactly as it follows a disc. Done on
-    the alpha alone, so a dark fruit and a light one get the same ring.
-    """
-    alpha = glyph.getchannel("A")
-    grown = alpha.filter(ImageFilter.MaxFilter(max(3, width_px * 2 + 1)))
-    ring = ImageChops.subtract(grown, alpha)
-    out = Image.new("RGBA", glyph.size, RIM_COLOUR[:3] + (0,))
-    out.putalpha(ring.point(lambda v: min(255, round(v * RIM_COLOUR[3] / 255))))
-
-    return out
+# **⚠ THE RIM IS GONE, and it was reported the first time it was seen on a real frame.** It replaced
+# the dark backing disc on the argument that a pickup has to separate from grey road, green grass and
+# pale sand alike, and that a bright contour does that without the disc's "dark hole in the road"
+# problem. On a bright world it does something worse: dilating the alpha and painting the ring
+# near-white puts a WHITE HALO round every coin, and at the size a pickup is actually read that halo
+# is most of what is there -- the player sees icons on white blobs, which is exactly how it was
+# reported.
+#
+# What carries the separation instead is what the object already has: its own ink contour from the
+# render, its saturation (the pickups average 69% against the obstacles' 13%, and only the mascot and
+# the rewards are allowed to be saturated at all), and the hard-edged ellipse shadow under it, which
+# is the one mark on the ground that means "something is above this spot".
+#
+# The lesson is the standing one, paid for again: a contrast device is judged on a frame, not on the
+# argument for it. Both the disc and the rim were argued for correctly and both were reported by a
+# player the first time they were looked at.
+RIM_WIDTH = 0.0
+# How much of the canvas the glyph fills. With nothing composited round it there is no ring to leave
+# room for, so this is the whole canvas bar an antialiasing margin.
+GLYPH_FIT = 0.98
 
 
 def build_pickups(report: list) -> None:
-    """Every pickup and every fruit, on the rim-light contract rather than a backing disc."""
+    """Every pickup and every fruit, on their own contour -- no disc, no rim. See `RIM_WIDTH`."""
     out_dir = ASSETS / "pickup"
     out_dir.mkdir(parents=True, exist_ok=True)
     size = LONG_SIDE["pickup"]
@@ -584,12 +581,8 @@ def build_pickups(report: list) -> None:
                 Image.LANCZOS,
             )
 
-        # Width from the glyph's own height, which is what makes it a proportion of the drawn
-        # object rather than of the file.
-        rim = _rim(glyph, max(1, round(glyph.height * RIM_WIDTH)))
         at = ((size - glyph.width) // 2, (size - glyph.height) // 2)
 
-        canvas.alpha_composite(rim, at)
         canvas.alpha_composite(glyph, at)
 
         dst = out_dir / f"{key}.png"
@@ -662,12 +655,20 @@ def build_snail(report: list) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     hero = Image.open(src).convert("RGBA")
-    # **Mirrored to face left, matching the game's own procedural mascot.** `snailArt.ts` puts the
-    # eye stalks at x 0.19 and 0.30 and runs the foot rightward from x 0.04, i.e. head left. The
-    # direction is otherwise arbitrary — the snail runs away from the camera, so a profile faces
-    # neither toward nor away — but it is not arbitrary that the art and the fallback agree, since
-    # a missing PNG drops the game back to the drawn version mid-session.
-    hero = hero.transpose(Image.FLIP_LEFT_RIGHT)
+    # **⚠ NOT MIRRORED ANY MORE, AND THE PICK IS A REAR VIEW RATHER THAN A PROFILE.** The shipped
+    # mascot was `snail_hero_v14`, a clean full profile, flipped to face left so that it agreed with
+    # the procedural fallback's own head-left drawing. Both halves of that were wrong about the
+    # game: the camera is BEHIND the snail, so what the player must see is its back, and a profile
+    # is a creature travelling across the screen while the road travels into it. Reported by a
+    # player pointing at a frame -- "the snail is side-on to us and it should be back-on".
+    #
+    # `v2` is the one render of the sixteen taken at that vantage: the shell faces the camera, the
+    # head and both stalks go away and to the right, and the foot spreads wide underneath. It is
+    # also 1.62:1, within four points of the 1.56:1 the collision box wants, so nothing about
+    # `PLAYER_WIDTH` moves -- see its docstring for what happens when the drawn aspect and the box
+    # disagree.
+    #
+    # There is no mirror because there is no facing: a back has no left or right to agree with.
 
     base, meta = process(hero, LONG_SIDE["snail"], desaturate=0.0)
 
