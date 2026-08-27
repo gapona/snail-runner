@@ -143,6 +143,25 @@ export function groundPaletteIndex(biome: number, alternate: boolean): number {
  */
 export const GROUND_EXTENT = 40
 
+/**
+ * How far every prop is planted BELOW the ground it stands on, as a fraction of its own height.
+ *
+ * **A billboard's base sits exactly on the projected ground, and exactly is the wrong place.** The
+ * sprite is a flat quad facing the camera while the ground recedes under it, so a base that lands
+ * on the ground line at the sprite's own centre is already slightly above it at the sprite's front
+ * edge — and every one of the errors that stack on top of that (the trim's own rounding, a model
+ * whose lowest polygon is a rounded underside, the ground's curvature across a wide prop) pushes
+ * the same way: up. Reported repeatedly as things hovering.
+ *
+ * The asymmetry is the argument for a bias rather than for chasing each cause: a prop sunk a
+ * little into the ground reads as standing in it, and a prop floating the same distance reads as
+ * broken. When the error can only go one way, bias against it.
+ *
+ * A fraction rather than a fixed distance, because the same absolute sink that is invisible under a
+ * mountain would bury a lily pad.
+ */
+export const DECOR_SINK_FRACTION = 0.05
+
 /** Named indices into `ROAD_PALETTE`, so call sites don't carry bare magic numbers. */
 export const PALETTE_INDEX = {
   ASPHALT_DARK: 0,
@@ -260,7 +279,7 @@ export const DECOR_COLORS = { body: 0x2b3040, rim: 0x59637f } as const
  */
 export const DECOR_TIERS = {
   /** Beyond the corridor: rare, huge, and mostly fog. */
-  far: { chance: 0.05, minOffset: 20, maxOffset: 34, scale: 2.6 },
+  far: { chance: 0.11, minOffset: 20, maxOffset: 34, scale: 2.6 },
   /** The verge, and the tier that was already there. */
   mid: { chance: 1, minOffset: 1.35, maxOffset: 18, scale: 1 },
   /**
@@ -276,7 +295,12 @@ export const DECOR_TIERS = {
 } as const
 
 export const DECOR = {
-  DENSITY: 0.16,
+  // **0.26, raised from 0.16 because the sides read as empty.** This is the chance of an object
+  // on EACH side of a given segment, so the expected count in view is `DRAW_DISTANCE * DENSITY * 2`
+  // — 96 at these numbers against 48 before. The pool moved with it; see `DECOR_POOL_SIZE`, which
+  // is sized from a measured sweep rather than from this arithmetic, because a saturated pool
+  // reports its own ceiling as the demand.
+  DENSITY: 0.26,
   MIN_OFFSET: 1.35,
   MAX_OFFSET: 18,
   OFFSET_BIAS: 1.7,
@@ -313,7 +337,13 @@ export const DECOR = {
  * the sweep repeated. Any future change to `DECOR.DENSITY`, `DECOR.MAX_OFFSET` or `DRAW_DISTANCE`
  * has to be measured the same way round: raise the pool first, sweep, then size it.
  */
-export const DECOR_POOL_SIZE = 120
+// **⚠ RE-MEASURED WHEN THE VERGES WERE MADE DENSER, BY THE PROCEDURE THIS DOCSTRING PRESCRIBES.**
+// `DECOR.DENSITY` went 0.16 -> 0.26 and the far tier's chance 0.05 -> 0.11. The pool was raised to
+// 240 first — clear of any plausible demand — and only then swept, because a pool that saturates
+// reports its own ceiling rather than the demand, which is exactly how the 72 figure survived being
+// wrong. Swept over 361km of running, i.e. past a full 286,800-unit lap: **peak 147 wanted, 0
+// frames over capacity.** 200 leaves the same third of headroom over that peak as 120 left over 90.
+export const DECOR_POOL_SIZE = 200
 
 /**
  * Depth of the ground mesh, below every billboard.
@@ -393,6 +423,82 @@ export function billboardFog(distanceIndex: number, drawDistance: number = DRAW_
 }
 
 /**
+ * How far in front of the draw distance a billboard fades up from nothing, as a fraction of that
+ * distance.
+ *
+ * **⚠ THIS IS A SEPARATE QUANTITY FROM `MAX_BILLBOARD_FOG` AND CONFLATING THEM CAUSED A REGRESSION.**
+ * The two answer different questions:
+ *
+ *   MAX_BILLBOARD_FOG   how hazy a distant object LOOKS. A property of the whole far field.
+ *   this               how long an object takes to APPEAR. A property of one boundary.
+ *
+ * They were the same number by accident: with the fog at 0.30, an object entering the draw
+ * distance started at alpha 0.70 and that was gentle enough to read as arriving out of haze. When
+ * the fog was cut to 0.12 — correctly, because at 0.30 nearby props were visibly see-through over a
+ * bright road — an object started at **alpha 0.88** instead, and the arrival became a pop. Reported
+ * as things "appearing out of nowhere", and the mountains worst of all: a range is one sprite the
+ * size of the sky, so its whole silhouette switched on at once and read as the world assembling
+ * itself in layers.
+ *
+ * 0.28 of a 300-segment draw distance is 84 segments, or about 2.8 seconds at `SPEED_CAP` — long
+ * enough that no single frame carries a visible step.
+ *
+ * **The band sits nowhere near anything the player has to react to.** An obstacle's reaction
+ * distance is 13 segments; this fade lives between 216 and 300. `verify:obstacles` asserts the
+ * alpha an obstacle is drawn at when the reaction budget starts, which is what keeps the two from
+ * ever meeting.
+ */
+/**
+ * The mountain range's backdrop layer — see `Backdrop`'s `SKYLINE_TEXTURE` for why it is a layer
+ * at all rather than scenery.
+ *
+ * Here rather than beside the class because `Backdrop.ts` imports `phaser`, and the one number in
+ * this table that has already been wrong needs a check that runs under plain Node.
+ *
+ * - `height` is the band's share of the viewport, and `sink` buries the strip's feet under the
+ *   horizon so the ground covers them: a range whose bases are all *drawn* on one row reads as a
+ *   row of standing objects rather than as terrain.
+ * - **⚠ `driftPixels` is screen pixels of movement per world unit of `horizonDriftX`, and the
+ *   first value was a guess that made the range unwatchable.** It was written as a bare factor on
+ *   `tilePositionX` beside the sky's own 0.04-0.26, on the reasoning that a range is nearer than
+ *   the sky and must lead it. That reasoning is fine and the units are not: `horizonDriftX` is the
+ *   integrated curvature in **world** units, it swings +/-90 000 over a lap and changes by **27 132
+ *   per second** at `SPEED_CAP` on the worst bend. At 0.55 that scrolled the strip roughly twelve
+ *   tile-widths a second — reported as the mountains running, and running faster the faster you
+ *   drive. The sky survives the same quantity at 0.26 only because a gradient has no feature that
+ *   can be seen moving.
+ *
+ *   So the number is stated as what it does to the picture, and `verify:road` holds it to a budget
+ *   measured off the real circuit at `MAX_ATTAINABLE_SPEED` — the boost included, because "it goes
+ *   faster the faster I drive" is the report, and the boost is the fastest the game gets. At 0.0012
+ *   the worst bend moves the range **55px a second** and a whole lap shifts it **218px**, about an
+ *   eighth of a frame: a horizon that answers to the road without ever streaming past.
+ */
+export const SKYLINE_LAYER = { driftPixels: 0.0012, height: 0.3, sink: 0.035 } as const
+
+/** Size of the strip `scripts/build-sprites.py` composites. Width matters — see `layoutSkyline`. */
+export const SKYLINE_TEXTURE_SIZE = { width: 3072, height: 384 } as const
+
+export const BILLBOARD_FADE_IN_FRACTION = 0.28
+
+/**
+ * How opaque a billboard is at `distanceIndex`, as `0..1`, from the fade-in alone.
+ *
+ * Smoothstep rather than linear: a linear ramp has a corner at each end, and the corner at the top
+ * — where the sprite reaches full opacity — is exactly the kind of discontinuity the eye catches on
+ * an object that is also growing. Smoothstep leaves both ends flat.
+ */
+export function billboardAppear(distanceIndex: number, drawDistance: number = DRAW_DISTANCE): number {
+  const band = drawDistance * BILLBOARD_FADE_IN_FRACTION
+
+  if (!(band > 0)) return 1
+
+  const t = Math.min(1, Math.max(0, (drawDistance - distanceIndex) / band))
+
+  return t * t * (3 - 2 * t)
+}
+
+/**
  * How much of a billboard's opacity the farthest fog takes.
  *
  * **Fog is applied as transparency rather than as a tint toward the fog colour**, because
@@ -411,6 +517,14 @@ export function billboardFog(distanceIndex: number, drawDistance: number = DRAW_
  * At 0.30 nothing is obviously transparent and the distance cue is carried where it belongs: by
  * the ground's own fog, which is a real colour blend through the palette, plus perspective size.
  *
+ * **⚠ 0.30 WAS STILL VISIBLY TOO MUCH ONCE THE WORLD GOT BRIGHT, AND IT WAS REPORTED AS EXACTLY
+ * THAT — "the textures are transparent".** The figure was set against the rail shooter's near-black
+ * palette, where taking 30% of a prop's alpha away over a dark ground changes very little; over a
+ * pale flagstone road and a bright sky the same 30% is the sky showing through a mushroom. Now
+ * 0.12, which is the most the eye reads as haze rather than as a hole. The argument above is
+ * unchanged and is what makes this affordable: perspective size and the ground's own palette fog
+ * were always doing the distance work, and this was only ever the seasoning.
+ *
  * **The correct fix, if this is ever revisited, is a second pass**: draw each billboard again on
  * top of itself with `setTint(fogColour).setTintMode(FILL)` at alpha `fog`, which blends the sprite
  * toward the fog colour instead of toward whatever is behind it. That is real aerial perspective
@@ -419,7 +533,7 @@ export function billboardFog(distanceIndex: number, drawDistance: number = DRAW_
  * ignore lists, the depth ordering and the DEV single-camera assertion, and a mistake in those is
  * worse than distant scenery being slightly too crisp.
  */
-export const MAX_BILLBOARD_FOG = 0.3
+export const MAX_BILLBOARD_FOG = 0.12
 
 /**
  * The V coordinate that samples the **centre** of fog row `step`.

@@ -1,0 +1,77 @@
+{
+  "stem": "obs_block_0_v7",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one tall stack of three chunky wooden crates, thick planks, bevelled corners, warm brown, standing upright, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, face, texture, seamless, wet, liquid, plastic, resin, warehouse, pallet, treasure chest, open lid",
+  "seed": 923007,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1216x832",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "rembg",
+  "keyBackground": "#b0b0b0",
+  "bytes": 215269,
+  "keyColor": "#979494",
+  "keyRingPurity": null,
+  "canvasEdgeOpaquePct": 0.0,
+  "bgCoveragePct": 54.2,
+  "asset": "obs_block_0",
+  "family": "obstacles",
+  "variant": 7,
+  "note": "the tall solid \u2014 flat plank faces say 'cannot pass'",
+  "askedAspect": 1.58,
+  "targetCanvas": [
+    158,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    376
+  ],
+  "coveragePct": 65.3,
+  "aspect": 1.361,
+  "softEdgePct": 2.53,
+  "edgeSpillMean": -26.73,
+  "edgeSpillP99": -1.65,
+  "edgeSpillMax": 2.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 3366,
+  "edgeBgLikePct": 15.33,
+  "edgeInteriorDelta": 19.5,
+  "ringNearBgPct": 28.78,
+  "ringDistToBg": 98.8,
+  "partialAlphaPct": 2.527,
+  "alpha24Coverage": 65.5,
+  "solidity24": 0.655,
+  "lumaStd24": 42.6,
+  "size24": [
+    24,
+    18
+  ],
+  "dominantColors": [
+    {
+      "hex": "#e6cead",
+      "sharePct": 19.9
+    },
+    {
+      "hex": "#956f51",
+      "sharePct": 15.3
+    },
+    {
+      "hex": "#aa886c",
+      "sharePct": 10.6
+    },
+    {
+      "hex": "#e6c598",
+      "sharePct": 6.8
+    },
+    {
+      "hex": "#a57854",
+      "sharePct": 5.8
+    }
+  ],
+  "targetAspect": 1.58,
+  "aspectVsTarget": 0.86
+}

@@ -39,81 +39,80 @@ export interface DecorTexture {
  * the placeholder set, so nothing about how tall the scenery stands has moved.
  */
 export const DECOR_TEXTURES: readonly DecorTexture[] = [
-
   // The biome sets. Each width is the shipped art's own aspect times a world height chosen for
   // what the thing is -- a pine stands 190 units tall, a lily pad 46 -- so scale reads as scale
   // rather than every prop being the same size in a different outline.
-  { key: 'decor-dune_rock', width: 108, height: 70 },
-  { key: 'decor-dune_grass', width: 38, height: 60 },
-  { key: 'decor-dune_cactus', width: 66, height: 150 },
-  { key: 'decor-dune_bone', width: 55, height: 55 },
-  { key: 'decor-dune_shrub', width: 89, height: 64 },
+  { key: 'decor-dune_rock', width: 179, height: 70 },
+  { key: 'decor-dune_grass', width: 108, height: 60 },
+  { key: 'decor-dune_cactus', width: 69, height: 150 },
+  { key: 'decor-dune_bone', width: 111, height: 55 },
+  { key: 'decor-dune_shrub', width: 98, height: 64 },
   // **59, not 94.** The re-rendered spire is drawn at the 35:100 its own brief calls "the thinnest
   // slot in the set"; the old art was nearly twice as wide, which is part of what made it read as a
   // landscape rather than as a splinter of rock. Same rule as every other entry: the width is the
   // shipped art's own aspect times the height.
-  { key: 'decor-dune_spire', width: 59, height: 170 },
-  { key: 'decor-wet_reeds', width: 85, height: 130 },
-  { key: 'decor-wet_stump', width: 78, height: 80 },
-  { key: 'decor-wet_lily', width: 82, height: 46 },
-  { key: 'decor-wet_willow', width: 93, height: 150 },
-  { key: 'decor-wet_log', width: 104, height: 52 },
-  { key: 'decor-wet_cattail', width: 78, height: 140 },
-  { key: 'decor-for_pine', width: 128, height: 190 },
-  { key: 'decor-for_birch', width: 115, height: 175 },
-  { key: 'decor-for_fern', width: 82, height: 80 },
-  { key: 'decor-for_mushroom', width: 81, height: 70 },
-  { key: 'decor-for_bramble', width: 109, height: 66 },
-  { key: 'decor-for_boulder', width: 93, height: 72 },
-  { key: 'decor-rid_scree', width: 92, height: 50 },
-  { key: 'decor-rid_monolith', width: 74, height: 185 },
-  { key: 'decor-rid_arch', width: 187, height: 105 },
-  { key: 'decor-rid_cairn', width: 65, height: 95 },
-  { key: 'decor-rid_lichen', width: 70, height: 48 },
-  { key: 'decor-rid_snag', width: 107, height: 165 },
-  { key: 'decor-ash_stump', width: 88, height: 78 },
-  { key: 'decor-ash_mound', width: 88, height: 56 },
-  { key: 'decor-ash_spar', width: 104, height: 180 },
-  { key: 'decor-ash_vent', width: 94, height: 54 },
-  { key: 'decor-ash_scrub', width: 102, height: 70 },
-  { key: 'decor-ash_slab', width: 106, height: 50 },
+  { key: 'decor-dune_spire', width: 139, height: 170 },
+  { key: 'decor-wet_reeds', width: 43, height: 130 },
+  { key: 'decor-wet_stump', width: 126, height: 80 },
+  { key: 'decor-wet_lily', width: 127, height: 46 },
+  { key: 'decor-wet_willow', width: 87, height: 150 },
+  { key: 'decor-wet_log', width: 127, height: 52 },
+  { key: 'decor-wet_cattail', width: 135, height: 140 },
+  { key: 'decor-for_pine', width: 58, height: 190 },
+  { key: 'decor-for_birch', width: 73, height: 175 },
+  { key: 'decor-for_fern', width: 213, height: 80 },
+  { key: 'decor-for_mushroom', width: 76, height: 70 },
+  { key: 'decor-for_bramble', width: 97, height: 66 },
+  { key: 'decor-for_boulder', width: 227, height: 72 },
+  { key: 'decor-rid_scree', width: 209, height: 50 },
+  { key: 'decor-rid_monolith', width: 76, height: 185 },
+  { key: 'decor-rid_arch', width: 91, height: 105 },
+  { key: 'decor-rid_cairn', width: 192, height: 95 },
+  { key: 'decor-rid_lichen', width: 99, height: 48 },
+  { key: 'decor-rid_snag', width: 90, height: 165 },
+  { key: 'decor-ash_stump', width: 103, height: 78 },
+  { key: 'decor-ash_mound', width: 137, height: 56 },
+  { key: 'decor-ash_spar', width: 74, height: 180 },
+  { key: 'decor-ash_vent', width: 238, height: 54 },
+  { key: 'decor-ash_scrub', width: 94, height: 70 },
+  { key: 'decor-ash_slab', width: 83, height: 50 },
 
   // `crystal`, five props rather than six: `cry_shard` was rejected for pointing downwards.
   // Billboards here are anchored by the point where they meet the ground, so a shard drawn
   // hanging point-down would read as hovering, which no amount of resizing fixes.
-  { key: 'decor-cry_geode', width: 80, height: 74 },
-  { key: 'decor-cry_bloom', width: 96, height: 96 },
-  { key: 'decor-cry_cluster', width: 91, height: 62 },
-  { key: 'decor-cry_pillar', width: 71, height: 170 },
-  { key: 'decor-cry_slab', width: 105, height: 52 },
+  { key: 'decor-cry_geode', width: 139, height: 74 },
+  { key: 'decor-cry_bloom', width: 84, height: 96 },
+  { key: 'decor-cry_cluster', width: 56, height: 62 },
+  { key: 'decor-cry_pillar', width: 139, height: 170 },
+  { key: 'decor-cry_slab', width: 76, height: 52 },
 
   // `coast`, four props rather than six, for the same reason `crystal` has five: `coa_drift` came
   // back as a cartoon bone and `coa_shell` inside a drawn rectangular frame, and both are being
   // re-rendered rather than shipped. See `DECOR_PICKS` in `scripts/build-sprites.py`.
-  { key: 'decor-coa_stack', width: 84, height: 150 },
-  { key: 'decor-coa_kelp', width: 75, height: 130 },
-  { key: 'decor-coa_palm', width: 128, height: 190 },
-  { key: 'decor-coa_reef', width: 94, height: 60 },
+  { key: 'decor-coa_stack', width: 141, height: 150 },
+  { key: 'decor-coa_kelp', width: 105, height: 130 },
+  { key: 'decor-coa_palm', width: 134, height: 190 },
+  { key: 'decor-coa_reef', width: 80, height: 60 },
 
   // `ruins`, the one biome made of things somebody built. Its two tallest props are the tallest
   // in the game (`rui_obelisk` at 200 against `for_pine`'s 190) on purpose: a skyline is what
   // makes a ruin read as a place rather than as scattered masonry.
-  { key: 'decor-rui_column', width: 71, height: 175 },
-  { key: 'decor-rui_arch', width: 175, height: 120 },
-  { key: 'decor-rui_wall', width: 131, height: 80 },
-  { key: 'decor-rui_statue', width: 108, height: 165 },
-  { key: 'decor-rui_rubble', width: 112, height: 62 },
-  { key: 'decor-rui_obelisk', width: 122, height: 200 },
+  { key: 'decor-rui_column', width: 69, height: 175 },
+  { key: 'decor-rui_arch', width: 109, height: 120 },
+  { key: 'decor-rui_wall', width: 99, height: 80 },
+  { key: 'decor-rui_statue', width: 107, height: 165 },
+  { key: 'decor-rui_rubble', width: 259, height: 62 },
+  { key: 'decor-rui_obelisk', width: 93, height: 200 },
 
   // `fungal`, the ninth biome and the first added after the table could take one. Its whole reason
   // to exist is silhouette room: the game desaturates every prop by half and multiplies it by a
   // tint, so hue is not information and the outline is the entire asset — and a heavy domed cap, a
   // bare spire and a cluster of spheres are shapes none of the other forty-four supply.
-  { key: 'decor-fun_tall', width: 66, height: 114 },
-  { key: 'decor-fun_dome', width: 112, height: 110 },
-  { key: 'decor-fun_cluster', width: 111, height: 120 },
-  { key: 'decor-fun_pair', width: 133, height: 74 },
-  { key: 'decor-fun_wide', width: 122, height: 60 },
+  { key: 'decor-fun_tall', width: 64, height: 114 },
+  { key: 'decor-fun_dome', width: 149, height: 110 },
+  { key: 'decor-fun_cluster', width: 130, height: 120 },
+  { key: 'decor-fun_pair', width: 80, height: 74 },
+  { key: 'decor-fun_wide', width: 61, height: 60 },
 ]
 
 /** Every decor texture key, in `DECOR_TEXTURES` order. */

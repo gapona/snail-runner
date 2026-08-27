@@ -1,0 +1,77 @@
+{
+  "stem": "rui_obelisk_v1",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one tall tapering four sided stone obelisk, glossy warm sandstone, carved bands, pointed top, standing alone, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, egypt, pyramid, city, monument park, hieroglyphs, washington",
+  "seed": 1025001,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "832x1216",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "rembg",
+  "keyBackground": "#b0b0b0",
+  "bytes": 97077,
+  "keyColor": "#838180",
+  "keyRingPurity": null,
+  "canvasEdgeOpaquePct": 0.0,
+  "bgCoveragePct": 78.3,
+  "asset": "rui_obelisk",
+  "family": "ruins",
+  "variant": 1,
+  "note": "the THIN UPRIGHT \u2014 narrowest in the biome",
+  "askedAspect": 0.35,
+  "targetCanvas": [
+    35,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    273,
+    512
+  ],
+  "coveragePct": 35.9,
+  "aspect": 0.533,
+  "softEdgePct": 2.54,
+  "edgeSpillMean": -15.04,
+  "edgeSpillP99": 0.0,
+  "edgeSpillMax": 8.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 2731,
+  "edgeBgLikePct": 27.9,
+  "edgeInteriorDelta": 19.6,
+  "ringNearBgPct": 33.19,
+  "ringDistToBg": 118.6,
+  "partialAlphaPct": 2.542,
+  "alpha24Coverage": 36.5,
+  "solidity24": 0.381,
+  "lumaStd24": 47.3,
+  "size24": [
+    13,
+    24
+  ],
+  "dominantColors": [
+    {
+      "hex": "#726659",
+      "sharePct": 20.8
+    },
+    {
+      "hex": "#776d63",
+      "sharePct": 8.8
+    },
+    {
+      "hex": "#d7c8b3",
+      "sharePct": 8.2
+    },
+    {
+      "hex": "#f4e5ce",
+      "sharePct": 7.5
+    },
+    {
+      "hex": "#68594b",
+      "sharePct": 7.4
+    }
+  ],
+  "targetAspect": 0.35,
+  "aspectVsTarget": 1.52
+}

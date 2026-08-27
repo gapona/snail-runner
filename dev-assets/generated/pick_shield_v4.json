@@ -1,0 +1,76 @@
+{
+  "stem": "pick_shield_v4",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, a glossy game icon of a rounded shield crest, bright cyan blue, thick gold rim, smooth bevelled face, seen straight on, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, realistic, thin lines, text, letters, numbers, sword, crossed weapons, heraldry, coat of arms, text, letters",
+  "seed": 931004,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1024x1024",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 231523,
+  "keyColor": "#9a9b9d",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.0,
+  "asset": "pick_shield",
+  "family": "pickups",
+  "variant": 4,
+  "note": "the only closed symmetrical outline",
+  "askedAspect": 1.0,
+  "targetCanvas": [
+    100,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    428
+  ],
+  "coveragePct": 41.9,
+  "aspect": 0.762,
+  "softEdgePct": 19.77,
+  "edgeSpillMean": -34.65,
+  "edgeSpillP99": 1.0,
+  "edgeSpillMax": 7.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 4049,
+  "edgeBgLikePct": 0.42,
+  "edgeInteriorDelta": 24.1,
+  "ringNearBgPct": 0.87,
+  "ringDistToBg": 151.2,
+  "partialAlphaPct": 19.77,
+  "alpha24Coverage": 42.9,
+  "solidity24": 0.763,
+  "lumaStd24": 48.3,
+  "size24": [
+    24,
+    20
+  ],
+  "dominantColors": [
+    {
+      "hex": "#8c6f4c",
+      "sharePct": 8.1
+    },
+    {
+      "hex": "#6d5335",
+      "sharePct": 6.1
+    },
+    {
+      "hex": "#79644b",
+      "sharePct": 4.4
+    },
+    {
+      "hex": "#2fb3cd",
+      "sharePct": 4.3
+    },
+    {
+      "hex": "#4b4e51",
+      "sharePct": 4.0
+    }
+  ],
+  "targetAspect": 1.0,
+  "aspectVsTarget": 0.76
+}

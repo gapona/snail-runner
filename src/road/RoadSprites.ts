@@ -8,7 +8,13 @@ import {
   createBillboardRect,
 } from './billboard'
 import { tintFor, variationFor, type DecorVariation } from './decorVariation'
-import { billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG } from './constants'
+import {
+  billboardAppear,
+  billboardFog,
+  DECOR_SINK_FRACTION,
+  DRAW_DISTANCE,
+  MAX_BILLBOARD_FOG,
+} from './constants'
 import { isDecorArt, type DecorTexture } from './decor'
 import { getRoadTheme } from './themes'
 import type { Segment } from './track'
@@ -144,7 +150,9 @@ export class RoadSprites {
           this.rect,
           ground,
           sprite.offsetX,
-          sprite.height,
+          // Planted slightly into the ground rather than exactly on it — see
+          // `DECOR_SINK_FRACTION` for why the bias is one-directional.
+          sprite.height - texture.height * DECOR_SINK_FRACTION,
           texture.width,
           texture.height,
           screenWidth,
@@ -246,7 +254,9 @@ export class RoadSprites {
     // Distance haze, on the same curve the ground fades by. Applied every frame rather than
     // cached per slot: a slot's distance changes on almost every frame anyway, so a dirty check
     // would cost more than the assignment it skips.
-    image.setAlpha(1 - billboardFog(distanceIndex) * MAX_BILLBOARD_FOG)
+    // Two independent terms: the haze it is seen through, and the fade it arrives with.
+    // See `BILLBOARD_FADE_IN_FRACTION` for why they are not one number.
+    image.setAlpha((1 - billboardFog(distanceIndex) * MAX_BILLBOARD_FOG) * billboardAppear(distanceIndex))
     // Art gets its biome's colour under the theme's light; a generated silhouette already *is*
     // the theme's colour, and multiplying it again would darken it twice over.
     // The biome's colour under the theme's light, moved a little for this instance. A generated

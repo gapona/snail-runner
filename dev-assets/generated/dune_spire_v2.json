@@ -1,0 +1,76 @@
+{
+  "stem": "dune_spire_v2",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one narrow tapering pillar of glossy orange sandstone, smooth stacked rounded layers, tall and thin, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, pinnacle, canyon, cliff, sun, sunset, waterfall, hoodoo landscape",
+  "seed": 955002,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "832x1216",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 132393,
+  "keyColor": "#908f8c",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 19.95,
+  "asset": "dune_spire",
+  "family": "dunes",
+  "variant": 2,
+  "note": "the THIN UPRIGHT \u2014 35:100, the narrowest slot in the game",
+  "askedAspect": 0.35,
+  "targetCanvas": [
+    35,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    366,
+    512
+  ],
+  "coveragePct": 22.3,
+  "aspect": 0.65,
+  "softEdgePct": 18.31,
+  "edgeSpillMean": -40.24,
+  "edgeSpillP99": 2.0,
+  "edgeSpillMax": 5.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 5079,
+  "edgeBgLikePct": 0.0,
+  "edgeInteriorDelta": 85.1,
+  "ringNearBgPct": 0.0,
+  "ringDistToBg": 150.8,
+  "partialAlphaPct": 18.313,
+  "alpha24Coverage": 23.8,
+  "solidity24": 0.253,
+  "lumaStd24": 43.2,
+  "size24": [
+    17,
+    24
+  ],
+  "dominantColors": [
+    {
+      "hex": "#d3cfce",
+      "sharePct": 41.5
+    },
+    {
+      "hex": "#e8d5c8",
+      "sharePct": 15.6
+    },
+    {
+      "hex": "#b15b27",
+      "sharePct": 7.0
+    },
+    {
+      "hex": "#fa9310",
+      "sharePct": 6.5
+    },
+    {
+      "hex": "#f9a96d",
+      "sharePct": 5.9
+    }
+  ],
+  "targetAspect": 0.35,
+  "aspectVsTarget": 1.86
+}

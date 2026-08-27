@@ -1,6 +1,6 @@
 import * as Phaser from 'phaser'
 import { createRng } from '../race/rng'
-import { HORIZON_Y, ROAD_MESH_DEPTH } from './constants'
+import { HORIZON_Y, ROAD_MESH_DEPTH, SKYLINE_LAYER } from './constants'
 import { getRoadTheme, getRoadThemeId } from './themes'
 
 /** Depths: sky behind the ground, glow and vignette in front of it but behind everything else. */
@@ -9,6 +9,67 @@ const GLOW_DEPTH = ROAD_MESH_DEPTH + 1
 
 /** How much of the camera's lateral drift and height each sky layer answers to. */
 const LAYER_PARALLAX = [0.04, 0.12, 0.26] as const
+
+/**
+ * The sun: where it sits, how big it is, and how it is drawn.
+ *
+ * **⚠ It does not move, and that is a property of the projection rather than a simplification.**
+ * `projectInto` puts a point at `screenWidth / 2 + scale * (x - cameraX) * screenWidth / 2`, and
+ * `scale` goes to zero with distance — so **every** infinitely distant point projects to the exact
+ * centre of the frame, at every camera position. This projection has no way to represent a
+ * *direction* at all, only a position, which has two consequences: an object at infinity cannot
+ * drift when the road bends (there is nothing for it to drift with), and its place in the frame
+ * cannot be derived from an azimuth. `x`/`y` below are therefore a composition decision and are
+ * openly written as one.
+ *
+ * Off-centre and high, for what is around it rather than for realism: the distance readout is
+ * centred at the top, the shield pips sit top-left, and the range tops out around 0.32 of the
+ * frame. `size` is a share of the **height**, because the sky is a share of the height — measured
+ * off the width the sun would be a pinhead on an ultrawide frame and half the sky on a portrait
+ * phone.
+ *
+ * Drawn between sky layer 0 and layer 1, so the haze bands pass in *front* of it. A sun with the
+ * haze behind it is a lamp stuck on the glass.
+ */
+const SUN = { x: 0.76, y: 0.19, size: 0.2 } as const
+
+/** Texture key for the built mountain strip, loaded by `Preloader` from `assets/sky/skyline.png`. */
+export const SKYLINE_TEXTURE = 'skyline'
+
+/**
+ * The mountain range, as a fourth parallax layer rather than as scenery.
+ *
+ * **⚠ THIS WAS TWICE BUILT OUT OF BILLBOARDS AND TWICE REPORTED, IN OPPOSITE DIRECTIONS.** The
+ * ranges first stood on segments in the decor pool's far tier — and everything standing on the
+ * ground in this projection eventually arrives at the camera, so a mountain grew until it filled
+ * half the frame and then slid off the edge, which reads as a whole texture vanishing. Pushing it
+ * further out made it exit *sooner*, because a lateral offset is exactly what decides the nearest
+ * distance at which something is still inside the frame. Fading it out before it could grow fixed
+ * that and broke the mirror case: a range dead ahead dissolved while the player was looking at it.
+ *
+ * The property a horizon needs is that it does not approach, and no arrangement of an object that
+ * stands on the ground has it. A `TileSprite` does, for free, and the sky beside it has been doing
+ * exactly this since the plates landed: the parallax is a texture offset, so a strip that has
+ * scrolled a thousand pixels costs what one that has not costs. It never approaches, never grows,
+ * never has to be culled and never has to be faded.
+ *
+ * What it gives up is real parallax against the verge — the range answers to the track's curvature
+ * and to nothing else, so cresting a hill does not move it. The sky has always had that limitation
+ * and nobody has ever reported it.
+ *
+ * The tuning lives in `SKYLINE_LAYER`, in the phaser-free module, because one of its numbers needs
+ * a check that runs under plain Node.
+ */
+
+/**
+ * How far the range's tint is pulled back towards the haze, as `0..1`.
+ *
+ * **The biome's own colour is the wrong colour for a horizon, and the first strip proved it**: at
+ * full tint the forest's green turned the range into a hedgerow. Aerial perspective is the reason
+ * — a ridge kilometres out is mostly the air in front of it, which is why distant hills read
+ * blue-grey whatever they are made of. So the biome still steers the hue, and the haze wins.
+ */
+const SKYLINE_TINT_MIX = 0.62
 
 // The horizon fraction is imported, never redeclared. This file used to carry its own `0.5`
 // beside the projection's implicit one — two constants describing one line, which stay right
@@ -53,6 +114,8 @@ export class Backdrop {
   readonly gameObjects: readonly Phaser.GameObjects.GameObject[]
 
   private readonly layers: Phaser.GameObjects.TileSprite[]
+  private readonly sun: Phaser.GameObjects.Image
+  private readonly skyline: Phaser.GameObjects.TileSprite | undefined
   private readonly glow: Phaser.GameObjects.Graphics
   private readonly vignette: Phaser.GameObjects.Image
   private width = 0
@@ -67,12 +130,30 @@ export class Backdrop {
         .setOrigin(0, 0)
         .setDepth(SKY_DEPTH + index),
     )
+    // Created before the range so the display list already has it underneath, and given its
+    // texture here for the same reason the vignette is: `getRoadTheme()` has to be answerable.
+    ensureSunTexture(scene)
+    this.sun = scene.add.image(0, 0, sunTextureKey()).setOrigin(0.5, 0.5).setDepth(SKY_DEPTH + 0.5)
+    // Only if the strip actually loaded. A missing plate degrades the sky to its procedural
+    // gradient; a missing range degrades the horizon to bare sky, which is what it was before.
+    this.skyline = scene.textures.exists(SKYLINE_TEXTURE)
+      ? scene.add
+          .tileSprite(0, 0, 1, 1, SKYLINE_TEXTURE)
+          .setOrigin(0, 0)
+          .setDepth(SKY_DEPTH + LAYER_PARALLAX.length)
+      : undefined
     this.glow = scene.add.graphics().setDepth(GLOW_DEPTH).setBlendMode(Phaser.BlendModes.ADD)
     // Created with a placeholder key; `drawVignette` swaps in the theme's own texture, which
     // cannot be generated before `getRoadTheme()` is answerable.
     ensureVignetteTexture(scene)
     this.vignette = scene.add.image(0, 0, vignetteTextureKey()).setOrigin(0.5, 0.5).setDepth(GLOW_DEPTH + 1)
-    this.gameObjects = [...this.layers, this.glow, this.vignette]
+    this.gameObjects = [
+      ...this.layers,
+      this.sun,
+      ...(this.skyline ? [this.skyline] : []),
+      this.glow,
+      this.vignette,
+    ]
   }
 
   /**
@@ -120,8 +201,65 @@ export class Backdrop {
       layer.tileScaleY = height / (layer.frame.realHeight || SKY_TEXTURE_HEIGHT)
     }
 
+    // Re-pointed every layout for the same reason the sky layers are: a theme switch removes and
+    // rebuilds this texture under a new key, and an `Image` left holding the old one throws inside
+    // the renderer a few frames later.
+    this.sun.setTexture(sunTextureKey())
+    this.sun.setDisplaySize(height * SUN.size, height * SUN.size)
+    this.sun.setPosition(width * SUN.x, height * SUN.y)
+
+    this.layoutSkyline()
     this.drawGlow()
     this.drawVignette()
+  }
+
+  /**
+   * Sizes the range and glues its feet under the horizon.
+   *
+   * **`tileScaleX` and `tileScaleY` are the same number, and that is the whole difference between
+   * this layer and a sky plate.** A plate is horizontal structure only — a gradient and haze bands
+   * — so stretching it vertically to fill the frame costs nothing, which is what the sky layers do.
+   * A mountain has shape in both axes: scale the two apart and the peaks come out as spires, which
+   * is exactly the defect that got `day_v5`'s clouds re-picked. So the strip keeps its own aspect
+   * and repeats horizontally as many times as the frame needs.
+   *
+   * The sprite is exactly one vertical repeat tall, because a `TileSprite` tiles in **both** axes
+   * and a band taller than its own tile would stack a second range on top of the first.
+   */
+  private layoutSkyline(): void {
+    if (!this.skyline) return
+
+    const band = this.height * SKYLINE_LAYER.height
+    const scale = band / (this.skyline.frame.realHeight || band)
+
+    this.skyline.tileScaleX = scale
+    this.skyline.tileScaleY = scale
+    this.skyline.setSize(this.width, band)
+    this.skyline.setPosition(0, this.height * HORIZON_Y + this.height * SKYLINE_LAYER.sink - band)
+  }
+
+  /**
+   * The colour the range is seen in — the biome's own, under the theme's light.
+   *
+   * The same product every verge prop is drawn with, which is what keeps a desert's horizon sandy
+   * and a forest's cool without nine strips of art. One tint for the whole strip rather than per
+   * segment: a backdrop has no distance, so there is nothing to interpolate along, and the change
+   * lands over the second or so a biome seam takes to pass.
+   */
+  setSkylineTint(tint: number): void {
+    if (!this.skyline) return
+
+    const haze = getRoadTheme().sky.band
+    const mix = (shift: number): number => {
+      const from = (tint >> shift) & 0xff
+      const to = (haze >> shift) & 0xff
+
+      return Math.round(from + (to - from) * SKYLINE_TINT_MIX) << shift
+    }
+
+    // Towards the theme's own horizon band rather than towards white: haze is the sky seen
+    // through, so on a night or an ember theme it is that sky, not a grey one.
+    this.skyline.setTint(mix(16) | mix(8) | mix(0))
   }
 
   /**
@@ -133,6 +271,18 @@ export class Backdrop {
    * band barely moves while a near one sweeps.
    */
   update(driftX: number, cameraY: number, baseCameraY: number): void {
+    // Horizontal only. The sky's vertical term is a texture offset inside a full-height sprite, so
+    // it can never expose an edge; the range is one tile tall with its feet buried under the
+    // horizon, and sliding it by a hill's worth of camera height would lift those feet into view.
+    //
+    // **Divided by the tile scale, because `tilePositionX` is in TEXTURE pixels and the budget in
+    // `SKYLINE_LAYER.driftPixels` is stated in screen ones.** The sky gets away with a bare factor
+    // because it never scales its own tile; this layer does, and a factor that meant one thing at
+    // one viewport height and another at the next is exactly how the first value went unnoticed.
+    if (this.skyline) {
+      this.skyline.tilePositionX = (driftX * SKYLINE_LAYER.driftPixels) / (this.skyline.tileScaleX || 1)
+    }
+
     for (const [index, layer] of this.layers.entries()) {
       const factor = LAYER_PARALLAX[index]
 
@@ -371,6 +521,79 @@ export function ensureVignetteTexture(scene: Phaser.Scene): void {
   context.fillStyle = gradient
   context.fillRect(0, 0, size, size)
   canvasTexture.refresh()
+}
+
+/** Diameter of the generated sun texture, in pixels. */
+const SUN_TEXTURE_SIZE = 256
+
+/**
+ * Where the disc ends and the halo begins, as a fraction of the texture's radius.
+ *
+ * **Two stops close together rather than one long ramp**, because a sun is an object with an edge
+ * and a single falloff draws a fuzzy ball with none. The halo that follows is the long tail, and it
+ * is what stops the edge reading as a sticker cut out of the sky.
+ */
+const SUN_DISC_STOP = 0.3
+const SUN_EDGE_STOP = 0.37
+
+/**
+ * How far the core is pushed towards white, as `0..1`.
+ *
+ * A sun's disc is white-hot and its *halo* carries the colour — drawn in one flat tint the whole
+ * thing reads as a pale sticker, which is what the first version was. The core is still derived
+ * from the theme rather than hardcoded, so a cool night glow still gives a cool moon.
+ */
+const SUN_CORE_WHITEN = 0.55
+
+function sunTextureKey(): string {
+  return `sun-${getRoadThemeId()}`
+}
+
+/**
+ * Generates the sun for the active theme, if it does not exist yet.
+ *
+ * **Drawn in the theme's own `glow.color`, not in a colour of its own**, and that is the whole
+ * reason it needs no new palette entry: the glow is already the horizon bloom — the light this
+ * sun is the source of — so the two cannot disagree, and every theme already answers the question.
+ * A night theme's cool glow makes this a moon without anything having to branch on it.
+ */
+export function ensureSunTexture(scene: Phaser.Scene): void {
+  const key = sunTextureKey()
+
+  if (scene.textures.exists(key)) return
+
+  const size = SUN_TEXTURE_SIZE
+  const canvasTexture = scene.textures.createCanvas(key, size, size)
+
+  if (!canvasTexture) throw new Error(`ensureSunTexture: could not create canvas texture "${key}"`)
+
+  const context = canvasTexture.context
+  const half = size / 2
+  const colour = getRoadTheme().glow.color
+  const rgb = `${(colour >> 16) & 0xff}, ${(colour >> 8) & 0xff}, ${colour & 0xff}`
+  const gradient = context.createRadialGradient(half, half, 0, half, half, half)
+
+  const whiten = (channel: number) => Math.round(channel + (255 - channel) * SUN_CORE_WHITEN)
+  const core =
+    `${whiten((colour >> 16) & 0xff)}, ${whiten((colour >> 8) & 0xff)}, ${whiten(colour & 0xff)}`
+
+  gradient.addColorStop(0, `rgba(${core}, 1)`)
+  gradient.addColorStop(SUN_DISC_STOP, `rgba(${core}, 1)`)
+  gradient.addColorStop(SUN_EDGE_STOP, `rgba(${rgb}, 0.34)`)
+  gradient.addColorStop(0.5, `rgba(${rgb}, 0.1)`)
+  gradient.addColorStop(1, `rgba(${rgb}, 0)`)
+
+  context.clearRect(0, 0, size, size)
+  context.fillStyle = gradient
+  context.fillRect(0, 0, size, size)
+  canvasTexture.refresh()
+}
+
+/** Removes the sun texture of `themeId`, alongside its sky set. */
+export function removeSunTexture(scene: Phaser.Scene, themeId: string): void {
+  const key = `sun-${themeId}`
+
+  if (scene.textures.exists(key)) scene.textures.remove(key)
 }
 
 /** Removes the vignette texture of `themeId`, alongside its sky set. */

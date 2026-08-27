@@ -5,7 +5,7 @@ import {
   billboardVisibleFraction,
   createBillboardRect,
 } from '../road/billboard'
-import { billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, SPRITE_SCALE } from '../road/constants'
+import { billboardAppear, billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, SPRITE_SCALE } from '../road/constants'
 import type { Segment } from '../road/track'
 import { createPickupTextures, PICKUP_TEXTURES } from './pickupArt'
 import { WORLD_LAYER, worldDepth } from './worldDepth'
@@ -144,7 +144,9 @@ export class PickupSprites {
     // A pickup wins a tie against an obstacle on the same segment — it is the small bright thing
     // that must not be swallowed by the boulder beside it — but loses to anything nearer.
     image.setDepth(worldDepth(distanceIndex, WORLD_LAYER.pickup))
-    image.setAlpha(1 - billboardFog(distanceIndex) * MAX_BILLBOARD_FOG)
+    // Two independent terms: the haze it is seen through, and the fade it arrives with.
+    // See `BILLBOARD_FADE_IN_FRACTION` for why they are not one number.
+    image.setAlpha((1 - billboardFog(distanceIndex) * MAX_BILLBOARD_FOG) * billboardAppear(distanceIndex))
 
     if (visibleFraction < 1) {
       image.setCrop(0, 0, image.frame.realWidth, Math.max(1, Math.round(image.frame.realHeight * visibleFraction)))

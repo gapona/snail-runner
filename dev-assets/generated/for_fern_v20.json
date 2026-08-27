@@ -1,0 +1,77 @@
+{
+  "stem": "for_fern_v20",
+  "mode": "img2img-rough",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one lush cartoon fern, wide arching glossy green fronds spreading outward, plump leaflets, low and wide, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, palm tree, trunk, jungle, potted",
+  "strength": 0.85,
+  "seed": 940020,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1024x1024",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "refIoU": 0.745,
+  "symmetryIoU": 0.626,
+  "rimSharePct": 35.0,
+  "bytes": 115188,
+  "keyColor": "#b4b3b3",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.0,
+  "asset": "for_fern",
+  "family": "forest",
+  "variant": 20,
+  "note": "LOW SPREADING spray",
+  "askedAspect": 1.1,
+  "keyBackground": "#b0b0b0",
+  "initModel": "kenney nature-kit, CC0, via smooth_render.py",
+  "round": "snail-model-init",
+  "size": [
+    512,
+    198
+  ],
+  "coveragePct": 42.5,
+  "aspect": 2.577,
+  "softEdgePct": 4.12,
+  "edgeSpillMean": -108.36,
+  "edgeSpillP99": -1.0,
+  "edgeSpillMax": 7.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 4790,
+  "edgeBgLikePct": 0.0,
+  "edgeInteriorDelta": 32.8,
+  "ringNearBgPct": 0.0,
+  "ringDistToBg": 161.6,
+  "partialAlphaPct": 4.116,
+  "alpha24Coverage": 43.5,
+  "solidity24": 0.588,
+  "lumaStd24": 40.1,
+  "size24": [
+    24,
+    9
+  ],
+  "dominantColors": [
+    {
+      "hex": "#14faaa",
+      "sharePct": 13.2
+    },
+    {
+      "hex": "#0f8e4c",
+      "sharePct": 11.8
+    },
+    {
+      "hex": "#10ec96",
+      "sharePct": 8.2
+    },
+    {
+      "hex": "#0b7034",
+      "sharePct": 7.6
+    },
+    {
+      "hex": "#0d2d17",
+      "sharePct": 6.1
+    }
+  ],
+  "targetAspect": 1.1,
+  "aspectVsTarget": 2.34
+}

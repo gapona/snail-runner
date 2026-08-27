@@ -5,7 +5,7 @@ import {
   billboardVisibleFraction,
   createBillboardRect,
 } from '../road/billboard'
-import { billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, ROAD_WIDTH, SPRITE_SCALE } from '../road/constants'
+import { billboardAppear, billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, ROAD_WIDTH, SPRITE_SCALE } from '../road/constants'
 import type { Segment } from '../road/track'
 import { createObstacleTextures, obstacleTextureKey } from './obstacleArt'
 import { WORLD_LAYER, worldDepth } from './worldDepth'
@@ -203,7 +203,9 @@ export class ObstacleSprites {
     // At the reaction distance it is a 4% fade, so it costs the read nothing — measured, not
     // assumed, because `REACTION_MS` is a floor and this is the one place that could quietly
     // undercut it.
-    image.setAlpha(1 - billboardFog(distanceIndex) * MAX_BILLBOARD_FOG)
+    // Two independent terms: the haze it is seen through, and the fade it arrives with.
+    // See `BILLBOARD_FADE_IN_FRACTION` for why they are not one number.
+    image.setAlpha((1 - billboardFog(distanceIndex) * MAX_BILLBOARD_FOG) * billboardAppear(distanceIndex))
 
     // A hill in front of this segment hides the bottom of whatever stands on it. Cropping from the
     // top of the frame's worth of texture is the same trick `RoadSprites` uses — without it an

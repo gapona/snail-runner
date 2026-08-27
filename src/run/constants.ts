@@ -191,15 +191,39 @@ export const MAX_ATTAINABLE_SPEED = SPEED_CAP * BOOST_FACTOR
  * How long the snail is off the ground, in milliseconds. **Assigned first; everything else about
  * the jump is solved from it.**
  *
- * 620ms covers 4.5 segments at `SPEED_BASE` and 11 at `SPEED_CAP`. That asymmetry is deliberate
+ * 700ms covers 5.1 segments at `SPEED_BASE` and 12.3 at `SPEED_CAP`. That asymmetry is deliberate
  * and is the difficulty curve: the *window* in which a jump saves you is roughly the whole
  * flight, so the thing that gets hard at speed is not the jump, it is reading the obstacle in
  * time to start it. See `REACTION_MS`.
+ *
+ * **Raised from 620 with `JUMP_APEX`, and raising it was not optional.** The arc is solved rather
+ * than tuned — `JUMP_GRAVITY = 8h/T^2` — so lifting the apex from 320 to 430 at a fixed air time
+ * would have raised gravity by 34% and delivered the extra height as a snap rather than as a
+ * bigger jump. Taking the time up with it keeps gravity within 6% of what it was, which is what
+ * makes the higher jump feel like the same jump.
+ *
+ * It lengthens `FLIGHT_LENGTH_Z` by the same 13%, and `provePassable` reads that directly — a
+ * jump-only row commits the snail to the air for the whole flight, so everything inside it has to
+ * be clearable from the air too. That check does the accounting; nothing here has to.
  */
-export const JUMP_AIR_MS = 620
+export const JUMP_AIR_MS = 700
 
-/** Apex height above the road, in world units. */
-export const JUMP_APEX = 320
+/**
+ * Apex height above the road, in world units.
+ *
+ * **⚠ THIS NUMBER CANNOT MOVE ON ITS OWN.** The whole three-class obstacle model is an assertion
+ * about where the apex sits relative to `OBSTACLE_BANDS`, and `verify:obstacles` states it as a
+ * table: `low` is cleared at the apex, `blocking` is not, `overhead` is hit only at the apex. In
+ * inequalities, with `A` the apex:
+ *
+ *     low.yHigh  <  A  <  blocking.yHigh          and    overhead.yLow  >  PLAYER_BODY_H
+ *     A + PLAYER_BODY_H  >  overhead.yLow          and    A  <  overhead.yHigh
+ *
+ * Raised from 320 to 430 because a snail that barely clears a barrel does not read as jumping.
+ * Every band moved with it — see `OBSTACLE_BANDS` — so the inequalities hold with the same margins
+ * they had before rather than by a hair.
+ */
+export const JUMP_APEX = 430
 
 /**
  * Gravity and launch velocity — **solved from the two numbers above, never tuned directly.**
@@ -267,9 +291,25 @@ export const OBSTACLE_DEPTH = SEGMENT_LENGTH
  * plus the body). Everything past those is bulk, and bulk was costing the read.
  */
 export const OBSTACLE_BANDS = {
-  low: { yLow: 0, yHigh: 150 },
-  blocking: { yLow: 0, yHigh: 430 },
-  overhead: { yLow: 250, yHigh: 620 },
+  low: { yLow: 0, yHigh: 230 },
+  blocking: { yLow: 0, yHigh: 620 },
+  // **⚠ [250, 560], down from [330, 900], because it read as a FLYING OBJECT rather than as a
+  // barrier to duck under.** Two things were wrong at once and both are about size rather than
+  // about the class:
+  //
+  //   the band was 570 UNITS TALL   and the sprite is scaled to fill it, so a log was drawn taller
+  //                                 than the tallest obstacle in the game and twice the snail's
+  //                                 body. At that size nothing reads as a log; it reads as a wall
+  //                                 hanging in the sky.
+  //   `yLow` was 330                which is 150 units of daylight under it — 83% of the snail's
+  //                                 own height. Clear, and so clear that the thing had no visible
+  //                                 relationship to the road at all.
+  //
+  // 250 leaves 70 units of headroom, 39% of the snail — comfortably past the 30% floor
+  // `verify:jump` holds, and low enough that the gap reads as a gap to go through. The arithmetic
+  // the three classes rest on is untouched: a grounded snail is [0, 180] and still clears it, an
+  // airborne one is [430, 610] and still meets it.
+  overhead: { yLow: 250, yHigh: 560 },
 } as const
 
 export type ObstacleKind = keyof typeof OBSTACLE_BANDS

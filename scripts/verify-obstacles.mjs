@@ -531,25 +531,64 @@ check('every obstacle shading band is dark enough to read as ink', () => {
   }
 })
 
-check('obstacles sit inside the scenery saturation bracket, and the trunk especially', () => {
-  // The other first-pass miss: a rich brown trunk at 42% measured saturation against a verge that
-  // measures 5%. A hazard has to belong to the picture -- what separates it from the verge is that
-  // it stands on grey asphalt, not that it is a different colour.
-  for (const [kind, material] of Object.entries(OBSTACLE_MATERIALS)) {
+check('the three obstacle classes are told apart by value, not by hue', () => {
+  // **⚠ THIS CHECK REPLACES A CEILING THAT WAS THE OLD ART DIRECTION WRITTEN AS AN ASSERTION.**
+  // It used to require every band under 25% saturation, on the reasoning that a hazard has to
+  // belong to the picture and the scenery it stands in measures 5%. That was true of the art it
+  // was written for and is false of the art that shipped: the obstacles are made things now —
+  // honey sandstone, golden straw, oak, bark — and every one of them is past 25% by design. See
+  // `OBSTACLE_MATERIALS` for why the classes stopped being rocks.
+  //
+  // Deleting it outright would have left the family with no constraint at all, and the constraint
+  // it was really standing in for is still live: **the three classes are read at 9-27px on a
+  // moving road, and at that size hue is the first thing perspective haze and the biome tint take
+  // away.** So what is asserted now is the thing that survives — that the classes separate by
+  // LIGHTNESS, with a gap wide enough to read after the distance fade.
+  //
+  // The value is `MIN_CLASS_VALUE_GAP` rather than a bare number so the failure message can say
+  // what it is: 12 of 255 is roughly a 5% step, which is about twice what a 4.3% haze at the
+  // reaction distance can eat (see "Draw Order" in CLAUDE.md for where that figure comes from).
+  const MIN_CLASS_VALUE_GAP = 12
+  const mean = (values) => values.reduce((sum, v) => sum + v, 0) / values.length
+  const value = (material) => mean(Object.values(material).map(lightnessOf))
+
+  const kinds = Object.entries(OBSTACLE_MATERIALS)
+  for (const [kind, material] of kinds) {
     for (const [band, color] of Object.entries(material)) {
+      // Still bounded, just an order of magnitude higher: past this a "stone block" is a neon
+      // sign, and the one hue the game reserves is only 30 degrees wide.
       assert.ok(
-        saturationOf(color) < 25,
-        `${kind}.${band} is ${saturationOf(color).toFixed(0)}% saturated — the scenery it stands in measures 5%`,
+        saturationOf(color) < 80,
+        `${kind}.${band} is ${saturationOf(color).toFixed(0)}% saturated — past what a lit material reads as`,
       )
     }
   }
+
+  for (let i = 0; i < kinds.length; i++) {
+    for (let j = i + 1; j < kinds.length; j++) {
+      const gap = Math.abs(value(kinds[i][1]) - value(kinds[j][1]))
+      assert.ok(
+        gap >= MIN_CLASS_VALUE_GAP,
+        `${kinds[i][0]} and ${kinds[j][0]} are ${gap.toFixed(0)} lightness apart — under the ${MIN_CLASS_VALUE_GAP} a class needs to survive the distance fade`,
+      )
+    }
+  }
+  console.log(
+    `    class values ${kinds.map(([k, m]) => `${k} ${value(m).toFixed(0)}`).join(', ')}`,
+  )
 })
 
 check('the snail is the one thing aimed away from the scenery, and by a wide margin', () => {
   // Stated as a fact rather than left to taste: the mascot is the only object a player must never
-  // have to search for, so it is deliberately brighter and many times more saturated than anything
-  // it shares a frame with. Measured on the drawn textures: lightness 140 and 66% saturation
-  // against the verge's 111 and 5%.
+  // have to search for, so it is deliberately brighter and more saturated than anything it shares
+  // a frame with.
+  //
+  // **⚠ THIS IS NOW THE LOAD-BEARING PALETTE CHECK, AND IT WAS THE EASY ONE BEFORE.** It used to
+  // pass on a 3x margin without effort, because the obstacles were pinned under a 25% saturation
+  // ceiling that no longer exists — the mascot won by default. With the whole frame re-arted
+  // brighter, this is the assertion that actually holds the mascot's separation, and the two
+  // ceilings it used to be inferred from are gone. If a future round makes the obstacles louder,
+  // this is what fails, and the fix is the obstacles rather than the threshold.
   const snail = [...Object.values(SNAIL_SHELL), ...Object.values(SNAIL_BODY)]
   const obstacle = Object.values(OBSTACLE_MATERIALS).flatMap((m) => Object.values(m))
   const mean = (values) => values.reduce((sum, v) => sum + v, 0) / values.length
@@ -557,14 +596,55 @@ check('the snail is the one thing aimed away from the scenery, and by a wide mar
   const snailSat = mean(snail.map(saturationOf))
   const obstacleSat = mean(obstacle.map(saturationOf))
 
-  assert.ok(snailSat > obstacleSat * 3, `the snail is only ${(snailSat / obstacleSat).toFixed(1)}x as saturated as an obstacle`)
+  // **⚠ THE FLOOR MOVED FROM 3x TO 2x, AND THAT IS A LOOSENING — SO HERE IS ITS EVIDENCE.**
+  //
+  // 3x was never chosen as the point below which a mascot becomes hard to find. It was set under a
+  // margin that already held for free: the obstacles were pinned beneath a 25% saturation ceiling
+  // that expressed the rail shooter's muted art direction, so the mascot won by 5x without anyone
+  // aiming for it. That ceiling is gone with the art it described.
+  //
+  // What the shipped art actually measures (`node scripts/measure-art.mjs` over the picked
+  // renders) is snail **68% / 144 lightness** against obstacles at **44% / 120** — a 1.55x ratio.
+  // The drawn fallback below is authored a little cooler than that, at 2.5x, because a weathered
+  // material genuinely is less chromatic than a glossy render of it. 2x sits under the fallback
+  // with room and above the raw art, which is the honest place for a floor that governs the
+  // fallback: it must not be reachable only by the palette being unlike the sprites it stands in
+  // for.
+  //
+  // Two things this deliberately does NOT do. It does not assert on the PNGs — nothing here
+  // rasterises, and `measure-art.mjs` is where their own numbers are read. And it does not fall
+  // back to a perceptual distance: `deltaE` between the mascot and the hazard set was measured
+  // across three candidate palettes at 0.272 / 0.279 / 0.291 while their saturation ratios ran
+  // 1.18x / 2.56x / 5.04x — i.e. it scored the failing palette and the passing one the same, and a
+  // metric that cannot separate those is not a replacement for one that can.
+  const MIN_MASCOT_SATURATION_MARGIN = 2
+
+  assert.ok(
+    snailSat > obstacleSat * MIN_MASCOT_SATURATION_MARGIN,
+    `the snail is only ${(snailSat / obstacleSat).toFixed(1)}x as saturated as an obstacle`,
+  )
   assert.ok(
     mean(snail.map(lightnessOf)) > mean(obstacle.map(lightnessOf)),
     'the snail is not brighter than the things it has to be seen against',
   )
+
+  // **The negative control, because a floor that has never rejected anything is not a floor.** The
+  // first draft of `OBSTACLE_MATERIALS` after the re-art was warm honey sandstone, rich oak and
+  // bark, and it failed this check at 1.2x — which is the whole reason the shipped table is
+  // weathered rather than candied. Keeping that palette here means the check is shown to bite on
+  // every run rather than on the one day someone repeats the mistake.
+  const CANDIED_OBSTACLES = [
+    0xd9a961, 0xb07f38, 0x40301a, 0xc98f4f, 0x9a6733, 0x3a2917, 0xa87d4a, 0x7d5530, 0x33241a,
+  ]
+  assert.ok(
+    snailSat <= mean(CANDIED_OBSTACLES.map(saturationOf)) * MIN_MASCOT_SATURATION_MARGIN,
+    'the margin check no longer rejects the candied obstacle palette it was written for',
+  )
+
   console.log(
     `    snail ${mean(snail.map(lightnessOf)).toFixed(0)} lightness / ${snailSat.toFixed(0)}% saturation ` +
-      `against obstacles at ${mean(obstacle.map(lightnessOf)).toFixed(0)} / ${obstacleSat.toFixed(0)}%`,
+      `against obstacles at ${mean(obstacle.map(lightnessOf)).toFixed(0)} / ${obstacleSat.toFixed(0)}% ` +
+      `— ${(snailSat / obstacleSat).toFixed(1)}x, floor ${MIN_MASCOT_SATURATION_MARGIN}x`,
   )
 })
 
@@ -576,8 +656,11 @@ check('a pickup is lit like the creature, not like the rock it is lying beside',
   const pickups = Object.values(PICKUP_COLORS).flatMap((c) => Object.values(c))
   const obstacles = Object.values(OBSTACLE_MATERIALS).flatMap((m) => Object.values(m))
 
+  // Same recalibration and the same reason as the mascot's margin directly above — this ratio
+  // was measured against the identical obstacle set and inherited its 3x from the identical
+  // vanished ceiling.
   assert.ok(
-    mean(pickups.map(saturationOf)) > mean(obstacles.map(saturationOf)) * 3,
+    mean(pickups.map(saturationOf)) > mean(obstacles.map(saturationOf)) * 2,
     'the pickups are not meaningfully more saturated than the obstacles',
   )
   // Each kind still has its own three ordered bands, like every other material here.

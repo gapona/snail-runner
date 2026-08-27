@@ -1,0 +1,77 @@
+{
+  "stem": "rui_statue_v3",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one weathered stone statue of a robed figure on a plinth, glossy cream marble, smooth rounded, chipped, no face detail, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, museum, gallery, angel wings, greek temple, portrait, realistic face",
+  "seed": 1024003,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "832x1216",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "rembg",
+  "keyBackground": "#b0b0b0",
+  "bytes": 166643,
+  "keyColor": "#7d7c81",
+  "keyRingPurity": null,
+  "canvasEdgeOpaquePct": 0.0,
+  "bgCoveragePct": 52.6,
+  "asset": "rui_statue",
+  "family": "ruins",
+  "variant": 3,
+  "note": "UPRIGHT figure \u2014 the biome's most distinctive outline",
+  "askedAspect": 0.55,
+  "targetCanvas": [
+    55,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    275,
+    512
+  ],
+  "coveragePct": 61.3,
+  "aspect": 0.535,
+  "softEdgePct": 3.07,
+  "edgeSpillMean": -8.58,
+  "edgeSpillP99": 6.0,
+  "edgeSpillMax": 13.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 2989,
+  "edgeBgLikePct": 22.62,
+  "edgeInteriorDelta": 57.8,
+  "ringNearBgPct": 42.92,
+  "ringDistToBg": 81.6,
+  "partialAlphaPct": 3.07,
+  "alpha24Coverage": 62.2,
+  "solidity24": 0.622,
+  "lumaStd24": 50.0,
+  "size24": [
+    13,
+    24
+  ],
+  "dominantColors": [
+    {
+      "hex": "#312d29",
+      "sharePct": 12.8
+    },
+    {
+      "hex": "#55514c",
+      "sharePct": 9.8
+    },
+    {
+      "hex": "#928775",
+      "sharePct": 6.9
+    },
+    {
+      "hex": "#6d6558",
+      "sharePct": 6.7
+    },
+    {
+      "hex": "#b5a892",
+      "sharePct": 6.6
+    }
+  ],
+  "targetAspect": 0.55,
+  "aspectVsTarget": 0.97
+}

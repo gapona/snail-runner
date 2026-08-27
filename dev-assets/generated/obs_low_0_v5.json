@@ -1,0 +1,77 @@
+{
+  "stem": "obs_low_0_v5",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one long low barrier of smooth fused teal-grey rock, glossy rounded top, thickest in the middle, lying flat, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, face, eyes, texture, seamless, pattern, scattered, tall, mountain, gravel, wall of bricks, fence",
+  "seed": 920005,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1536x640",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "rembg",
+  "keyBackground": "#b0b0b0",
+  "bytes": 78948,
+  "keyColor": "#b4b6b8",
+  "keyRingPurity": null,
+  "canvasEdgeOpaquePct": 0.0,
+  "bgCoveragePct": 77.8,
+  "asset": "obs_low_0",
+  "family": "obstacles",
+  "variant": 5,
+  "note": "low, CENTRE-heavy \u2014 the default piece of a wall row",
+  "askedAspect": 4.57,
+  "targetCanvas": [
+    457,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    154
+  ],
+  "coveragePct": 50.2,
+  "aspect": 3.342,
+  "softEdgePct": 3.04,
+  "edgeSpillMean": -10.8,
+  "edgeSpillP99": 1.0,
+  "edgeSpillMax": 6.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 1947,
+  "edgeBgLikePct": 0.05,
+  "edgeInteriorDelta": 48.8,
+  "ringNearBgPct": 0.2,
+  "ringDistToBg": 178.4,
+  "partialAlphaPct": 3.044,
+  "alpha24Coverage": 53.0,
+  "solidity24": 0.53,
+  "lumaStd24": 37.2,
+  "size24": [
+    24,
+    7
+  ],
+  "dominantColors": [
+    {
+      "hex": "#4d5153",
+      "sharePct": 17.8
+    },
+    {
+      "hex": "#696e70",
+      "sharePct": 15.5
+    },
+    {
+      "hex": "#2b3234",
+      "sharePct": 8.0
+    },
+    {
+      "hex": "#5a6466",
+      "sharePct": 7.9
+    },
+    {
+      "hex": "#13554f",
+      "sharePct": 6.9
+    }
+  ],
+  "targetAspect": 4.57,
+  "aspectVsTarget": 0.73
+}

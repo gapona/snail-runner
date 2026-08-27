@@ -1,0 +1,76 @@
+{
+  "stem": "coa_palm_v2",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one plump cartoon palm tree, curved chunky trunk under a crown of broad glossy green fronds, three coconuts, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, beach, island, sunset, sea, hammock, two palms",
+  "seed": 1012002,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1024x1024",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 303177,
+  "keyColor": "#858b89",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.0,
+  "asset": "coa_palm",
+  "family": "coast",
+  "variant": 2,
+  "note": "UPRIGHT crown \u2014 the biome's tallest",
+  "askedAspect": 0.9,
+  "targetCanvas": [
+    90,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    512
+  ],
+  "coveragePct": 39.5,
+  "aspect": 0.806,
+  "softEdgePct": 10.42,
+  "edgeSpillMean": -102.24,
+  "edgeSpillP99": -6.0,
+  "edgeSpillMax": 1.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 12658,
+  "edgeBgLikePct": 0.02,
+  "edgeInteriorDelta": 13.3,
+  "ringNearBgPct": 0.04,
+  "ringDistToBg": 154.0,
+  "partialAlphaPct": 10.421,
+  "alpha24Coverage": 41.8,
+  "solidity24": 0.616,
+  "lumaStd24": 42.4,
+  "size24": [
+    24,
+    24
+  ],
+  "dominantColors": [
+    {
+      "hex": "#15320f",
+      "sharePct": 9.9
+    },
+    {
+      "hex": "#6cb230",
+      "sharePct": 7.2
+    },
+    {
+      "hex": "#306d16",
+      "sharePct": 6.5
+    },
+    {
+      "hex": "#265116",
+      "sharePct": 6.0
+    },
+    {
+      "hex": "#4e9028",
+      "sharePct": 5.9
+    }
+  ],
+  "targetAspect": 0.9,
+  "aspectVsTarget": 0.9
+}

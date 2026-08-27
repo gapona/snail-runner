@@ -1,0 +1,77 @@
+{
+  "stem": "rui_wall_v3",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one short broken wall segment of glossy sandstone blocks, uneven crumbling top, bevelled, wider than tall, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, castle, fortress, city, building, long wall, texture, tile",
+  "seed": 1022003,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1344x768",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "rembg",
+  "keyBackground": "#b0b0b0",
+  "bytes": 246533,
+  "keyColor": "#8d8b93",
+  "keyRingPurity": null,
+  "canvasEdgeOpaquePct": 0.0,
+  "bgCoveragePct": 68.9,
+  "asset": "rui_wall",
+  "family": "ruins",
+  "variant": 3,
+  "note": "the SOLID MASS, broad",
+  "askedAspect": 1.7,
+  "targetCanvas": [
+    170,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    354
+  ],
+  "coveragePct": 88.2,
+  "aspect": 1.446,
+  "softEdgePct": 4.46,
+  "edgeSpillMean": 21.18,
+  "edgeSpillP99": 152.0,
+  "edgeSpillMax": 182.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 3454,
+  "edgeBgLikePct": 27.01,
+  "edgeInteriorDelta": 65.6,
+  "ringNearBgPct": 50.2,
+  "ringDistToBg": 97.2,
+  "partialAlphaPct": 4.46,
+  "alpha24Coverage": 91.2,
+  "solidity24": 0.912,
+  "lumaStd24": 42.1,
+  "size24": [
+    24,
+    17
+  ],
+  "dominantColors": [
+    {
+      "hex": "#d747e5",
+      "sharePct": 15.3
+    },
+    {
+      "hex": "#dc34e4",
+      "sharePct": 10.3
+    },
+    {
+      "hex": "#d1cfd6",
+      "sharePct": 8.1
+    },
+    {
+      "hex": "#e134e6",
+      "sharePct": 6.3
+    },
+    {
+      "hex": "#eae9ee",
+      "sharePct": 5.9
+    }
+  ],
+  "targetAspect": 1.7,
+  "aspectVsTarget": 0.85
+}

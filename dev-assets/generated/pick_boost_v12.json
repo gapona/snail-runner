@@ -1,0 +1,76 @@
+{
+  "stem": "pick_boost_v12",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one chunky lightning bolt, bright emerald green, thick bevelled glossy zigzag, rounded edges, standing upright, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, realistic, thin lines, text, letters, numbers, arrow, chevron, sign, phone, dollar, weather, cloud, storm, thin",
+  "seed": 930012,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1024x1024",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 154644,
+  "keyColor": "#b4b7b5",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.0,
+  "asset": "pick_boost",
+  "family": "pickups",
+  "variant": 12,
+  "note": "the only shape in the set with a DIRECTION and a diagonal axis",
+  "askedAspect": 1.0,
+  "targetCanvas": [
+    100,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    363,
+    512
+  ],
+  "coveragePct": 39.1,
+  "aspect": 0.813,
+  "softEdgePct": 5.1,
+  "edgeSpillMean": -133.53,
+  "edgeSpillP99": -2.0,
+  "edgeSpillMax": 2.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 3600,
+  "edgeBgLikePct": 0.0,
+  "edgeInteriorDelta": 23.0,
+  "ringNearBgPct": 0.15,
+  "ringDistToBg": 160.0,
+  "partialAlphaPct": 5.098,
+  "alpha24Coverage": 39.5,
+  "solidity24": 0.474,
+  "lumaStd24": 54.4,
+  "size24": [
+    17,
+    24
+  ],
+  "dominantColors": [
+    {
+      "hex": "#19b24d",
+      "sharePct": 22.3
+    },
+    {
+      "hex": "#e3fdee",
+      "sharePct": 10.2
+    },
+    {
+      "hex": "#18c453",
+      "sharePct": 8.3
+    },
+    {
+      "hex": "#092a12",
+      "sharePct": 5.7
+    },
+    {
+      "hex": "#0a702d",
+      "sharePct": 5.5
+    }
+  ],
+  "targetAspect": 1.0,
+  "aspectVsTarget": 0.81
+}

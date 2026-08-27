@@ -1,0 +1,76 @@
+{
+  "stem": "for_birch_v1",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one slim cartoon tree with a creamy white trunk and a small round canopy of golden orange leaves, smooth and glossy, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, birch grove, many trunks, forest, bare branches, autumn leaves on ground",
+  "seed": 941001,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "832x1216",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 274987,
+  "keyColor": "#696767",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 26.1,
+  "asset": "for_birch",
+  "family": "forest",
+  "variant": 1,
+  "note": "OPEN upright \u2014 pale trunk against pine's dark mass",
+  "askedAspect": 0.5,
+  "targetCanvas": [
+    50,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    407,
+    512
+  ],
+  "coveragePct": 32.0,
+  "aspect": 0.795,
+  "softEdgePct": 25.9,
+  "edgeSpillMean": -43.01,
+  "edgeSpillP99": 2.0,
+  "edgeSpillMax": 9.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 11431,
+  "edgeBgLikePct": 0.0,
+  "edgeInteriorDelta": 27.9,
+  "ringNearBgPct": 0.0,
+  "ringDistToBg": 163.2,
+  "partialAlphaPct": 25.896,
+  "alpha24Coverage": 31.8,
+  "solidity24": 0.318,
+  "lumaStd24": 33.9,
+  "size24": [
+    19,
+    24
+  ],
+  "dominantColors": [
+    {
+      "hex": "#b2afac",
+      "sharePct": 20.1
+    },
+    {
+      "hex": "#d0cdc9",
+      "sharePct": 15.1
+    },
+    {
+      "hex": "#f6f6f2",
+      "sharePct": 14.9
+    },
+    {
+      "hex": "#cac3ba",
+      "sharePct": 4.4
+    },
+    {
+      "hex": "#b07029",
+      "sharePct": 4.1
+    }
+  ],
+  "targetAspect": 0.5,
+  "aspectVsTarget": 1.59
+}

@@ -15,3 +15,9 @@ yarn-error.log*
 
 .DS_Store
 /CGDealers Publisher Portal.html
+# The CC0 model kit is 10.5MB and one curl away — see dev-assets/cc0-3d/NOTES.md
+dev-assets/cc0-3d/*.zip
+
+# Python bytecode from the sprite build scripts
+__pycache__/
+*.pyc

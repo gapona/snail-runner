@@ -1,0 +1,76 @@
+{
+  "stem": "dune_cactus_v3",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one plump cartoon saguaro cactus, thick rounded glossy green column with two short raised arms, small pink flower on top, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, desert scene, pot, sombrero, face, eyes",
+  "seed": 952003,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "832x1216",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 175882,
+  "keyColor": "#88888c",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.0,
+  "asset": "dune_cactus",
+  "family": "dunes",
+  "variant": 3,
+  "note": "UPRIGHT \u2014 the biome's only true vertical",
+  "askedAspect": 0.7,
+  "targetCanvas": [
+    70,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    323,
+    512
+  ],
+  "coveragePct": 31.6,
+  "aspect": 0.423,
+  "softEdgePct": 17.56,
+  "edgeSpillMean": -34.07,
+  "edgeSpillP99": 159.0,
+  "edgeSpillMax": 206.0,
+  "keyLikeEdgePct": 0.46,
+  "edgePixels": 11084,
+  "edgeBgLikePct": 0.05,
+  "edgeInteriorDelta": 31.4,
+  "ringNearBgPct": 0.13,
+  "ringDistToBg": 154.3,
+  "partialAlphaPct": 17.562,
+  "alpha24Coverage": 33.6,
+  "solidity24": 0.526,
+  "lumaStd24": 47.6,
+  "size24": [
+    15,
+    24
+  ],
+  "dominantColors": [
+    {
+      "hex": "#f8aded",
+      "sharePct": 8.3
+    },
+    {
+      "hex": "#276f35",
+      "sharePct": 7.4
+    },
+    {
+      "hex": "#f591e7",
+      "sharePct": 7.3
+    },
+    {
+      "hex": "#185126",
+      "sharePct": 4.4
+    },
+    {
+      "hex": "#176d28",
+      "sharePct": 3.8
+    }
+  ],
+  "targetAspect": 0.7,
+  "aspectVsTarget": 0.6
+}

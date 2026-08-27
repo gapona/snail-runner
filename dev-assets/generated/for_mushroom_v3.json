@@ -1,0 +1,76 @@
+{
+  "stem": "for_mushroom_v3",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, three plump glossy mushrooms at different heights, fat cream stalks, smooth domed deep violet caps with pale spots, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, red, crimson, scarlet, fly agaric, toadstool, single mushroom, forest floor",
+  "seed": 943003,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1024x1024",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 239708,
+  "keyColor": "#74637d",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 6.08,
+  "asset": "for_mushroom",
+  "family": "forest",
+  "variant": 3,
+  "note": "CLUMPED stalk-and-cap \u2014 the only multi-part silhouette here",
+  "askedAspect": 0.9,
+  "targetCanvas": [
+    90,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    512
+  ],
+  "coveragePct": 26.4,
+  "aspect": 1.156,
+  "softEdgePct": 17.89,
+  "edgeSpillMean": 30.25,
+  "edgeSpillP99": 144.73,
+  "edgeSpillMax": 164.0,
+  "keyLikeEdgePct": 0.008,
+  "edgePixels": 13228,
+  "edgeBgLikePct": 0.04,
+  "edgeInteriorDelta": 44.6,
+  "ringNearBgPct": 0.04,
+  "ringDistToBg": 156.6,
+  "partialAlphaPct": 17.888,
+  "alpha24Coverage": 29.5,
+  "solidity24": 0.337,
+  "lumaStd24": 69.6,
+  "size24": [
+    24,
+    24
+  ],
+  "dominantColors": [
+    {
+      "hex": "#f5eef6",
+      "sharePct": 12.9
+    },
+    {
+      "hex": "#d2cacb",
+      "sharePct": 8.8
+    },
+    {
+      "hex": "#c7b4d3",
+      "sharePct": 6.1
+    },
+    {
+      "hex": "#b196c7",
+      "sharePct": 5.8
+    },
+    {
+      "hex": "#ead2f3",
+      "sharePct": 5.5
+    }
+  ],
+  "targetAspect": 0.9,
+  "aspectVsTarget": 1.28
+}

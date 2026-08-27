@@ -10,6 +10,7 @@ import { RoadSprites } from '../road/RoadSprites'
 import { wrapZ } from '../road/project'
 import { decorateTrack, trackLengthOf, type Segment } from '../road/track'
 import { biomeForSegment } from '../road/biomes'
+import { multiplyTint } from '../road/color'
 import { getRoadTheme } from '../road/themes'
 import { FIXED_STEP_MS } from '../race/constants'
 import { CAMERA_LEAN, CAMERA_LEAN_SMOOTHING, SPEED_BASE } from './constants'
@@ -202,7 +203,11 @@ export class WorldView {
     // The biome under the *camera*, not the one filling the frame: two are visible at every
     // boundary, and the air belongs to the one the player is in. Cheap to call every frame — the
     // emitters only react to a change.
-    this.atmosphere.setBiome(biomeForSegment(this.roadMesh.baseIndex, this.track.length).id)
+    const biome = biomeForSegment(this.roadMesh.baseIndex, this.track.length)
+
+    this.atmosphere.setBiome(biome.id)
+    // The range is drawn in the same product every prop standing in this biome is drawn in.
+    this.backdrop.setSkylineTint(multiplyTint(biome.decorTint, getRoadTheme().decorTint))
 
     return { roadMs, decorMs: performance.now() - decorStarted }
   }

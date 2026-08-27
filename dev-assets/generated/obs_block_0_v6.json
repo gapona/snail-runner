@@ -1,0 +1,77 @@
+{
+  "stem": "obs_block_0_v6",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one tall rounded boulder standing on end, broad flat front face, glossy violet-grey rock, leaning slightly left, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, face, eyes, texture, seamless, pattern, scattered, gravestone, tombstone, building, tower, gem, crystal, cube, ice",
+  "seed": 923006,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1216x832",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "rembg",
+  "keyBackground": "#b0b0b0",
+  "bytes": 344294,
+  "keyColor": "#94919d",
+  "keyRingPurity": null,
+  "canvasEdgeOpaquePct": 0.0,
+  "bgCoveragePct": 74.2,
+  "asset": "obs_block_0",
+  "family": "obstacles",
+  "variant": 6,
+  "note": "the tall solid \u2014 a flat vertical face is what says 'cannot pass'",
+  "askedAspect": 1.58,
+  "targetCanvas": [
+    158,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    477,
+    512
+  ],
+  "coveragePct": 77.8,
+  "aspect": 0.929,
+  "softEdgePct": 3.06,
+  "edgeSpillMean": 17.7,
+  "edgeSpillP99": 101.0,
+  "edgeSpillMax": 108.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 2813,
+  "edgeBgLikePct": 31.43,
+  "edgeInteriorDelta": 22.1,
+  "ringNearBgPct": 53.44,
+  "ringDistToBg": 82.7,
+  "partialAlphaPct": 3.057,
+  "alpha24Coverage": 78.4,
+  "solidity24": 0.784,
+  "lumaStd24": 41.7,
+  "size24": [
+    22,
+    24
+  ],
+  "dominantColors": [
+    {
+      "hex": "#524a53",
+      "sharePct": 15.7
+    },
+    {
+      "hex": "#44384c",
+      "sharePct": 7.5
+    },
+    {
+      "hex": "#373138",
+      "sharePct": 7.1
+    },
+    {
+      "hex": "#b14ded",
+      "sharePct": 7.0
+    },
+    {
+      "hex": "#693594",
+      "sharePct": 4.2
+    }
+  ],
+  "targetAspect": 1.58,
+  "aspectVsTarget": 0.59
+}

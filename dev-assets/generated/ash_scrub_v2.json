@@ -1,0 +1,76 @@
+{
+  "stem": "ash_scrub_v2",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one low tangle of bare charred twigs, glossy black stems fanning outward, small amber gold tips, wider than tall, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, red, crimson, scarlet, fire, embers, skeleton, bones, spider, forest floor",
+  "seed": 984002,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1216x832",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 147251,
+  "keyColor": "#a1a0a3",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 2.37,
+  "asset": "ash_scrub",
+  "family": "ashen",
+  "variant": 2,
+  "note": "the OPEN TANGLE",
+  "askedAspect": 1.5,
+  "targetCanvas": [
+    150,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    350
+  ],
+  "coveragePct": 18.5,
+  "aspect": 1.35,
+  "softEdgePct": 13.17,
+  "edgeSpillMean": -25.0,
+  "edgeSpillP99": 3.0,
+  "edgeSpillMax": 13.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 7332,
+  "edgeBgLikePct": 0.2,
+  "edgeInteriorDelta": 102.9,
+  "ringNearBgPct": 0.18,
+  "ringDistToBg": 180.8,
+  "partialAlphaPct": 13.17,
+  "alpha24Coverage": 15.1,
+  "solidity24": 0.184,
+  "lumaStd24": 58.2,
+  "size24": [
+    24,
+    16
+  ],
+  "dominantColors": [
+    {
+      "hex": "#11100f",
+      "sharePct": 14.6
+    },
+    {
+      "hex": "#2e2d2c",
+      "sharePct": 13.5
+    },
+    {
+      "hex": "#b16c0a",
+      "sharePct": 5.7
+    },
+    {
+      "hex": "#904f08",
+      "sharePct": 4.8
+    },
+    {
+      "hex": "#fef34b",
+      "sharePct": 4.7
+    }
+  ],
+  "targetAspect": 1.5,
+  "aspectVsTarget": 0.9
+}

@@ -1,0 +1,76 @@
+{
+  "stem": "for_pine_v3",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one plump cartoon pine tree, rounded layered emerald green tiers tapering to a soft point, short chunky brown trunk, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, forest, row of trees, christmas tree, ornaments, snow",
+  "seed": 940003,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "832x1216",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 163479,
+  "keyColor": "#7b7b74",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.0,
+  "asset": "for_pine",
+  "family": "forest",
+  "variant": 3,
+  "note": "UPRIGHT dense \u2014 the highest solidity in the biome",
+  "askedAspect": 0.45,
+  "targetCanvas": [
+    45,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    364,
+    512
+  ],
+  "coveragePct": 30.6,
+  "aspect": 0.866,
+  "softEdgePct": 8.57,
+  "edgeSpillMean": -65.86,
+  "edgeSpillP99": -2.0,
+  "edgeSpillMax": 8.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 6427,
+  "edgeBgLikePct": 0.14,
+  "edgeInteriorDelta": 33.1,
+  "ringNearBgPct": 0.11,
+  "ringDistToBg": 156.0,
+  "partialAlphaPct": 8.574,
+  "alpha24Coverage": 31.6,
+  "solidity24": 0.512,
+  "lumaStd24": 57.8,
+  "size24": [
+    17,
+    24
+  ],
+  "dominantColors": [
+    {
+      "hex": "#2b2719",
+      "sharePct": 8.5
+    },
+    {
+      "hex": "#13140f",
+      "sharePct": 7.6
+    },
+    {
+      "hex": "#112f16",
+      "sharePct": 6.3
+    },
+    {
+      "hex": "#4fd148",
+      "sharePct": 5.4
+    },
+    {
+      "hex": "#4faf35",
+      "sharePct": 5.4
+    }
+  ],
+  "targetAspect": 0.45,
+  "aspectVsTarget": 1.92
+}

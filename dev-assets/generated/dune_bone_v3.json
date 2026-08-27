@@ -1,0 +1,77 @@
+{
+  "stem": "dune_bone_v3",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one smooth curved cream-white rib arch half buried, glossy polished bone, rounded ends, low and wide, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, skull, skeleton, dinosaur, many bones, dragon, gore",
+  "seed": 953003,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1216x832",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "rembg",
+  "keyBackground": "#b0b0b0",
+  "bytes": 159600,
+  "keyColor": "#929192",
+  "keyRingPurity": null,
+  "canvasEdgeOpaquePct": 0.0,
+  "bgCoveragePct": 77.7,
+  "asset": "dune_bone",
+  "family": "dunes",
+  "variant": 3,
+  "note": "the OPEN ARCH \u2014 negative space is its whole read",
+  "askedAspect": 1.5,
+  "targetCanvas": [
+    150,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    325
+  ],
+  "coveragePct": 69.2,
+  "aspect": 1.575,
+  "softEdgePct": 4.57,
+  "edgeSpillMean": -5.97,
+  "edgeSpillP99": 4.0,
+  "edgeSpillMax": 11.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 2497,
+  "edgeBgLikePct": 27.55,
+  "edgeInteriorDelta": 72.1,
+  "ringNearBgPct": 50.28,
+  "ringDistToBg": 105.1,
+  "partialAlphaPct": 4.566,
+  "alpha24Coverage": 69.7,
+  "solidity24": 0.697,
+  "lumaStd24": 46.0,
+  "size24": [
+    24,
+    15
+  ],
+  "dominantColors": [
+    {
+      "hex": "#8b8989",
+      "sharePct": 30.1
+    },
+    {
+      "hex": "#b2b2b2",
+      "sharePct": 13.0
+    },
+    {
+      "hex": "#f7f4e8",
+      "sharePct": 11.7
+    },
+    {
+      "hex": "#8f8678",
+      "sharePct": 9.0
+    },
+    {
+      "hex": "#7a7268",
+      "sharePct": 7.3
+    }
+  ],
+  "targetAspect": 1.5,
+  "aspectVsTarget": 1.05
+}

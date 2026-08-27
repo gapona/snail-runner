@@ -149,10 +149,16 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
 - `npm run verify:ui` — `src/ui/sliderMath.ts`, `src/audio/volume.ts` (the slider-to-gain curve),
   `src/ui/kitPalette.ts` (the interface palette, its contrast, its touch-target arithmetic and the
   OKLab threat rule applied to it) and the shared tap-versus-drag rule — see "The Interface Kit".
+- `py -3.11 scripts/build-sprites.py [--only snail,obstacles,pickups,decor]` — turns the picked
+  renders in `dev-assets/sprites/` into the files under `public/assets/`, reading which variant
+  won from `dev-assets/picks.json`. Run by hand when the picks change; the output is committed, so
+  `npm run build` never needs Python. It also bakes the mascot's six glide frames out of its one
+  render and composites the pickups' shared backing disc — see "The Regeneration: A Glossy World".
 - `node scripts/measure-art.mjs [dir-or-file ...]` — not a suite either, and it asserts nothing: it
   reports each sprite's lightness, saturation and ink share, which is the instrument the art is
-  aimed with. Defaults to `public/assets/decor`, whose 49 props are the tone every new sprite is
-  measured against — see "The Art".
+  aimed with. Defaults to `public/assets/decor`. **Its old reading of that directory — 111 / 5% /
+  34% — is no longer the target**: those props were replaced, and what the numbers are now compared
+  against is stated in "The Regeneration: A Glossy World".
 - `npm run verify:mattes` — not a logic suite: it reads every RGBA sprite in `public/assets/` and
   checks the two things a matte can be wrong about independently of what is drawn (alpha under the
   floor, colour flooded under the transparency). Runs inside `npm run build` — see "The Matte That
@@ -885,6 +891,15 @@ the numbers for the part the player can see, not for the whole trail.
 
 ## The Art
 
+**⚠ EVERYTHING BELOW THIS LINE UNTIL "## The Difficulty Curve" DESCRIBES ART THAT NO LONGER
+SHIPS.** The whole set — the mascot, the three obstacle classes, the pickups, all nine biomes of
+roadside props and the road's own palette — was regenerated against a glossy casual-mobile brief.
+See **"The Regeneration: A Glossy World"** below for what shipped and why. What is kept here is the
+*reasoning*: the aspect-versus-collision-box rule, the ink-weight lesson, the readability sizes and
+the silhouette-class rule all survived the change and are still binding. The one thing that
+inverted is the tone target, and it is called out where it appears.
+
+
 **One decision for the whole project: full-colour, smoothed, never pixel art.** `config.ts` sets
 neither `pixelArt` nor `roundPixels`, so WebGL antialiasing is on and every sprite is scaled
 continuously by the road's projection. The two styles cannot share a frame — a pixel grid only
@@ -894,9 +909,13 @@ drawn since matches them.
 
 ### The tone target, and how to aim at it
 
+**⚠ THIS TARGET IS HISTORY. The art it describes has been replaced; see "The Regeneration: A
+Glossy World".** It is kept because the *method* is still how art is aimed here, and because the
+replacement was argued against these numbers rather than in ignorance of them.
+
 `node scripts/measure-art.mjs` walks the sprites and reports three numbers over their opaque
 pixels: **lightness, saturation, and what share reads as ink** (below lightness 70). The verge
-comes back at **111 / 5% / 34%**, and that triple is the target — the rail shooter established
+came back at **111 / 5% / 34%**, and that triple was the target — the rail shooter established
 that *tone*, not line style, is what makes a prop belong to a frame: bought props measuring 1.29x
 as bright and 2.66x as saturated as their neighbours jumped forward off the roadside, and no amount
 of redrawing fixed it until the numbers moved.
@@ -980,6 +999,372 @@ opposite ways; an `overhead` spans the road alone and never has a neighbour.
 
 Variation is **flip and shape only, never scale** — the drawn size is the collision box (see "The
 Snail" on `PLAYER_WIDTH`), and a scale jitter would break that.
+
+## The Regeneration: A Glossy World
+
+The game shipped its fork wearing SKYLOCK's clothes: 49 muted verge props, seven sky plates and a
+dark grey asphalt road, all authored for a rail shooter. This round replaced the lot against a
+reference set of glossy casual-mobile screenshots — high chroma, soft studio light, creamy
+speculars, chunky rounded forms, no black contour.
+
+**The pipeline is the sibling Remotion project's, and three new modules drive it:**
+`snail_prompts.py` (63 slots, one CLIP budget), `gen_snail_art.py` (the Modal driver) and
+`snail_roughs.py` (the mascot's img2img init). Everything else — `key_cutout` / `rembg_cutout`, the
+unmix against the measured background, the trim, `sprite_metrics`, the QA strip, the sidecar writer
+— is imported from `gen_rail_sprites.py` rather than copied. Delivery into the game is
+`scripts/build-sprites.py`, reading `dev-assets/picks.json`.
+
+**Nothing about the game's rendering changed, and there is no 3D in it.** These are flat RGBA PNGs
+that happen to be lit like renders. Each lands under a texture key the generators already declare,
+and every one of `snailArt.ts`, `obstacleArt.ts`, `pickupArt.ts` and `decor.ts` skips its own
+drawing when the key exists — so the swap is an asset drop with no code change downstream.
+
+### ⚠ The tone rule inverted, and the check that caught the overshoot was right
+
+`artPalette.ts` used to state the rail shooter's rule: the verge measures 111 / 5% / 34% and every
+obstacle aims at it. That is a *muted* target, and aiming at it now means drawing the one object in
+the frame still in the old game's idiom, on the road, where it is most visible.
+
+What did **not** change is the reason the rule existed, and separating the two is the whole of the
+rewrite: an obstacle must belong to the picture and still separate from the scenery, and the snail
+must never have to be searched for. The first is now done by being a MADE thing among natural ones;
+the second is unchanged and got *harder*, because everything around the mascot got brighter.
+
+**The first draft of the new obstacle palette overshot and `verify:obstacles` failed it at 1.2x
+against a 3x floor.** That was not a stale threshold — it was two real defects at once: the mascot's
+shell is amber, so a honey-and-oak hazard family sits in the same hue as the one object the player
+must never hunt for; and *the reference does not do that either*. Its stone, its crates and its
+architecture are low-chroma, and what carries the chroma is the characters and the collectibles.
+"Candy-coloured stone" was a misreading of the thing being copied.
+
+The shipped table is weathered instead (32% / 16% / 37% mean saturation against the mascot's 70%),
+and two checks moved with it, both with their evidence written into the source:
+
+- **`obstacles sit inside the scenery saturation bracket` is gone**, replaced by
+  `the three obstacle classes are told apart by value` — a ≥12-lightness gap between class means,
+  which is what survives the distance haze and the biome tint when hue does not. Current spread
+  134 / 110 / 91.
+- **The mascot's margin fell from 3x to 2x, which is a loosening.** 3x was never chosen as a
+  readability floor; it was set under a margin that held for free while the obstacles were pinned
+  under a 25% ceiling. Measured on the shipped art, the mascot wins by **1.55x**; the drawn fallback
+  is authored cooler, at 2.5x. A **negative control** now keeps the candied palette in the check, so
+  it is shown to reject something on every run rather than on the day someone repeats the mistake.
+  A perceptual `deltaE` was tried as a replacement and rejected on measurement: it scored the
+  failing palette and the passing one at 0.272 against 0.291.
+
+### ⚠ The road is a garden path, and `src/road/` was touched to do it
+
+The fork's own rule is that `src/road/` is not modified. Its three reasons are the projection, the
+depth budget and billboards agreeing with the ground — and a palette touches none of them, which is
+why `themes.ts`'s `day.road` moved and nothing else did. `verify:road`'s 93 checks are what make
+that safe rather than merely arguable, and they stayed green through it.
+
+The surface was `0x44484f`/`0x4e525a`, a dark grey road with white kerbstones. It is now warm pale
+flagstone with deep brown stripes. **A dark strip down the middle of a bright world is the one thing
+in the frame that re-arting the props around it cannot fix** — it is the largest single surface on
+screen. Three relationships had to survive and each is asserted: the alternation ratio near 1.092,
+the rumble stripe at ≥1.6:1 against the surface (which forced the stripes to *invert* from near-white
+to dark, since their job is lightness and not hue), and every biome ground still clearing
+`MIN_GROUND_CONTRAST` — which `groundForTheme` handles by itself, pushing each pair further in
+whichever direction it already leaned.
+
+### The mascot: one render, six frames, and four rounds to get the vantage
+
+Sixteen renders. **The style landed on the first probe and the vantage took four rounds**, which is
+this project's standing finding paid for again: naming a camera angle does nothing, so
+`snail_roughs.py` supplies it as geometry. Three things had to be discovered in the rough itself,
+and each is written up on the code that fixes it:
+
+- **A circle in a 1.56:1 box is not a shape given equal fractions of both axes.** The first shell
+  spanned 0.85 of the width and 0.78 of the height and delivered a **1.7:1 oval** — which is what a
+  spiral seen in *profile* looks like, i.e. the exact vantage the file exists to prevent.
+- **The lily pad was a composition problem, not a foot-width problem.** Eight renders across two
+  rounds came back standing in a flat green pool, and `lily pad, plate, disc, puddle` in the
+  negative moved none of them. The shell is a circle and can only fill 0.48 of a 1.56:1 box;
+  something has to occupy the rest, and a snail spreads sideways into slime. Giving the width to a
+  HEAD LOBE instead removed the pool on the first try.
+- **img2img returns this subject ~15% squarer than the box it is handed**, measured across twelve
+  renders. The rough is therefore drawn at 1.80 to deliver the 1.56 the collision box needs. Padding
+  either axis instead is the pancake bug from `PLAYER_WIDTH`'s own docstring, in two directions:
+  pad the sides and the snail is hit by things it visibly cleared, pad the top and an `overhead`
+  lands on a snail whose drawn top is well below it.
+
+**The six glide frames are derived from the one picked render** by `build_snail`, as a per-row
+horizontal shear falling to zero by `WAVE_REACH`. Six independent renders would be six different
+snails, and this is the one object whose identity is the entire product.
+
+**The model kept drifting to profile, and it was right.** The game's own procedural mascot is a
+profile — `drawFoot` runs the foot horizontally and puts the stalks at x 0.19/0.30, i.e. head left —
+and the 1.56:1 aspect *is* a profile proportion. The pick is mirrored to face left so the art and
+the fallback agree; the direction is otherwise arbitrary, since the snail runs away from the camera.
+
+### ⚠ The obstacles are made things now, and it took three rounds to find out why
+
+Two rounds asked for glossy candy-coloured stone and failed in opposite directions:
+
+- **round 1** — "a low wide cluster of boulders" at 4.57:1 returned a **seamless pebble field** six
+  times of nine, `canvasEdgeOpaquePct` 25–53% against a 0.5% gate. A 4.57:1 cluster is not an object
+  this checkpoint has a prior for; a pebble texture is. The parent project had already recorded this
+  on `rid_lichen` — *a rock described by its surface is one prompt from being a material swatch* —
+  and that lesson was in one slot's negative and not in the family's.
+- **round 2** — the fields went and **wet plastic** replaced them: glossy blue and violet blobs
+  reading as resin. `glossy`, `smooth` and `polished` are the style head's own words and they are
+  right for a shell, a leaf and a mushroom cap; on a featureless mass they produce liquid.
+
+**The two best renders of either round were both wooden logs**, and that is the finding: wood has
+structure the model can hold on to. The classes are now a sandstone block course, hay bales,
+barrels, crates, a stone pillar and a fallen trunk. That they are artificial is a readability win
+rather than a compromise — an obstacle's whole job is to separate instantly from the scenery, the
+scenery is nine biomes of natural props, and the reference is a world built almost entirely of
+exactly these objects.
+
+**The cast shadow was fixed by the matte, not by the prompt.** Three negative terms failed to remove
+it (`drop shadow`, then `cast shadow` and `studio backdrop`). `rembg` is semantic — it segments the
+object, and a shadow is not one — and these are solid masses with no thin outlying structure, i.e.
+the case where the semantic matte gives up nothing.
+
+### ⚠ This checkpoint draws objects, not symbols
+
+Three rounds and nine renders asked for an arrow for the boost pickup. "Two stacked chevrons"
+scattered them across the frame; "one bold chevron pointing up" delivered one pointing LEFT and one
+pointing DOWN; the third round returned a gem, a dollar sign and **a phone with a face on it**. The
+same failure struck glyphs into the coin — a "0", a monogram, a pair of eyes.
+
+It is one failure: **a shape that means something by convention rather than by being a thing has no
+prior here.** A lightning bolt is a thing, and it landed on the first render. It keeps everything the
+arrow was chosen for — the only shape in the set with a direction and a diagonal axis — and
+`pickupArt.ts` draws the same bolt so the two paths do not drift.
+
+The related half: `text, letters, numbers` had been cut from `COMMON_NEG` on the reasoning that
+`glyphSuspectPct` was measured meaningless in the parent project and that nothing here asks for a
+sign. Both halves were true and the conclusion was still wrong — a **coin** is the one subject whose
+defining feature is that something is struck into its face. It lives in `PICKUP_NEG` now.
+
+### The shared backing disc is composited, not rendered
+
+All three pickups sit on one dark plate, drawn by `build_pickups`. Its whole job is to be the
+*same* disc on all three, so a pickup separates from grey road, green grass and pale sand alike —
+which three independently rendered discs cannot be. The round that asked for it in the prompt
+returned none at all, which is the right outcome to accept rather than to prompt harder at.
+
+**Its first values were wrong and were fixed by looking at the running game**: at alpha 205 under a
+0.72 glyph fit, a coin passing the camera read as a dark hole in the road with something small
+inside it. A backing plate's job is to be the thing you do not look at.
+
+### ⚠ Two boundary bugs, both caught by checks that already existed
+
+- **`verify:mattes` failed six of the first sixteen built files** at 11–62 px under the alpha floor.
+  The build cleared `byte < round(0.06 * 255)` = 15 while the check fails `byte / 255 < 0.06`, i.e.
+  15.3 — so **exactly one alpha value survived the build and failed the check**, and it did so on
+  some files and not others, which reads exactly like a defect in the sprites. Compared as floats
+  against the same constant now.
+- **Starting `RunScene` before the loader finishes silently replaces every PNG with a placeholder.**
+  The generators guard on `textures.exists(key)`, which is correct; force-starting the scene early
+  under the stepping harness means the key does not exist yet, the placeholder is drawn, and the
+  arriving image is skipped. Diagnosed by reading `texture.source[0].source.constructor.name` —
+  `HTMLCanvasElement` versus `HTMLImageElement` is the only thing that tells the two apart, since
+  the placeholder is drawn in the same palette as the art. **A harness artefact, not a game bug**,
+  but the check is worth knowing: it is the only way to prove art actually reached the frame.
+
+### ⚠ A dozen sprites shipped with the render's own plate still attached
+
+Found on the finished set, on mid grey, **after every number in the pipeline had passed** —
+`canvasEdgeOpaquePct` was 0.0% on most of them, because that metric asks whether the SUBJECT
+touches the frame and the plate is what the generator's matte left inside the alpha box. Over a
+bright sky it reads as a translucent rectangle around the object, which is exactly how a player
+reported it in the parent project.
+
+`strip_plate` is ported from that project and removes it: a flood of bright, near-neutral pixels
+**connected to the frame edge**. Border-connected is the whole safety argument — a white highlight
+inside the subject is enclosed by it and unreachable, so it survives. It runs **before the trim**,
+which is the one thing this port had to get right that the original did not face: the trim crops to
+the alpha box, and the plate is opaque, so trimming first crops to the plate rather than to the
+subject.
+
+It removed 3 to 33,000 pixels per sprite, and numbers that size have to be looked at rather than
+trusted — a flood can eat the thing it is cleaning around. Checked on the contact sheet: the willow
+kept its whole canopy, the tumbleweed its whole tangle. What it correctly does **not** take is
+`for_mushroom`'s violet ground pool, which is a coloured cast shadow and outside a near-neutral
+test.
+
+**Never run on the pickups.** They are composited onto a bright rim over a dark disc, and "bright
+and near-neutral connected to the edge" is a description of that rim.
+
+### ⚠ Four things a player reported after the round shipped
+
+**Props floated, and the cause was an ordering bug in this build step.** `trim()` crops to the
+alpha box and ran on the raw matte, where a soft cast shadow survives at a few percent alpha — so
+the crop box INCLUDED it. `floor_alpha` then cleared those pixels, leaving genuinely empty rows
+along the bottom of a canvas already sized to hold them. A billboard is bottom-anchored, so the
+game planted the empty band on the ground and the prop hovered. Measured: **9 of 52 decor sprites
+carried up to 12 empty rows, 9.9% of their own height.** Fixed by trimming a second time *after*
+the floor; 0 of 52 now.
+
+**The plate test had no upper bound, and it ate the `ruins` biome.** Widening `strip_plate` to
+catch the two residues the magenta sheet showed — a pale halo and a dark cast-shadow ellipse — was
+written as `value >= key_v - drop`, which is *every neutral pixel brighter than a threshold*. On a
+biome whose whole brief is cream marble the flood walked out of the plate and into the subject:
+`rui_column`, `rui_obelisk` and `rui_statue` all came back eaten. It is an **interval** around the
+sprite's own measured plate colour now — bounded both ways, so marble at value ~210 against a plate
+at 162 is outside it while the plate's own drift across the set (#838280 to #a3a3ab) is inside.
+
+Two things make the widened test safe, and neither is the threshold: it is keyed off the
+`keyColor` the generator **measured** from that render's own border ring and wrote into its
+sidecar, so it is per sprite rather than per guess; and it is still border-connected, so a subject
+that does not touch the frame edge cannot be reached however neutral it is.
+
+**"Some textures don't damage" is not a collision bug, and the measurement is what says so.** A
+scripted run down the centreline was instrumented to count every obstacle whose interval actually
+overlapped the snail's body and compare that to damage events: **3 overlaps, 3 damage events, dead.
+Nothing was missed.** What the report is about is the `overhead` class, which by design does not
+touch a grounded snail — you run under it — and the art had stopped saying so. `overhead.yLow` went
+250 -> 330, which is what puts visible daylight back underneath it.
+
+**Scenery read as see-through, and `MAX_BILLBOARD_FOG` was the reason.** 0.30 was set against a
+near-black palette, where taking 30% of a prop's alpha away over a dark ground changes very little.
+Over a pale flagstone road and a bright sky the same 30% is the sky showing through a mushroom. Now
+0.12. The build's own `DESATURATE` went to 0 in the same pass: the parent desaturated so a multiply
+tint had authority over art authored muted, and this art is authored vivid on purpose — every step
+of it was throwing away the thing the render was made for.
+
+### ⚠ A mountain range cannot be a billboard at all
+
+Three rounds, and the first two failed in **opposite** directions, which is what finally named the
+real property.
+
+The skyline shipped as the far tier of `DECOR_TIERS` — the same machinery as a tree, at 20-34
+half-widths and 2.6x scale. Reported: mountains pile up incoherently at the edges of the frame and
+then a whole one vanishes at once.
+
+- **Round 1 measured the cull and found it innocent.** Instrumented in the running game over 900
+  frames, every genuine off-screen exit happened with a **median of 1% and a maximum of 2%** of the
+  sprite's width still inside the frame. (Five *simultaneous* disappearances in the same capture
+  were the run ending, not the renderer; a probe that tracks instances has to be able to tell those
+  apart.) Nothing was disappearing early. What was wrong is that the object arrived at all: **a
+  lateral offset decides the nearest distance at which something is still inside the frame**, so at
+  20-34 half-widths a range was only ever in view while it was also the largest thing on screen
+  (871px of a 1568px frame for `mtn_crags` at its exit) and then slid out.
+- **Round 2 pulled the offsets IN and faded the range out before it could grow** — confined to
+  `n` in `[170, 300]` with a crossfade at each end. `verify:road` proved it: the skyline left the
+  frame at **alpha 0.000** against **1.00** for the old offsets, and it was still wrong. Reported
+  immediately, and correctly: *now even the one dead ahead disappears.* Of course it does — a fade
+  removes an object where the player is looking at it, which is worse than removing it at the edge.
+- **Round 3: there is no arrangement that works, because the premise is wrong.** Everything standing
+  on the ground in this projection eventually arrives at the camera. The property a horizon needs is
+  that it does not approach, and no billboard has it.
+
+So the range is a **fourth `TileSprite` layer in `Backdrop`** (`SKYLINE_LAYER`), beside the three
+sky layers that have worked this way since the plates landed: the parallax is a texture offset, so
+a strip that has scrolled a thousand pixels costs what one that has not costs. It never approaches,
+never grows, never has to be culled and never has to be faded. `src/road/track.ts`'s far tier goes
+back to drawing the verge's own props 2.6x bigger, which is what it was before mountains existed.
+
+- **The strip is composited once, at build time**, by `build_skyline` in `scripts/build-sprites.py`
+  from the same three renders, into a 2048x384 texture that wraps horizontally — each peak is also
+  drawn a strip-width either side, which is what makes the tile actually wrap rather than merely
+  look symmetrical. Three rows, each smaller and hazier than the one in front: **aerial perspective
+  is why there is more than one row**, since a single row of silhouettes is a cardboard cut-out.
+- **⚠ `tileScaleX` and `tileScaleY` are the same number, and that is the whole difference between
+  this layer and a sky plate.** A plate is horizontal structure only, so the sky layers stretch it
+  vertically to fill the frame for free. A mountain has shape in both axes: scale the two apart and
+  the peaks come out as spires — exactly the defect that got `day_v5`'s clouds re-picked. The strip
+  keeps its aspect and repeats horizontally as many times as the frame needs.
+- **⚠ The sprite is exactly one vertical repeat tall, and that is what put a line across the sky.**
+  A `TileSprite` tiles in **both** axes, so the filter samples across the wrap at the top edge and
+  blends the texture's last row into its first — and the last row is the range's feet. It drew as a
+  faint dark rule right across the sky a couple of hundred pixels above the horizon. Fixed in the
+  texture (`SKYLINE_FOOT_PAD` clears the bottom rows) rather than in the layer, so the blend is
+  transparent against transparent. Found by looking at a frame; no number in the pipeline sees it.
+- **⚠ The biome's own colour is the wrong colour for a horizon**, and the first strip proved it: at
+  full tint the forest's green turned the range into a hedgerow. `SKYLINE_TINT_MIX` pulls it 62%
+  back towards the theme's own horizon band — aerial perspective again, which is why distant hills
+  read blue-grey whatever they are made of. The biome still steers the hue, and the haze wins.
+- **The first strip was also a hedge for a second reason: 54 peaks.** At the band's scale each came
+  out about 45px wide on a 1568 frame. 31 peaks, and a band 0.30 of the frame tall rather than 0.19.
+- The feet are buried under the horizon (`sink`), because a range whose bases are all *drawn* at one
+  row reads as a row of standing objects rather than as terrain. The layer therefore does **not**
+  answer to camera height either: the sky's vertical term is a texture offset inside a full-height
+  sprite and can never expose an edge, while lifting this one by a hill's worth of camera height
+  would lift those feet into view.
+- **⚠ And then it ran, because the parallax factor was a guess about a quantity nobody had
+  measured.** `tilePositionX = driftX * 0.55` was written beside the sky's own 0.04-0.26, on the
+  reasoning that a range is nearer than the sky and must lead it. The reasoning is fine and the
+  units are not: `horizonDriftX` is the curvature integrated out to the draw distance, in **world**
+  units — it swings **±90 000** over a lap and changes by **45 400 per second** at
+  `MAX_ATTAINABLE_SPEED` on the worst bend. At 0.55 that scrolled the strip about twelve
+  tile-widths a second. Reported as the mountains running, and running faster the faster you drive,
+  which is exactly what a factor on a speed-proportional quantity does.
+  - **The sky survives the identical quantity at 0.26 only because a gradient has no feature that
+    can be seen moving.** That is why nothing had ever caught it, and why copying the sky's number
+    was the wrong instinct: the constant is safe there for a reason that does not transfer.
+  - `SKYLINE_LAYER.driftPixels` is now stated as **screen pixels per world unit of drift** and
+    divided by the tile scale in `update`, because `tilePositionX` is in texture pixels — a bare
+    factor meant one thing at one viewport height and another at the next, which is half of how the
+    first value went unnoticed. At 0.0012 the worst bend moves the range **54px a second** and a
+    whole lap shifts it **218px**, about an eighth of a frame. Measured live at 6px/s on an ordinary
+    stretch.
+  - `verify:road` holds it to a budget measured off the real circuit, at the boosted speed rather
+    than at `SPEED_CAP` — "it goes faster the faster I drive" is the report, so the check has to
+    ask about the fastest the game gets. It is shown to reject 0.55, at fifty times the budget.
+  - **The strip went 2048 → 3072 wide in the same pass**, because at 2048 the tile came out ~1240
+    screen px against a 1568px frame: the frame held one whole copy plus a quarter of the next, and
+    that quarter is the same peaks again. The check asserts the tile is wider than the frame at
+    every supported aspect and prints the tightest (1.00x at 3440x1440, which is the limit — the
+    arrangement holds up to an aspect of 2.4).
+- **What it gives up, stated rather than hidden:** the range answers to the track's curvature and to
+  nothing else, so cresting a hill does not move it. The sky has always had that limitation and
+  nobody has ever reported it.
+- 331KB, quantised like the sky plates and for the same reason — 2048x384 of flat cel bands is
+  nearly all palette, and it saves at 391KB untouched.
+
+### The sun, and why it does not move
+
+`SUN` and `ensureSunTexture` in `Backdrop.ts`. A generated radial-gradient canvas, per theme, on the
+same lifecycle as the vignette — `applyTheme` removes the previous theme's and builds the new one,
+and `layout()` re-points the `Image` every pass so a theme swap self-heals rather than leaving it
+holding a destroyed texture. **Zero bytes**, and verified live across all seven themes with exactly
+**one** `sun-*` texture alive at the end.
+
+- **⚠ It is pinned to the frame, and that is a property of the projection rather than a
+  simplification.** `projectInto` puts a point at `screenWidth / 2 + scale * (x - cameraX) *
+  screenWidth / 2` and `scale` goes to zero with distance — so **every** infinitely distant point
+  projects to the exact centre of the frame, at every camera position. This projection has no way to
+  represent a *direction*, only a position. Two consequences: an object at infinity cannot drift when
+  the road bends, and its place in the frame cannot be derived from an azimuth, so `SUN.x`/`SUN.y`
+  are a composition decision and are written as one. (This is also why the sky layers scroll at all
+  — they stand in for haze at a finite distance, not for anything at infinity.)
+- **Drawn in the theme's own `glow.color`, not in a colour of its own**, which is why it needed no
+  new palette entry and passes the threat sweep for free: the glow *is* the horizon bloom, i.e. the
+  light this sun is the source of, so the two cannot disagree. A cool night glow makes the same
+  object a moon with nothing branching on it — confirmed by screenshot on `night`.
+- **Two gradient stops close together, not one long ramp.** A sun is an object with an edge and a
+  single falloff draws a fuzzy ball with none; the first version was exactly that, a pale dot. The
+  core is also pushed towards white (`SUN_CORE_WHITEN`) because a sun's disc is white-hot and its
+  *halo* carries the colour — flat-tinted, the whole thing reads as a sticker.
+- Sized off the frame's **height**, because the sky is a share of the height: measured off the width
+  it would be a pinhead on an ultrawide frame and half the sky on a portrait phone. Placed off-centre
+  and high for what is around it — the distance readout is centred at the top, the shield pips sit
+  top-left, and the range tops out around 0.32 of the frame.
+- Depth sits between sky layer 0 and layer 1, so the haze bands pass in **front** of it. A sun with
+  the haze behind it is a lamp stuck on the glass.
+
+### ⚠ `decor-wet_log` is pulled, and the species is not the problem
+
+Reported by pointing at it. The Kenney model (`log_large`) is hollow and the render squares the bore
+off into a dark rectangle in the end face, so at the size a verge prop is read the object is a brown
+box with a black doorway in it — a crate or a pipe. `decor-coa_drift` is the same subject with a
+hexagonal bore and reads as a log, which is what says the failure is this render rather than the
+choice of model. Its key keeps the procedural silhouette, the same call `ash_mound` and `dune_spire`
+got.
+
+### What the numeric gates still cannot see
+
+Every failure above was found by looking. `canvasEdgeOpaquePct` passed the jewellery ring, the
+wrong-way arrow, the snail on a lily pad and the wet-plastic boulders; `deltaE` scored a failing
+palette and a passing one the same. The standing rule holds and is now paid for a fifth time:
+**measure what is measurable — alpha, footprint, aspect, reserved pixels, confusion — and look for
+what is not, on a background that hides neither dark paint nor a pale plate.**
+
 
 ## The Difficulty Curve
 

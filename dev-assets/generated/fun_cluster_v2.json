@@ -1,0 +1,76 @@
+{
+  "stem": "fun_cluster_v2",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, a tight clump of five small glossy mushrooms at different heights, cream stalks, rounded violet caps, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, red, crimson, scarlet, fly agaric, toadstool, single mushroom, forest floor, log",
+  "seed": 992002,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1024x1024",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 108614,
+  "keyColor": "#908298",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.07,
+  "asset": "fun_cluster",
+  "family": "fungal",
+  "variant": 2,
+  "note": "CLUMPED \u2014 a rhythmic bumpy top edge",
+  "askedAspect": 1.0,
+  "targetCanvas": [
+    100,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    347
+  ],
+  "coveragePct": 14.1,
+  "aspect": 1.991,
+  "softEdgePct": 18.12,
+  "edgeSpillMean": 13.67,
+  "edgeSpillP99": 137.0,
+  "edgeSpillMax": 179.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 5593,
+  "edgeBgLikePct": 0.32,
+  "edgeInteriorDelta": 62.6,
+  "ringNearBgPct": 0.43,
+  "ringDistToBg": 157.9,
+  "partialAlphaPct": 18.12,
+  "alpha24Coverage": 11.5,
+  "solidity24": 0.314,
+  "lumaStd24": 71.4,
+  "size24": [
+    24,
+    16
+  ],
+  "dominantColors": [
+    {
+      "hex": "#f6f4f2",
+      "sharePct": 18.4
+    },
+    {
+      "hex": "#eee9d4",
+      "sharePct": 6.8
+    },
+    {
+      "hex": "#7012cf",
+      "sharePct": 6.4
+    },
+    {
+      "hex": "#300e53",
+      "sharePct": 6.3
+    },
+    {
+      "hex": "#9326ef",
+      "sharePct": 5.5
+    }
+  ],
+  "targetAspect": 1.0,
+  "aspectVsTarget": 1.99
+}

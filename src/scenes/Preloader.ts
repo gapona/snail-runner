@@ -1,8 +1,11 @@
 import * as Phaser from 'phaser'
 import { renderSfxUris } from '../audio/sfx'
-import { skyPlateKey } from '../road/Backdrop'
+import { skyPlateKey, SKYLINE_TEXTURE } from '../road/Backdrop'
 import { DECOR_TEXTURES } from '../road/decorShapes'
 import { themeIds } from '../road/themes'
+import { OBSTACLE_TEXTURE_KEYS } from '../run/obstacleArt'
+import { PICKUP_TEXTURES } from '../run/pickupArt'
+import { SNAIL_FRAMES, snailFrameKey } from '../run/snailArt'
 import { bindLayout } from '../ui/layout'
 import { createBrand, type Brand } from '../ui/brand'
 import { getTheme, neonProgressBar, type NeonProgressBar } from '../ui/theme'
@@ -62,6 +65,9 @@ export class Preloader extends Phaser.Scene {
     // "plate not ready yet" state for 280KB of boot — not a trade worth making. That hook is
     // still the right place if a theme ever grows a real per-theme sprite set.
     for (const theme of themeIds()) this.load.image(skyPlateKey(theme), `assets/sky/${theme}.png`)
+    // The mountain range: one strip shared by every theme and every biome, tinted per biome at
+    // draw time exactly as a verge prop is. See `SKYLINE_LAYER`.
+    this.load.image(SKYLINE_TEXTURE, 'assets/sky/skyline.png')
 
     // Scenery, loaded under **exactly the keys the generators would have used**. That is the
     // whole switch: `createDecorTextures` checks whether its key already exists and draws a
@@ -71,10 +77,22 @@ export class Preloader extends Phaser.Scene {
       this.load.image(key, `assets/decor/${key.replace('decor-', '')}.png`)
     }
 
-    // The rail shooter's ship, enemy and weapon-effect sprites were loaded here. None of them
-    // survived the genre change, and their PNGs are gone from `public/assets/` with them — the
-    // snail and the three obstacle classes are chunk 7's, and until then both are drawn rather
-    // than loaded, which is the same fallback every art lookup in this project already has.
+    // The mascot, the obstacles and the pickups, on exactly the same switch the scenery uses:
+    // each of the three modules below checks whether its key already exists and draws a
+    // placeholder only when it does not, so arriving first is all a real sprite has to do.
+    //
+    // **The keys are asked for through the modules that declare them, never spelled out here.**
+    // `obstacleTextureKey` builds `obstacle-<kind>-<variant>` from `OBSTACLE_VARIANTS`, and that
+    // table has already changed once — a literal list in the loader would keep loading five of six
+    // files with nothing to say which one had gone missing. Same reason `DECOR_TEXTURES` is
+    // iterated above rather than typed out.
+    for (let i = 0; i < SNAIL_FRAMES; i++) {
+      this.load.image(snailFrameKey(i), `assets/snail/${snailFrameKey(i)}.png`)
+    }
+    for (const key of OBSTACLE_TEXTURE_KEYS) this.load.image(key, `assets/obstacle/${key}.png`)
+    for (const key of Object.values(PICKUP_TEXTURES)) {
+      this.load.image(key, `assets/pickup/${key}.png`)
+    }
 
     this.load.setPath('assets')
     this.load.audio('sfx', 'audio/blip.wav')

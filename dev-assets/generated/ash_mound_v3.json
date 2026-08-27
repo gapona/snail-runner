@@ -1,0 +1,76 @@
+{
+  "stem": "ash_mound_v3",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one smooth rounded mound of dark grey ash, glossy dome shape, soft bevelled top, warm amber gold speckles, low and wide, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, red, crimson, scarlet, flying saucer, ufo, spaceship, dome building, igloo, volcano",
+  "seed": 985003,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1344x768",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 107167,
+  "keyColor": "#999796",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.0,
+  "asset": "ash_mound",
+  "family": "ashen",
+  "variant": 3,
+  "note": "LOW DOME \u2014 `flying saucer` negated because that is what shipped",
+  "askedAspect": 1.7,
+  "targetCanvas": [
+    170,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    309
+  ],
+  "coveragePct": 28.8,
+  "aspect": 0.976,
+  "softEdgePct": 6.87,
+  "edgeSpillMean": -3.11,
+  "edgeSpillP99": 3.0,
+  "edgeSpillMax": 4.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 1804,
+  "edgeBgLikePct": 0.0,
+  "edgeInteriorDelta": 13.9,
+  "ringNearBgPct": 0.0,
+  "ringDistToBg": 159.5,
+  "partialAlphaPct": 6.873,
+  "alpha24Coverage": 30.4,
+  "solidity24": 0.773,
+  "lumaStd24": 42.2,
+  "size24": [
+    24,
+    14
+  ],
+  "dominantColors": [
+    {
+      "hex": "#504e4d",
+      "sharePct": 25.3
+    },
+    {
+      "hex": "#2f2e2c",
+      "sharePct": 24.8
+    },
+    {
+      "hex": "#141311",
+      "sharePct": 20.1
+    },
+    {
+      "hex": "#2b2417",
+      "sharePct": 5.1
+    },
+    {
+      "hex": "#221c16",
+      "sharePct": 3.6
+    }
+  ],
+  "targetAspect": 1.7,
+  "aspectVsTarget": 0.57
+}

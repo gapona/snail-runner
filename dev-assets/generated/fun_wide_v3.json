@@ -1,0 +1,76 @@
+{
+  "stem": "fun_wide_v3",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one very wide flat glossy bracket fungus, smooth shelf shaped cap in soft mint green, low and broad, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, red, crimson, scarlet, shelf, bookshelf, pagoda, stairs, building, tree trunk, parasol",
+  "seed": 994003,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1344x768",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 111174,
+  "keyColor": "#a3a9a9",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.0,
+  "asset": "fun_wide",
+  "family": "fungal",
+  "variant": 3,
+  "note": "the FLAT SLAB \u2014 the widest in the biome",
+  "askedAspect": 1.9,
+  "targetCanvas": [
+    190,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    367
+  ],
+  "coveragePct": 12.2,
+  "aspect": 1.805,
+  "softEdgePct": 15.26,
+  "edgeSpillMean": -35.42,
+  "edgeSpillP99": 0.0,
+  "edgeSpillMax": 2.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 5275,
+  "edgeBgLikePct": 0.36,
+  "edgeInteriorDelta": 66.7,
+  "ringNearBgPct": 0.26,
+  "ringDistToBg": 152.1,
+  "partialAlphaPct": 15.259,
+  "alpha24Coverage": 14.2,
+  "solidity24": 0.43,
+  "lumaStd24": 59.5,
+  "size24": [
+    24,
+    17
+  ],
+  "dominantColors": [
+    {
+      "hex": "#346b56",
+      "sharePct": 16.3
+    },
+    {
+      "hex": "#4e554a",
+      "sharePct": 14.4
+    },
+    {
+      "hex": "#498a72",
+      "sharePct": 14.4
+    },
+    {
+      "hex": "#e8faf6",
+      "sharePct": 13.9
+    },
+    {
+      "hex": "#d7f6ee",
+      "sharePct": 7.4
+    }
+  ],
+  "targetAspect": 1.9,
+  "aspectVsTarget": 0.95
+}

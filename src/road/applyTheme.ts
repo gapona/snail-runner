@@ -1,6 +1,13 @@
 import * as Phaser from 'phaser'
 import { createDecorTextures, generatedDecorKeys } from './decor'
-import { ensureSkyTextures, ensureVignetteTexture, removeSkyTextures, removeVignetteTexture } from './Backdrop'
+import {
+  ensureSkyTextures,
+  ensureSunTexture,
+  ensureVignetteTexture,
+  removeSkyTextures,
+  removeSunTexture,
+  removeVignetteTexture,
+} from './Backdrop'
 import { createObstacleTextures, generatedObstacleKeys } from '../run/obstacleArt'
 import { getRoadThemeId, setRoadTheme, THEMES } from './themes'
 
@@ -78,11 +85,13 @@ export function applyTheme(scene: Phaser.Scene, id: string): boolean {
   // The vignette is per theme for the same reason the sky is -- its colour is -- so it is torn
   // down on the same beat. Missing this leaves the old theme's tint hanging over the new one.
   removeVignetteTexture(scene, previous)
+  removeSunTexture(scene, previous)
 
   createDecorTextures(scene)
   createObstacleTextures(scene)
   ensureSkyTextures(scene)
   ensureVignetteTexture(scene)
+  ensureSunTexture(scene)
 
   return true
 }

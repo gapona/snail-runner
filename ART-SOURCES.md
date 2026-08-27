@@ -146,6 +146,28 @@ numbers are in `dev-assets/sprites/` with a `.json` per file; `scripts/build-spr
 only thing that turns one into a shipped asset and records which variant was picked.
 
 
+## The glossy regeneration (2026-08-26)
+
+Everything below replaces the rail shooter's inherited set. All of it is **self-generated** on
+**DreamShaper XL 1.0 via Modal**, from `Remotion/src/scripts/snail_prompts.py` +
+`gen_snail_art.py`, and delivered by `scripts/build-sprites.py`.
+
+| File | Variant | Method | Licence | Added |
+|---|---|---|---|---|
+| `public/assets/snail/snail-{0..5}.png` | `snail_hero_v14` | img2img strength 0.85 from the procedural rough in `Remotion/src/scripts/snail_roughs.py`; the six frames are one render sheared per row by `build_snail` | self-generated | 2026-08-26 |
+| `public/assets/obstacle/*.png` (6 files) | see `dev-assets/picks.json` | text2img, `rembg` matte | self-generated | 2026-08-26 |
+| `public/assets/pickup/*.png` (3 files) | see `dev-assets/picks.json` | text2img; the shared backing disc is composited by `build_pickups`, not rendered | self-generated | 2026-08-26 |
+| `public/assets/decor/*.png` (nine biomes) | see `dev-assets/picks.json` | text2img, per-slot matte in `gen_snail_art.MATTE` | self-generated | 2026-08-26 |
+
+**The per-file rows this table does not spell out live in `dev-assets/sprites/<variant>.json`**,
+one sidecar per render, carrying the exact prompt, negative, seed, checkpoint id, render size,
+steps, cfg, matte and every measured number. That is a stronger provenance record than a row here
+could be, and `dev-assets/picks.json` is what maps a shipped file back to one of them.
+
+**The rule this file states — no row, no ship — has a known gap, and it is unchanged by this
+round:** nothing fails `npm run build` for an unrecorded file under `public/assets/`. The parent
+project shipped 54 files without rows before anyone looked. A guard remains unbuilt.
+
 ## Not shipped, and why
 
 `dev-assets/sprites/rejected/` — 37 rejected sprite renders with `REJECTS.json` giving a reason

@@ -235,10 +235,16 @@ export function decorateTrack(track: Segment[], keys: readonly string[], options
       })
     }
 
-    // **The other two tiers, from the same generator and the same prop list.** Drawn after the
-    // middle tier's own roll so the sequence of random numbers is unchanged for it -- a track that
-    // re-rolled its whole scenery the moment tiers were added would make every frame-cost reading
-    // and every screenshot taken before this incomparable.
+    // **The other two tiers, from the same generator.** Drawn after the middle tier's own roll so
+    // the sequence of random numbers is unchanged for it -- a track that re-rolled its whole
+    // scenery the moment tiers were added would make every frame-cost reading and every screenshot
+    // taken before this incomparable.
+    //
+    // **⚠ The mountains that used to live here are a `Backdrop` layer now** — see `SKYLINE_LAYER`.
+    // A range that stands on a segment eventually arrives, because everything standing on the
+    // ground in this projection does; two attempts to keep one on the horizon by choosing its
+    // offset and then by fading it out both failed, in opposite directions. What is left here is
+    // the verge's own props drawn 2.6x bigger and further out, which is what the tier was before.
     for (const [tier, spec] of [
       ['far', DECOR_TIERS.far],
       ['near', DECOR_TIERS.near],

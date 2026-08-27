@@ -88,6 +88,7 @@ export interface Biome {
   decorTint: number
 }
 
+
 /**
  * Every biome, in the order a run passes through them.
  *
@@ -119,7 +120,12 @@ export const BIOMES: readonly Biome[] = [
   {
     id: 'wetland',
     ground: [0x2c6a5e, 0x307163],
-    props: ['decor-wet_reeds', 'decor-wet_reeds', 'decor-wet_stump', 'decor-wet_lily', 'decor-wet_willow', 'decor-wet_log', 'decor-wet_cattail', 'decor-wet_cattail'],
+    // **`decor-wet_log` is pulled, and its key keeps the procedural silhouette.** The Kenney model
+    // (`log_large`) is hollow, and the render squares the hollow off into a dark rectangle in the
+    // end face — so at the size a verge prop is read the object is a brown box with a black
+    // doorway in it, i.e. a crate or a pipe. `decor-coa_drift` is the same subject with a
+    // hexagonal bore and reads as a log, so the species is not the problem, this render is.
+    props: ['decor-wet_reeds', 'decor-wet_reeds', 'decor-wet_stump', 'decor-wet_lily', 'decor-wet_willow', 'decor-wet_cattail', 'decor-wet_cattail'],
     /** green water rather than green leaf: cooler and less saturated than forest. */
     decorTint: 0x8fd0bc,
   },
@@ -133,10 +139,11 @@ export const BIOMES: readonly Biome[] = [
   {
     id: 'ashen',
     ground: [0x54494a, 0x5b4f50],
-    // `decor-ash_mound` was here twice — the most common prop in the biome — and the art shipped
-    // for it was a flying saucer. Pulled until it is re-rendered; its two slots go to the two
-    // props that already carry the biome's silhouette.
-    props: ['decor-ash_stump', 'decor-ash_stump', 'decor-ash_slab', 'decor-ash_spar', 'decor-ash_vent', 'decor-ash_scrub', 'decor-ash_scrub', 'decor-ash_slab'],
+    // `decor-ash_mound` was pulled here for a round, because the art shipped for it was a flying
+    // saucer and it was the biome's most common prop. It is back: the glossy regeneration
+    // re-briefed it as a low dome and negated `flying saucer, ufo, spaceship` by name, which is
+    // what the slot's own note in `snail_prompts.py` records.
+    props: ['decor-ash_stump', 'decor-ash_mound', 'decor-ash_slab', 'decor-ash_spar', 'decor-ash_vent', 'decor-ash_scrub', 'decor-ash_scrub', 'decor-ash_slab'],
     /** warm dead grey, lifted so `night` does not crush it past visibility. */
     decorTint: 0xc2bdb5,
   },
@@ -155,10 +162,11 @@ export const BIOMES: readonly Biome[] = [
   {
     id: 'crystal',
     ground: [0x6165ad, 0x696cb1],
-    // Five props, not six: `cry_shard` was rejected for pointing downwards, which a
-    // bottom-anchored billboard cannot use. Listed twice each where a prop is meant to be
-    // common, same weighting convention as every other biome.
-    props: ['decor-cry_cluster', 'decor-cry_cluster', 'decor-cry_geode', 'decor-cry_bloom', 'decor-cry_pillar', 'decor-cry_slab', 'decor-cry_slab'],
+    // Six now. `cry_shard` was rejected once for pointing downwards, which a bottom-anchored
+    // billboard cannot use; the regeneration re-briefed it as a spike growing UP from a rock base
+    // and negates `pointing down, hanging, stalactite, icicle` by name. Listed twice each where a
+    // prop is meant to be common, same weighting convention as every other biome.
+    props: ['decor-cry_cluster', 'decor-cry_cluster', 'decor-cry_geode', 'decor-cry_bloom', 'decor-cry_pillar', 'decor-cry_shard', 'decor-cry_slab'],
     /** blue-violet, **not** red-violet: at `0xc0a8e0` the product with `dusk` was
      *     `#a36f65`, inside the reserved threat band. The first thing the new sweep rejected. */
     decorTint: 0xaeb2ec,
@@ -169,11 +177,14 @@ export const BIOMES: readonly Biome[] = [
     // and dimmed per theme by `groundPairForTheme` like every other pair, so "brightest" is a
     // relationship to its own theme's asphalt rather than an absolute that a dark theme breaks.
     ground: [0xc9b483, 0xd1bd8d],
-    // Four props, not six: `coa_drift` and `coa_shell` are being re-rendered — see
-    // `decorShapes.ts`. Each is listed twice so the density matches its neighbours; a biome with
-    // fewer distinct shapes must not also be a biome with less scenery, or the stretch reads as
-    // empty rather than as different.
-    props: ['decor-coa_stack', 'decor-coa_stack', 'decor-coa_kelp', 'decor-coa_kelp', 'decor-coa_palm', 'decor-coa_reef', 'decor-coa_reef'],
+    // Five props, not six, and the missing one is a deliberate omission rather than a pending
+    // render. `coa_drift` is back — it shipped once as a cartoon bone and the regeneration negates
+    // `bone, skull, antler` by name. **`coa_shell` is not, and will not be:** a large glossy
+    // spiral shell is the mascot's own silhouette, and at the 20-60px a verge prop is read at,
+    // scattering snail shells along the roadside makes the player search for the one object this
+    // whole art direction exists to keep them from searching for. The render is fine; the subject
+    // is wrong for this game. See "The Regeneration: A Glossy World" in CLAUDE.md.
+    props: ['decor-coa_stack', 'decor-coa_stack', 'decor-coa_kelp', 'decor-coa_palm', 'decor-coa_reef', 'decor-coa_reef', 'decor-coa_drift'],
     /** pale sea light. */
     decorTint: 0xa4cfe8,
   },

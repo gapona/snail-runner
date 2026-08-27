@@ -1,0 +1,77 @@
+{
+  "stem": "for_boulder_v20",
+  "mode": "img2img-rough",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, a single squat rounded boulder, smooth glossy grey stone with bright green moss on top, bevelled chipped edges, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, frog, animal, mountain, cave",
+  "strength": 0.85,
+  "seed": 940020,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1216x832",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "refIoU": 0.925,
+  "symmetryIoU": 0.805,
+  "rimSharePct": 35.0,
+  "bytes": 86460,
+  "keyColor": "#b4b4b3",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.0,
+  "asset": "for_boulder",
+  "family": "forest",
+  "variant": 20,
+  "note": "the SOLID MASS",
+  "askedAspect": 1.4,
+  "keyBackground": "#b0b0b0",
+  "initModel": "kenney nature-kit, CC0, via smooth_render.py",
+  "round": "snail-model-init",
+  "size": [
+    512,
+    155
+  ],
+  "coveragePct": 77.4,
+  "aspect": 3.314,
+  "softEdgePct": 2.75,
+  "edgeSpillMean": -72.47,
+  "edgeSpillP99": 3.0,
+  "edgeSpillMax": 6.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 2167,
+  "edgeBgLikePct": 0.0,
+  "edgeInteriorDelta": 81.1,
+  "ringNearBgPct": 0.0,
+  "ringDistToBg": 158.7,
+  "partialAlphaPct": 2.748,
+  "alpha24Coverage": 79.2,
+  "solidity24": 0.826,
+  "lumaStd24": 49.6,
+  "size24": [
+    24,
+    7
+  ],
+  "dominantColors": [
+    {
+      "hex": "#f1a34f",
+      "sharePct": 20.2
+    },
+    {
+      "hex": "#e89a4a",
+      "sharePct": 14.5
+    },
+    {
+      "hex": "#4e4907",
+      "sharePct": 7.0
+    },
+    {
+      "hex": "#26f49b",
+      "sharePct": 6.3
+    },
+    {
+      "hex": "#6f4e0e",
+      "sharePct": 5.8
+    }
+  ],
+  "targetAspect": 1.4,
+  "aspectVsTarget": 2.37
+}

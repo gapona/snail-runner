@@ -90,10 +90,12 @@ import {
   SPRITE_SCALE,
   TRACK_SEGMENT_COUNT,
   paletteU,
+  SKYLINE_LAYER,
+  SKYLINE_TEXTURE_SIZE,
 } from '../src/road/constants.ts'
 import { buildMenuCircuit, buildRunCircuit } from '../src/road/circuits.ts'
 import { sweepEngagement } from '../src/road/sightline.ts'
-import { SPEED_CAP } from '../src/run/constants.ts'
+import { MAX_ATTAINABLE_SPEED, SPEED_CAP } from '../src/run/constants.ts'
 
 /**
  * How far ahead an obstacle is placed, in segments.
@@ -1956,6 +1958,83 @@ check('the biome has three tiers, and the near one is rare enough to stay an eve
   assert.ok(DECOR_TIERS.far.scale > DECOR_TIERS.near.scale && DECOR_TIERS.near.scale > DECOR_TIERS.mid.scale)
   // ...and the far tier stands beyond the corridor rather than in it.
   assert.ok(DECOR_TIERS.far.minOffset > DECOR.MAX_OFFSET, 'the far tier stands inside the verge band')
+})
+
+check('the skyline drifts slowly enough to read as a horizon', () => {
+  // **The check that would have caught the value this shipped with.** `SKYLINE_LAYER.driftPixels`
+  // multiplies `horizonDriftX`, which is the curvature integrated from the camera out to the draw
+  // distance -- a WORLD quantity, and a large one. Guessing a factor for it beside the sky's own
+  // 0.04-0.26 put the range at roughly twelve tile-widths a second, i.e. a blur; the sky survives
+  // the identical quantity only because a gradient has no feature that can be seen moving.
+  //
+  // So the budget is stated in the units the player actually experiences, and measured off the
+  // circuit the game builds rather than off an estimate.
+  const MAX_DRIFT_PX_PER_SECOND = 70
+  const track = buildRunCircuit()
+  const drift = []
+
+  for (let base = 0; base < track.length; base++) {
+    // The mesh's own integration, and it has to be this one: `horizonDriftX` is where that loop
+    // ends up, not something derivable from a segment's curve on its own.
+    let x = 0
+    let dx = 0
+
+    for (let n = 0; n < DRAW_DISTANCE; n++) {
+      x += dx
+      dx += track[(base + n) % track.length].curve
+    }
+
+    drift.push(x)
+  }
+
+  // A second of travel at the fastest the game can go -- the boost included, for the same reason
+  // the obstacle placer solves its spacing at `MAX_ATTAINABLE_SPEED` rather than at `SPEED_CAP`.
+  const segmentsPerSecond = Math.round(MAX_ATTAINABLE_SPEED / SEGMENT_LENGTH)
+  let worst = 0
+
+  for (let i = 0; i < drift.length; i++) {
+    worst = Math.max(worst, Math.abs(drift[(i + segmentsPerSecond) % drift.length] - drift[i]))
+  }
+
+  const pixelsPerSecond = worst * SKYLINE_LAYER.driftPixels
+
+  assert.ok(
+    pixelsPerSecond <= MAX_DRIFT_PX_PER_SECOND,
+    `the range moves ${pixelsPerSecond.toFixed(0)}px a second, which reads as scrolling scenery`,
+  )
+
+  // Shown to reject the value it was written against, so it cannot pass by measuring nothing.
+  assert.ok(worst * 0.55 > MAX_DRIFT_PX_PER_SECOND * 50, 'the check no longer rejects the value it was written for')
+
+  // ...and the tile is wider than the frame at every aspect the game supports, so no frame ever
+  // holds two copies of the same range. `2.4` below is the aspect at which that stops being true;
+  // it is computed rather than written down.
+  const span = drift.reduce((a, b) => Math.max(a, b)) - drift.reduce((a, b) => Math.min(a, b))
+  let tightest = Infinity
+  let tightestAt = ''
+
+  for (const [w, h] of [
+    [1920, 945],
+    [1568, 772],
+    [3440, 1440],
+    [390, 844],
+    [844, 390],
+  ]) {
+    const scale = (h * SKYLINE_LAYER.height) / SKYLINE_TEXTURE_SIZE.height
+    const ratio = (SKYLINE_TEXTURE_SIZE.width * scale) / w
+
+    if (ratio < tightest) {
+      tightest = ratio
+      tightestAt = `${w}x${h}`
+    }
+  }
+
+  assert.ok(tightest >= 1, `the strip tiles ${(1 / tightest).toFixed(2)} times across a ${tightestAt} frame`)
+  console.log(
+    `    the range moves ${pixelsPerSecond.toFixed(0)}px/s at top speed and ` +
+      `${(span * SKYLINE_LAYER.driftPixels).toFixed(0)}px over a whole lap; ` +
+      `narrowest tile margin ${tightest.toFixed(2)}x of the frame at ${tightestAt}`,
+  )
 })
 
 console.log('variety without files')

@@ -1,0 +1,76 @@
+{
+  "stem": "ash_vent_v3",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one squat rounded chimney of glossy dark basalt with a wide open mouth, warm amber gold light inside it, bevelled, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, red, crimson, scarlet, lava, magma, eruption, smoke plume, volcano landscape, chimney house",
+  "seed": 983003,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1024x1024",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 174458,
+  "keyColor": "#787672",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 4.69,
+  "asset": "ash_vent",
+  "family": "ashen",
+  "variant": 3,
+  "note": "the HOLE \u2014 an open mouth is its whole read",
+  "askedAspect": 0.95,
+  "targetCanvas": [
+    95,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    512
+  ],
+  "coveragePct": 20.8,
+  "aspect": 0.904,
+  "softEdgePct": 13.36,
+  "edgeSpillMean": -15.09,
+  "edgeSpillP99": 3.0,
+  "edgeSpillMax": 6.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 7123,
+  "edgeBgLikePct": 0.03,
+  "edgeInteriorDelta": 44.2,
+  "ringNearBgPct": 0.14,
+  "ringDistToBg": 156.4,
+  "partialAlphaPct": 13.364,
+  "alpha24Coverage": 22.7,
+  "solidity24": 0.313,
+  "lumaStd24": 77.1,
+  "size24": [
+    24,
+    24
+  ],
+  "dominantColors": [
+    {
+      "hex": "#121211",
+      "sharePct": 44.1
+    },
+    {
+      "hex": "#b2afac",
+      "sharePct": 11.3
+    },
+    {
+      "hex": "#2c2c2a",
+      "sharePct": 9.1
+    },
+    {
+      "hex": "#d0b592",
+      "sharePct": 5.3
+    },
+    {
+      "hex": "#d5ad73",
+      "sharePct": 3.3
+    }
+  ],
+  "targetAspect": 0.95,
+  "aspectVsTarget": 0.95
+}

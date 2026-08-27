@@ -1,0 +1,76 @@
+{
+  "stem": "dune_grass_v2",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one small tuft of stiff golden desert grass blades fanning outward from a single base, glossy, low and wide, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, banana, fruit, face, wheat field, lawn, hay bale",
+  "seed": 951002,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1024x1024",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 295878,
+  "keyColor": "#757371",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 21.14,
+  "asset": "dune_grass",
+  "family": "dunes",
+  "variant": 2,
+  "note": "LOW SPREADING fan \u2014 a banana with a face once shipped here",
+  "askedAspect": 1.2,
+  "targetCanvas": [
+    120,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    366
+  ],
+  "coveragePct": 62.9,
+  "aspect": 1.399,
+  "softEdgePct": 17.75,
+  "edgeSpillMean": -32.2,
+  "edgeSpillP99": 2.0,
+  "edgeSpillMax": 10.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 8648,
+  "edgeBgLikePct": 0.19,
+  "edgeInteriorDelta": 41.5,
+  "ringNearBgPct": 0.26,
+  "ringDistToBg": 152.4,
+  "partialAlphaPct": 17.753,
+  "alpha24Coverage": 67.2,
+  "solidity24": 0.672,
+  "lumaStd24": 67.8,
+  "size24": [
+    24,
+    17
+  ],
+  "dominantColors": [
+    {
+      "hex": "#b7b1ab",
+      "sharePct": 16.1
+    },
+    {
+      "hex": "#d1cecb",
+      "sharePct": 10.6
+    },
+    {
+      "hex": "#110905",
+      "sharePct": 8.0
+    },
+    {
+      "hex": "#c5baae",
+      "sharePct": 6.2
+    },
+    {
+      "hex": "#2b1709",
+      "sharePct": 6.1
+    }
+  ],
+  "targetAspect": 1.2,
+  "aspectVsTarget": 1.17
+}

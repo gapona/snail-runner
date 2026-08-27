@@ -1,0 +1,76 @@
+{
+  "stem": "pick_coin_v9",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one thick gold hoop seen flat from the front, a wide empty round hole in the middle, perfectly circular, bevelled band, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, realistic, thin lines, text, letters, numbers, jewellery, wedding ring, tilted, perspective, angled, oval, coin, food",
+  "seed": 932009,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1024x1024",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 227074,
+  "keyColor": "#9e9d9b",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.0,
+  "asset": "pick_coin",
+  "family": "pickups",
+  "variant": 9,
+  "note": "the only shape with a HOLE \u2014 checked to survive 13px",
+  "askedAspect": 1.0,
+  "targetCanvas": [
+    100,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    511,
+    512
+  ],
+  "coveragePct": 29.8,
+  "aspect": 0.913,
+  "softEdgePct": 18.11,
+  "edgeSpillMean": -41.75,
+  "edgeSpillP99": 2.0,
+  "edgeSpillMax": 6.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 9909,
+  "edgeBgLikePct": 0.0,
+  "edgeInteriorDelta": 15.5,
+  "ringNearBgPct": 0.0,
+  "ringDistToBg": 152.4,
+  "partialAlphaPct": 18.111,
+  "alpha24Coverage": 34.2,
+  "solidity24": 0.391,
+  "lumaStd24": 63.9,
+  "size24": [
+    24,
+    24
+  ],
+  "dominantColors": [
+    {
+      "hex": "#6d5330",
+      "sharePct": 10.9
+    },
+    {
+      "hex": "#76644a",
+      "sharePct": 7.8
+    },
+    {
+      "hex": "#f8e8c9",
+      "sharePct": 7.0
+    },
+    {
+      "hex": "#fae4b7",
+      "sharePct": 6.3
+    },
+    {
+      "hex": "#52514f",
+      "sharePct": 5.5
+    }
+  ],
+  "targetAspect": 1.0,
+  "aspectVsTarget": 0.91
+}

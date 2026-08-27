@@ -72,14 +72,22 @@ export const PICKUP_HEIGHT = 90
 export const PICKUP_HALF_WIDTHS = 0.16
 
 /**
- * How big the icon is drawn, in world units — a little under the snail's own height.
+ * How big the icon is drawn, in world units.
  *
  * Sized against the snail rather than against the catchment, because what the player reads is
  * "something the size of a thing I could pick up". The first version drew it at the *catchment*
  * width and put a 640-unit coin on the road: four snails wide, and it read as a piece of scenery
  * that had landed in the wrong game.
+ *
+ * **⚠ 320 rather than 160, which makes it bigger than the snail rather than a little under it.**
+ * That reverses the sizing above and is a deliberate call rather than a drift: at 160 the icons
+ * read as small change lying on a wide road, and the thing the player is being asked to steer
+ * towards has to be worth steering towards. It is still half the 640-unit catchment, so the one
+ * rule that may not bend — the box is only ever MORE generous than the icon, never less — is
+ * unchanged. What it costs is that a pickup no longer reads as smaller than the mascot; the
+ * mascot keeps its separation by being the only saturated object in the frame instead.
  */
-export const PICKUP_DRAW_SIZE = 160
+export const PICKUP_DRAW_SIZE = 320
 
 /** How far apart pickups are laid, in world units. */
 export const PICKUP_SPACING_Z = SEGMENT_LENGTH * 14

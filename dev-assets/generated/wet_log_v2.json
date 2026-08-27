@@ -1,0 +1,76 @@
+{
+  "stem": "wet_log_v2",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one thick fallen log lying flat, glossy mossy brown bark, round sawn ends, low and very long, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, firewood pile, many logs, forest, axe, bridge",
+  "seed": 964002,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1344x768",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 184653,
+  "keyColor": "#a7a5a2",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 10.18,
+  "asset": "wet_log",
+  "family": "wetland",
+  "variant": 2,
+  "note": "LOW horizontal bar",
+  "askedAspect": 2.2,
+  "targetCanvas": [
+    220,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    318
+  ],
+  "coveragePct": 33.4,
+  "aspect": 1.399,
+  "softEdgePct": 23.98,
+  "edgeSpillMean": -46.77,
+  "edgeSpillP99": 0.0,
+  "edgeSpillMax": 4.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 3592,
+  "edgeBgLikePct": 0.06,
+  "edgeInteriorDelta": 35.4,
+  "ringNearBgPct": 0.05,
+  "ringDistToBg": 156.7,
+  "partialAlphaPct": 23.977,
+  "alpha24Coverage": 35.0,
+  "solidity24": 0.4,
+  "lumaStd24": 19.8,
+  "size24": [
+    24,
+    15
+  ],
+  "dominantColors": [
+    {
+      "hex": "#4e4f2a",
+      "sharePct": 15.7
+    },
+    {
+      "hex": "#2e2e16",
+      "sharePct": 15.6
+    },
+    {
+      "hex": "#6f4a2b",
+      "sharePct": 13.7
+    },
+    {
+      "hex": "#6a6e32",
+      "sharePct": 7.7
+    },
+    {
+      "hex": "#50321b",
+      "sharePct": 5.9
+    }
+  ],
+  "targetAspect": 2.2,
+  "aspectVsTarget": 0.64
+}

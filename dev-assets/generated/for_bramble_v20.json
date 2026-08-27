@@ -1,0 +1,77 @@
+{
+  "stem": "for_bramble_v20",
+  "mode": "img2img-rough",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one low round bush of glossy dark green leaves with small blue berries, chunky and rounded, wider than tall, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, red, crimson, scarlet, cherry, raspberry, fruit tree, hedge, thorns",
+  "strength": 0.85,
+  "seed": 940020,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1344x768",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "refIoU": 0.705,
+  "symmetryIoU": 0.568,
+  "rimSharePct": 35.0,
+  "bytes": 162311,
+  "keyColor": "#adacaa",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.0,
+  "asset": "for_bramble",
+  "family": "forest",
+  "variant": 20,
+  "note": "the OPEN TANGLE \u2014 low solidity, broken rim",
+  "askedAspect": 1.6,
+  "keyBackground": "#b0b0b0",
+  "initModel": "kenney nature-kit, CC0, via smooth_render.py",
+  "round": "snail-model-init",
+  "size": [
+    512,
+    331
+  ],
+  "coveragePct": 41.5,
+  "aspect": 1.348,
+  "softEdgePct": 4.66,
+  "edgeSpillMean": -69.99,
+  "edgeSpillP99": 2.0,
+  "edgeSpillMax": 6.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 4848,
+  "edgeBgLikePct": 0.02,
+  "edgeInteriorDelta": 16.1,
+  "ringNearBgPct": 0.0,
+  "ringDistToBg": 159.6,
+  "partialAlphaPct": 4.661,
+  "alpha24Coverage": 43.2,
+  "solidity24": 0.519,
+  "lumaStd24": 35.9,
+  "size24": [
+    24,
+    16
+  ],
+  "dominantColors": [
+    {
+      "hex": "#144e50",
+      "sharePct": 12.4
+    },
+    {
+      "hex": "#0d2e32",
+      "sharePct": 8.0
+    },
+    {
+      "hex": "#16706c",
+      "sharePct": 5.0
+    },
+    {
+      "hex": "#113749",
+      "sharePct": 4.9
+    },
+    {
+      "hex": "#2bab91",
+      "sharePct": 4.5
+    }
+  ],
+  "targetAspect": 1.6,
+  "aspectVsTarget": 0.84
+}

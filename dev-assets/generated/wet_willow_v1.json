@@ -1,0 +1,76 @@
+{
+  "stem": "wet_willow_v1",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one rounded cartoon willow tree, chunky trunk under a soft dome of long hanging glossy teal-green leaf strands, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, pond, riverbank, forest, weeping willow landscape",
+  "seed": 963001,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1024x1024",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 354620,
+  "keyColor": "#9da3a1",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.0,
+  "asset": "wet_willow",
+  "family": "wetland",
+  "variant": 1,
+  "note": "UPRIGHT dome \u2014 the biome's tallest mass",
+  "askedAspect": 1.0,
+  "targetCanvas": [
+    100,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    512
+  ],
+  "coveragePct": 42.9,
+  "aspect": 0.936,
+  "softEdgePct": 16.21,
+  "edgeSpillMean": -93.39,
+  "edgeSpillP99": -2.0,
+  "edgeSpillMax": 7.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 10995,
+  "edgeBgLikePct": 0.19,
+  "edgeInteriorDelta": 34.6,
+  "ringNearBgPct": 0.22,
+  "ringDistToBg": 154.5,
+  "partialAlphaPct": 16.209,
+  "alpha24Coverage": 43.6,
+  "solidity24": 0.546,
+  "lumaStd24": 32.4,
+  "size24": [
+    24,
+    24
+  ],
+  "dominantColors": [
+    {
+      "hex": "#10332a",
+      "sharePct": 8.6
+    },
+    {
+      "hex": "#2f8c71",
+      "sharePct": 5.7
+    },
+    {
+      "hex": "#144738",
+      "sharePct": 5.2
+    },
+    {
+      "hex": "#296957",
+      "sharePct": 4.9
+    },
+    {
+      "hex": "#185447",
+      "sharePct": 4.9
+    }
+  ],
+  "targetAspect": 1.0,
+  "aspectVsTarget": 0.94
+}

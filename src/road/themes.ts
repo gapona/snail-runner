@@ -125,13 +125,32 @@ export const THEMES: Record<string, RoadTheme> = {
   day: {
     id: 'day',
     groundLight: 1,
-    // The fifth slot is the surface rung, and on this theme it was `0xf2c94c` -- highway yellow,
-    // down the middle of a grey surface with white paint along both edges. Every other theme
-    // already carried a neutral there; `day` is the default and so it was the one the game was
-    // read on. Repainted to a cool near-white, which reads as a lit marking on a track rather
-    // than as road paint, and stays clear of both the reserved threat hue and the yellow the
-    // vegetation and the ground glow are made of.
-    road: [0x44484f, 0x4e525a, 0xe8ecf2, 0xffffff, 0x8d9dae],
+    // ── ⚠ THE ROAD IS A GARDEN PATH ON THIS THEME, NOT ASPHALT ────────────────────
+    //
+    // The five slots are `PALETTE_INDEX`: two alternating surface shades, two rumble-stripe
+    // shades, and the transverse rung. They were a dark grey road (`0x44484f`/`0x4e525a`, a
+    // surface luminance of 72) with white kerbstones, which is what the rail shooter's ground
+    // was and what the snail was still running on.
+    //
+    // **A dark strip down the middle of a bright cartoon world is the one thing in the frame
+    // that cannot be fixed by re-arting the props around it** — it is the largest single
+    // surface on screen and it was the last piece still in the old game's palette. It is now
+    // warm pale flagstone: the same surface the reference's own courtyards are made of, and the
+    // right ground for a snail rather than for a vehicle.
+    //
+    // Three relationships had to survive the repaint and each is asserted rather than eyeballed:
+    //
+    //   the ALTERNATION RATIO between the two surface shades stays near the 1.092 the rest of
+    //     the game is measured against — it is a motion cue, and at a wider ratio a flat expanse
+    //     reads as a stripe pattern rather than as movement.
+    //   the RUMBLE STRIPE keeps at least 1.6:1 against the surface. Its job is marking the road
+    //     edge, which is a LIGHTNESS question, so on a pale path the stripes had to invert from
+    //     near-white to a deep warm brown. `verify:road` holds every theme to that floor
+    //     precisely so a repaint cannot satisfy one rule by breaking another.
+    //   every BIOME GROUND still separates from it by `MIN_GROUND_CONTRAST`. `groundForTheme`
+    //     pushes a pair away from the surface in whichever direction it already leans, so a
+    //     brighter path pushes the dark biomes darker and the pale ones paler by itself.
+    road: [0xc2ab86, 0xd0ba97, 0x6b5232, 0x8a6c43, 0xe8dcc2],
     // Warm haze, close to the sky's own bottom — the far field has to fade *into* the sky rather
     // than into a colour of its own, or the horizon becomes a line.
     fog: 0xb9d4e8,

@@ -1,0 +1,81 @@
+{
+  "stem": "snail_hero_v9",
+  "mode": "img2img-rough",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, a cheerful cartoon snail seen from behind, big glossy spiral shell facing the viewer, two tall eye stalks, plump green body, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, slug, worm, human, scary, angry, teeth, realistic snail, photo, side view, profile, lily pad, plate, puddle, slime, ooze, liquid",
+  "strength": 0.85,
+  "seed": 910009,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1216x832",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "refIoU": 0.84,
+  "symmetryIoU": 0.521,
+  "rimSharePct": 35.0,
+  "bytes": 250291,
+  "keyColor": "#b2b0b1",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.0,
+  "asset": "snail_hero",
+  "family": "snail",
+  "variant": 9,
+  "note": "the mascot \u2014 the ONLY object in the game allowed to be this saturated",
+  "askedAspect": 1.56,
+  "targetCanvas": [
+    156,
+    100
+  ],
+  "keyBackground": "#b0b0b0",
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    420
+  ],
+  "coveragePct": 66.5,
+  "aspect": 1.222,
+  "softEdgePct": 1.25,
+  "edgeSpillMean": -12.09,
+  "edgeSpillP99": 6.0,
+  "edgeSpillMax": 14.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 4613,
+  "edgeBgLikePct": 0.0,
+  "edgeInteriorDelta": 175.9,
+  "ringNearBgPct": 0.0,
+  "ringDistToBg": 205.6,
+  "partialAlphaPct": 1.25,
+  "alpha24Coverage": 68.1,
+  "solidity24": 0.681,
+  "lumaStd24": 41.7,
+  "size24": [
+    24,
+    20
+  ],
+  "dominantColors": [
+    {
+      "hex": "#e89329",
+      "sharePct": 8.7
+    },
+    {
+      "hex": "#cf7414",
+      "sharePct": 6.3
+    },
+    {
+      "hex": "#0e0c07",
+      "sharePct": 6.0
+    },
+    {
+      "hex": "#f3b34b",
+      "sharePct": 5.4
+    },
+    {
+      "hex": "#f0a636",
+      "sharePct": 5.0
+    }
+  ],
+  "targetAspect": 1.56,
+  "aspectVsTarget": 0.78
+}

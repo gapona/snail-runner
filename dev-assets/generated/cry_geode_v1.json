@@ -1,0 +1,76 @@
+{
+  "stem": "cry_geode_v1",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one round split geode, glossy pale stone shell opening to bright violet crystals inside, low and wide, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, red, crimson, scarlet, ruby, jewellery, egg, food, bowl",
+  "seed": 1001001,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "1216x832",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "key",
+  "keyBackground": "#b0b0b0",
+  "bytes": 189148,
+  "keyColor": "#a29aaf",
+  "keyRingPurity": 0.0,
+  "canvasEdgeOpaquePct": 0.0,
+  "asset": "cry_geode",
+  "family": "crystal",
+  "variant": 1,
+  "note": "the HOLE \u2014 an open face is its read",
+  "askedAspect": 1.4,
+  "targetCanvas": [
+    140,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    512,
+    325
+  ],
+  "coveragePct": 36.9,
+  "aspect": 0.939,
+  "softEdgePct": 16.97,
+  "edgeSpillMean": 26.32,
+  "edgeSpillP99": 125.0,
+  "edgeSpillMax": 199.0,
+  "keyLikeEdgePct": 0.07,
+  "edgePixels": 5707,
+  "edgeBgLikePct": 0.18,
+  "edgeInteriorDelta": 26.1,
+  "ringNearBgPct": 0.12,
+  "ringDistToBg": 156.2,
+  "partialAlphaPct": 16.966,
+  "alpha24Coverage": 37.2,
+  "solidity24": 0.736,
+  "lumaStd24": 52.4,
+  "size24": [
+    24,
+    15
+  ],
+  "dominantColors": [
+    {
+      "hex": "#aba6b6",
+      "sharePct": 8.9
+    },
+    {
+      "hex": "#471074",
+      "sharePct": 6.5
+    },
+    {
+      "hex": "#390b69",
+      "sharePct": 5.3
+    },
+    {
+      "hex": "#51138a",
+      "sharePct": 5.0
+    },
+    {
+      "hex": "#f6f4f6",
+      "sharePct": 4.1
+    }
+  ],
+  "targetAspect": 1.4,
+  "aspectVsTarget": 0.67
+}

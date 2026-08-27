@@ -1,0 +1,77 @@
+{
+  "stem": "coa_stack_v3",
+  "prompt": "one single isolated object floating on a plain flat grey background, nothing else, no ground beneath, one narrow sea stack rock, glossy cream and grey layered bands, smooth bevelled, tall with a flat top, glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "negative": "landscape, sky, ground, horizon, background scenery, multiple objects, border, flat vector, desaturated, pedestal, plinth, podium, product shot, studio backdrop, cast shadow, red, crimson, scarlet, flower pot, planter, ocean, sea, waves, beach landscape, lighthouse, cliff",
+  "seed": 1010003,
+  "model": "Lykon/dreamshaper-xl-1-0",
+  "checkpoint": "dreamshaper-xl",
+  "renderedAt": "832x1216",
+  "steps": 36,
+  "cfg": 7.0,
+  "matte": "rembg",
+  "keyBackground": "#b0b0b0",
+  "bytes": 126972,
+  "keyColor": "#89898c",
+  "keyRingPurity": null,
+  "canvasEdgeOpaquePct": 0.0,
+  "bgCoveragePct": 66.4,
+  "asset": "coa_stack",
+  "family": "coast",
+  "variant": 3,
+  "note": "the THIN UPRIGHT",
+  "askedAspect": 0.55,
+  "targetCanvas": [
+    55,
+    100
+  ],
+  "styleHead": "glossy 3d render, casual mobile game asset, chunky rounded shapes, soft studio lighting, vivid saturated colours, creamy highlight",
+  "round": "snail-1",
+  "size": [
+    229,
+    512
+  ],
+  "coveragePct": 63.5,
+  "aspect": 0.446,
+  "softEdgePct": 2.19,
+  "edgeSpillMean": -6.46,
+  "edgeSpillP99": 7.0,
+  "edgeSpillMax": 17.0,
+  "keyLikeEdgePct": 0.0,
+  "edgePixels": 2090,
+  "edgeBgLikePct": 14.98,
+  "edgeInteriorDelta": 10.8,
+  "ringNearBgPct": 23.76,
+  "ringDistToBg": 88.9,
+  "partialAlphaPct": 2.194,
+  "alpha24Coverage": 64.8,
+  "solidity24": 0.676,
+  "lumaStd24": 61.9,
+  "size24": [
+    11,
+    24
+  ],
+  "dominantColors": [
+    {
+      "hex": "#514e4d",
+      "sharePct": 19.8
+    },
+    {
+      "hex": "#312e2e",
+      "sharePct": 14.3
+    },
+    {
+      "hex": "#736e6b",
+      "sharePct": 8.5
+    },
+    {
+      "hex": "#151312",
+      "sharePct": 4.9
+    },
+    {
+      "hex": "#b2a597",
+      "sharePct": 4.3
+    }
+  ],
+  "targetAspect": 0.55,
+  "aspectVsTarget": 0.81
+}
