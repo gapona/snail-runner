@@ -19,7 +19,8 @@
     "verify:mattes": "node scripts/verify-mattes.mjs",
     "verify:sightline": "node --import ./scripts/register-ts-loader.mjs scripts/verify-sightline.mjs",
     "verify:fever": "node --import ./scripts/register-ts-loader.mjs scripts/verify-fever.mjs",
-    "verify:formations": "node --import ./scripts/register-ts-loader.mjs scripts/verify-formations.mjs"
+    "verify:formations": "node --import ./scripts/register-ts-loader.mjs scripts/verify-formations.mjs",
+    "verify:ramp": "node --import ./scripts/register-ts-loader.mjs scripts/verify-ramp.mjs"
   },
   "dependencies": {
     "phaser": "^4.2.0"

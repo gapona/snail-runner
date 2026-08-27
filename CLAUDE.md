@@ -98,9 +98,9 @@ is the same question in both games.
 
 ### Reading the rest of this document
 
-**The runner's own chapters are the thirteen between "## UI Kit" and "## Road Renderer"** — The Run,
-The Snail, The Jump, Obstacles, Draw Order, Pickups, Chains, Fever, The Slime Trail, The Art, The
-Difficulty Curve, The End Of A Run, The HUD. Those describe this game.
+**The runner's own chapters are the fourteen between "## UI Kit" and "## Road Renderer"** — The Run,
+The Snail, The Jump, The Ramp, Obstacles, Draw Order, Pickups, Chains, Fever, The Slime Trail, The
+Art, The Difficulty Curve, The End Of A Run, The HUD. Those describe this game.
 
 Below them, everything about the road, the billboards, the biomes, the themes, the interface kit,
 the save layer, the platform layer, the build guards and the scroll patterns is **current and
@@ -142,6 +142,11 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
   flight solver's** — the closed form and the stepped tick are asserted to agree — a chain is
   homogeneous, nothing is laid inside an obstacle (shown rejecting a road with no gap in it), and
   the speed band an arc survives is printed rather than assumed. See "Chains, Not Scatter".
+- `npm run verify:ramp` — `src/run/ramp.ts`: the launch is solved from the apex through the game's
+  one gravity, **the spin lands upright at 50 random launches where a fixed angular velocity lands
+  172 degrees off**, the band rule already covers the apex with no invulnerability flag (and 31% of
+  the flight is still hittable, measured), and air control is weakened without being switched off.
+  See "The Ramp, And Landing On Your Feet".
 - `npm run verify:fever` — `src/run/fever.ts`: the gauge does not drain, the guard outlives the
   speed, and **in 200 simulated exits over the real placer's output the first obstacle a player can
   be hit by arrives no sooner than `REACTION_MS`** — shown failing first against the same simulation
@@ -949,6 +954,133 @@ is the failure the whole module is about.
 Live on `forest`: a seven-coin wave running −0.28 → 0.26 → −0.76 across the road, evenly spaced four
 to five segments apart, with the next chain visible behind it. 109 pickups on the lap against the
 old placer's ~100, in chains instead of singles.
+
+## The Ramp, And Landing On Your Feet
+
+`src/run/ramp.ts` (pure, `npm run verify:ramp`), `RampSprites.ts`, `Dust.ts`. A wedge a third of the
+road wide that throws the snail 2.8 times as high as it can jump, turning over once on the way.
+
+### The launch is solved from the apex, through the game's one gravity
+
+`RAMP_APEX = 1200` is chosen and `RAMP_LAUNCH_V = sqrt(2 g h)` and `RAMP_AIR_MS = 2v/g` follow —
+the same discipline `JUMP_APEX` is under, and deliberately the **same `g`**: a second gravity would
+mean `flightHeight` no longer describes every flight in the game, and `formations.ts`'s arc chain is
+built on there being exactly one. Delivered: **4105 u/s, 1169ms of air, 2.79x a jump's apex.**
+
+The multiple is what makes it a different verb rather than a bigger number. The tallest obstacle
+band tops out at 620 and a jump's apex is 430 — under it, which is the entire reason `blocking`
+exists as a class. 1200 is over everything.
+
+### ⚠ The spin is a function of flight progress, never of angular velocity
+
+`spinAngle` is `turns * 360 * t`, with `t` the fraction of the flight already flown. That is the
+only form under which the snail lands upright **at every launch strength**, because `t` reaches
+exactly 1 at touchdown by definition.
+
+A fixed angular velocity is the obvious implementation and it lands sideways: the angle at touchdown
+is `omega * duration`, and the duration is whatever the launch happened to be. It can be tuned to
+land upright for one launch, and then every other launch is wrong — which is how a constant ends up
+being nudged forever. Both are run over the same 50 random launches:
+
+| | worst landing angle |
+|---|---|
+| progress-driven | **0.000 degrees** |
+| fixed rate, tuned for the shipped launch | **172 degrees** |
+
+`t` is derived from the velocity — `(v0 - vy) / (2 v0)` — rather than from a stored clock, because
+the tick's velocity update is exact and a clock would be a second thing to keep in step with the
+integrator. `verify:ramp` asserts progress equals elapsed-time-over-duration to 1e-9 at every tick.
+
+- **The residual is one tick, and it is measured rather than assumed.** The frame the snail touches
+  down on is `grounded` and therefore drawn at exactly 0; the frame *before* it is short of upright
+  by **0.8 degrees**, identically at 30, 60 and 144Hz — identically because `runFixedSteps` runs the
+  same 60Hz tick whatever the frame rate, which is the whole point of the fixed timestep.
+- **The shadow does not turn.** It is a mark on the ground, and the ground is not rotating; it grows
+  and fades with height and nothing else. Rotating it would read as the world tipping.
+- **An ordinary jump does not spin at all**, asserted — a jump that turned over would make the two
+  verbs one.
+
+### There is no invulnerability flag, and the check is what says the rule already covers it
+
+A hit is two interval overlaps, so a snail whose feet are above the tallest band cannot be hit by
+anything: `verify:ramp` puts a snail at the apex and asserts all three classes miss. Adding a flag
+would be a second answer to a question that has one.
+
+**What that does not mean is that a ramp is safe**, and the check measures rather than claims it:
+**69% of the flight clears every band and the other 31% can still be hit**, on the ascent and the
+descent like any jump. That is what stops a ramp being a way through a wall. Confirmed live — a run
+launched off a real ramp took a hit on the way down.
+
+### Lateral control is weakened, not switched off
+
+`RAMP_AIR_CONTROL = 0.4`, applied to the **stiffness** and only while airborne. Both extremes are
+failures with names: full control makes a ramp an ordinary jump with a bigger number on it, and no
+control makes it a cut-scene. Measured over 400ms of steering toward the verge: **0.90 half-widths
+on the ground against 0.50 in a ramp flight**, i.e. 56% — the spring is not linear in the multiplier,
+which is why this is measured rather than assumed to be 40%.
+
+**An ordinary jump keeps full control**, asserted separately, because otherwise this chunk would
+have quietly changed how every obstacle in the game is dodged.
+
+### ⚠ The flight fields nearly vanished every frame
+
+`stepPlayer` returned `{ ...kinematics, stepRemainderMs }`, and `Kinematics` deliberately carries
+only what the tick integrates. Spreading it alone dropped `flightV0`, `flightSpins` and `airControl`
+on every tick, so the spin would have reset to nothing on the frame after it started. It spreads the
+whole state first now, and clears the three on landing rather than leaving a grounded snail holding
+a launch velocity nothing reads.
+
+### ⚠ The wedge was invisible, and the rule that made it invisible was the wrong rule
+
+`RAMP_HEIGHT` was 170 on the reasoning that a ramp drawn shorter than the shortest thing that *can*
+hit you cannot be mistaken for a hazard. Sound about a height, and wrong about what a player reads:
+measured in the running game at 25 segments out, that is **164 x 21 screen pixels of muted timber on
+a pale flagstone road** — not mistakable for an obstacle because not mistakable for anything.
+
+What separates a ramp from an obstacle is its **shape**, a sloped top edge that nothing else on this
+road has, and its **markings**. Neither needs it short. It is 300 now — under `blocking.yHigh`, which
+is the one class it must never look like — with two gold chevrons climbing the slope.
+
+**The chevrons are the only saturated thing on it**, and that is the game's colour rule being obeyed
+rather than bent: the body stays in the obstacle family's muted timber because a ramp is not a
+reward, and the *marking* borrows the coin's own gold because the road already carries paint and the
+player already reads that colour as "go for this". `verify:ramp`'s height assertion was rewritten
+with the old reasoning kept on it, so the next person to shrink it finds out why it grew.
+
+### The rest
+
+- **Never laid on an obstacle.** `placeRamps` takes the lap's obstacles and redraws up to
+  `RAMP_ATTEMPTS` times, then drops the slot — a ramp inside a boulder charges the player a life for
+  taking the launch. Shown to bite: a road walled end to end takes **0** ramps.
+  ⚠ The first fixture only walled 160 000 of a 286 800-unit lap and three ramps landed past its end,
+  which was the fixture being wrong rather than the placer.
+- **Landing is squash, per-entity hitstop through `frozenUntil`, and dust** — never `timeScale`.
+  `Dust.ts` reuses `debris.ts` unchanged (no per-frame allocation, a hard pool ceiling, a clamped
+  delta) and only differs in being drawn as pale round motes that grow as they fade. The puff is
+  thrown from the point `PlayerView` already projected the snail's feet to, so it cannot disagree
+  with the shadow about where the ground is.
+- **The arc chains are live now.** `placeRamps` runs before `placeFormations` and feeds it the
+  launches, so C-B's `arc` finally has somewhere to be.
+
+### ⚠ And the arc's speed problem is answered here, with the number C-B measured
+
+`verify:formations` measured that an arc laid at `SPEED_CAP` is collected 5 of 5 at the cap, 3 of 5
+at Fever speed and **0 of 5** at the speed a run starts at — because the heights are right in *time*
+and the positions are `speed * t`.
+
+`RunScene.relayArcs` re-lays each ramp's chain **once, from the run's real speed**, when the ramp
+comes within `ARC_RELAY_Z` (90 segments, under two seconds of road). `SPEED_ACCEL` has a 5.9-second
+time constant, so the speed then is within a couple of percent of the speed at the ramp, and the
+chain is far enough out that nothing is seen moving. The alternative — pinning the horizontal speed
+through the flight — would have let the ramp overrule the run's whole speed economy for a second.
+
+`movePickup` keeps the segment index in step when a pickup moves; a pickup moved without it is drawn
+in one place and collected in another, which is the same class of defect as `formations.ts`'s own
+clamp-after-check.
+
+Verified live on `forest`: rode a real ramp at 3600 u/s, `flightV0` 4105 with one spin and control
+0.4, **four of the five arc coins collected in the air**, and the landing frame drawn at exactly
+0 degrees with the flight fields cleared.
 
 ## Fever, And The Second In Which It Ends
 

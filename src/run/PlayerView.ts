@@ -6,6 +6,7 @@ import { createScreenPoint, wrapZ } from '../road/project'
 import { playerGroundInto } from './playerProjection'
 import { WORLD_LAYER, worldDepth } from './worldDepth'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowScale } from './shadows'
+import { spinAngle } from './ramp'
 import { PLAYER_BODY_H, PLAYER_WIDTH, PLAYER_Z } from './constants'
 import { createSnailTexture, snailFrameKey, SNAIL_TEXTURE } from './snailArt'
 import type { PlayerState } from './playerMotion'
@@ -89,6 +90,10 @@ export class PlayerView {
   /** Where the snail was drawn last frame, in screen pixels — for the camera lean and for FX. */
   screenX = 0
   screenY = 0
+
+  /** Where the snail's feet were drawn this frame, in screen pixels. See `render`. */
+  groundX = 0
+  groundY = 0
 
   private readonly rect = createBillboardRect()
   /**
@@ -206,6 +211,12 @@ export class PlayerView {
 
     this.shadow.setVisible(true)
     this.shadow.setPosition(groundX, groundY)
+    // Recorded so a landing can throw its dust from the snail's own feet. Kept here rather than
+    // recomputed by the scene because this is the point that has already been through the road's
+    // projection this frame — a second computation is a second thing that can disagree with the
+    // shadow about where the ground is.
+    this.groundX = groundX
+    this.groundY = groundY
     this.shadow.setSize(footprint * SHADOW_FOOTPRINT.width * scale, footprint * SHADOW_FOOTPRINT.height * scale)
     this.shadow.setAlpha(shadowAlpha(lift) * SHADOW_DARKEN)
 
@@ -231,6 +242,11 @@ export class PlayerView {
     // Squash and stretch is volume-preserving: wider when flatter. Applied here rather than baked
     // into the billboard size so the collision footprint never changes with the animation.
     this.sprite.setDisplaySize(this.rect.w / squash, this.rect.h * squash)
+    // **The spin, and the shadow deliberately does not take it.** A shadow is a mark on the ground
+    // and the ground is not turning; rotating it would read as the whole world tipping rather than
+    // as the snail doing something. It grows and fades with height and nothing else — see
+    // `shadows.ts`. `spinAngle` is 0 for an ordinary jump, so this line costs nothing there.
+    this.sprite.setAngle(spinAngle(player))
     // The shadow blinks with the snail: a solid shadow under a flickering creature reads as the
     // sprite failing to draw rather than as the creature being briefly untouchable.
     const blink = look.invulnerable && Math.floor(look.now / BLINK_PERIOD_MS) % 2 === 1 ? BLINK_DIM : 1

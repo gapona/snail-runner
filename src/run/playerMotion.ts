@@ -54,6 +54,26 @@ export interface PlayerState {
   /** Whether the snail is on the ground right now. */
   grounded: boolean
   /**
+   * The vertical velocity this flight began with, in world units per second. `0` on the ground.
+   *
+   * Kept because the spin is a function of **how far through the flight** the snail is, and that
+   * fraction is `(flightV0 - vy) / (2 * flightV0)` — exact at every tick, because the velocity
+   * update is exact. Without it the only way to know the progress would be a stored clock, which
+   * is a second thing to keep in step with the integrator.
+   */
+  flightV0: number
+  /** How many full turns this flight makes. `0` for an ordinary jump — see `ramp.ts`. */
+  flightSpins: number
+  /**
+   * How much of the lateral spring answers while airborne, `0..1`. `1` for an ordinary jump.
+   *
+   * A ramp weakens it rather than switching it off: **full control makes a ramp an ordinary jump
+   * with a bigger number on it, and no control makes it a cut-scene.** Applied to the stiffness, so
+   * the snail still goes where it is asked and takes longer about it, rather than being unable to
+   * ask.
+   */
+  airControl: number
+  /**
    * Simulated time owed but not yet stepped, in milliseconds — always `< FIXED_STEP_MS`.
    *
    * The fixed timestep only produces identical results at different frame rates if the leftover
@@ -93,7 +113,7 @@ export interface PlayerStepOptions {
 
 /** A snail on the centreline, on the ground, standing still. */
 export function createPlayerState(): PlayerState {
-  return { offsetX: 0, vx: 0, y: 0, vy: 0, grounded: true, stepRemainderMs: 0 }
+  return { offsetX: 0, vx: 0, y: 0, vy: 0, grounded: true, flightV0: 0, flightSpins: 0, airControl: 1, stepRemainderMs: 0 }
 }
 
 /**
@@ -183,7 +203,21 @@ function targetFor(input: PlayerInput, clamp: boolean, current: number): number 
 export function jump(state: PlayerState): PlayerState {
   if (!state.grounded) return state
 
-  return { ...state, vy: JUMP_LAUNCH_V, grounded: false }
+  return { ...state, vy: JUMP_LAUNCH_V, grounded: false, flightV0: JUMP_LAUNCH_V, flightSpins: 0, airControl: 1 }
+}
+
+/**
+ * Throws the snail into a flight it did not ask for — what a ramp does.
+ *
+ * **Only from the ground**, exactly like `jump`: riding over a ramp in mid-air is flying over it,
+ * and a launch that could fire in the air would be the double jump the jump's own docstring
+ * refuses. The three flight fields are set together here because they are one decision: how hard,
+ * how many turns, and how much say the player still has.
+ */
+export function launch(state: PlayerState, v0: number, spins: number, airControl: number): PlayerState {
+  if (!state.grounded) return state
+
+  return { ...state, vy: v0, grounded: false, flightV0: v0, flightSpins: spins, airControl }
 }
 
 /**
@@ -244,7 +278,13 @@ export function stepPlayer(
   }
 
   const remainder = runFixedSteps(state.stepRemainderMs, dtMs, (dtSec) => {
-    s.vx = (s.vx + (target - s.offsetX) * PLAYER_STIFFNESS * dtSec) * PLAYER_DAMPING
+    // **The air-control multiplier is on the stiffness, and only while airborne.** Scaling the
+    // damping instead would make the snail *drift* rather than answer slowly, and scaling the
+    // target would make it answer fully to a smaller request — neither is "the controls are
+    // heavier in the air", which is what a ramp is trading the player for its height.
+    const stiffness = s.grounded ? PLAYER_STIFFNESS : PLAYER_STIFFNESS * state.airControl
+
+    s.vx = (s.vx + (target - s.offsetX) * stiffness * dtSec) * PLAYER_DAMPING
     s.offsetX += s.vx * dtSec
 
     if (clamp) clampInPlace(s)
@@ -270,5 +310,17 @@ export function stepPlayer(
     }
   })
 
-  return { ...s, stepRemainderMs: remainder }
+  // **`...state` first, so the flight fields survive.** `Kinematics` deliberately carries only what
+  // the tick integrates; spreading it alone would drop `flightV0`, `flightSpins` and `airControl`
+  // every frame and the spin would reset to nothing on the tick after it started.
+  return {
+    ...state,
+    ...s,
+    // Cleared on landing rather than left holding the last flight's numbers: a grounded snail with
+    // a launch velocity on it is a state nothing reads and everything can be confused by.
+    flightV0: s.grounded ? 0 : state.flightV0,
+    flightSpins: s.grounded ? 0 : state.flightSpins,
+    airControl: s.grounded ? 1 : state.airControl,
+    stepRemainderMs: remainder,
+  }
 }

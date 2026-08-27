@@ -128,6 +128,15 @@ export interface Pickup {
    * describe the chain.
    */
   y: number
+  /**
+   * Which launch's arc this belongs to, if any — see `formations.ts` and `RunScene.relayArc`.
+   *
+   * An arc's world positions depend on the speed the run is doing when it reaches the ramp, which
+   * the placer cannot know. The scene re-lays the chain once, from the run's real speed, when the
+   * ramp comes close enough that the speed is settled; this is how it finds the five pickups to
+   * move. `undefined` for a `line` or a `wave`, which do not care.
+   */
+  arcOf?: number
   /** Set when collected, so the sprite pool can stop drawing it. Reset per lap by the scene. */
   taken: boolean
 }

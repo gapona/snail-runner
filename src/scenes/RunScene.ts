@@ -15,14 +15,33 @@ import {
   takeHit,
   type RunState,
 } from '../run/runState'
-import { createPlayerState, isOffRoad, jump, playerScreenFraction, stepPlayer, type PlayerState } from '../run/playerMotion'
+import {
+  createPlayerState,
+  isOffRoad,
+  jump,
+  launch,
+  playerScreenFraction,
+  stepPlayer,
+  type PlayerState,
+} from '../run/playerMotion'
 import { PlayerView } from '../run/PlayerView'
 import { createSquashState, squashAt, squashOnLanding, squashOnLaunch, type SquashState } from '../run/squash'
 import { addFreeze, isFrozen, type Freezable } from '../run/hitstop'
 import { hits, placeRunObstacles, type Obstacle } from '../run/obstacles'
 import { ObstacleSprites } from '../run/ObstacleSprites'
 import { reaches, type Pickup } from '../run/pickups'
-import { placeFormations } from '../run/formations'
+import { ARC_RELAY_Z, chainPoints, placeFormations } from '../run/formations'
+import {
+  placeRamps,
+  RAMP_AIR_CONTROL,
+  RAMP_DEPTH,
+  RAMP_LAUNCH_V,
+  RAMP_SPINS,
+  ridesOver,
+  type Ramp,
+} from '../run/ramp'
+import { RampSprites } from '../run/RampSprites'
+import { Dust } from '../run/Dust'
 import {
   feverClearanceUnits,
   feverInvulnerable,
@@ -109,6 +128,18 @@ export class RunScene extends Phaser.Scene {
   private pickupsBySegment!: Map<number, Pickup[]>
   private pickupSprites!: PickupSprites
   private feverView!: FeverView
+  /** The ramps on this lap, and the same segment index everything else in the world gets. */
+  private ramps!: Ramp[]
+  private rampsBySegment!: Map<number, Ramp[]>
+  private rampSprites!: RampSprites
+  private dust!: Dust
+  /**
+   * Which ramps have already had their arc re-laid for the run's real speed — see `relayArc`.
+   *
+   * Keyed by id and cleared with the lap, like `resolvedOnLap`: the ids are fresh every lap and a
+   * surviving entry would leave the next lap's chain laid for whatever speed the last one had.
+   */
+  private readonly arcRelaid = new Set<number>()
   private hud!: Hud
   /**
    * The slime trail's world-space points, and the ribbon that draws them.
@@ -201,6 +232,8 @@ export class RunScene extends Phaser.Scene {
     this.obstacleSprites = new ObstacleSprites(this)
     this.pickupSprites = new PickupSprites(this)
     this.feverView = new FeverView(this)
+    this.rampSprites = new RampSprites(this)
+    this.dust = new Dust(this, this.runSeed)
     this.playerView = new PlayerView(this)
     // Screen-space, so it goes on `uiCamera` and is hidden from the world camera.
     this.hud = new Hud(this)
@@ -265,6 +298,8 @@ export class RunScene extends Phaser.Scene {
       this.obstacleSprites.destroy()
       this.pickupSprites.destroy()
       this.feverView.destroy()
+      this.rampSprites.destroy()
+      this.dust.destroy()
       this.hud.destroy()
       this.world.destroy()
     })
@@ -385,6 +420,10 @@ export class RunScene extends Phaser.Scene {
   private layLap(lapOffset: number): void {
     this.obstacles = placeRunObstacles(this.runSeed, this.world.trackLength, lapOffset)
     this.obstaclesBySegment = indexBySegment(this.obstacles, this.world.track.length)
+    // **Ramps before pickups, because a ramp is where an arc chain goes.** `formations.ts` will not
+    // lay an `arc` anywhere else — an arc over flat road is a chain hanging in the air.
+    this.ramps = placeRamps(this.runSeed ^ 0x2a17, this.world.trackLength, lapOffset, this.obstacles)
+    this.rampsBySegment = indexBySegment(this.ramps, this.world.track.length)
     // Laid *after* the obstacles and against them — see `sideAwayFrom`. A pickup in the gap the
     // player was already threading costs nothing, and a pickup that costs nothing is scenery.
     this.pickups = placeFormations({
@@ -393,8 +432,10 @@ export class RunScene extends Phaser.Scene {
       toZ: this.world.trackLength,
       trackLength: this.world.trackLength,
       obstacles: this.obstacles,
+      launches: this.ramps.map((ramp) => ({ id: ramp.id, z: ramp.z, offsetX: ramp.offsetX, launchV: RAMP_LAUNCH_V })),
     })
     this.pickupsBySegment = indexBySegment(this.pickups, this.world.track.length)
+    this.arcRelaid.clear()
     // A fresh set of ids means the old lap's resolutions mean nothing, and keeping them would
     // disarm whatever happened to reuse a number.
     this.resolvedOnLap.clear()
@@ -500,6 +541,118 @@ export class RunScene extends Phaser.Scene {
 
       pickup.offsetX += (this.player.offsetX - pickup.offsetX) * rate * magnetPull(ahead)
     }
+  }
+
+  /**
+   * Launches the snail off any ramp it rode onto this frame.
+   *
+   * Swept over the same interval as the obstacles and the pickups, and for the same reason: at top
+   * speed a frame covers 96 world units against a ramp one segment deep, so a point test works
+   * until the frame a phone drops. Not keyed per lap — a ramp is not consumed, and riding the same
+   * one next lap is riding it again.
+   */
+  private resolveRamps(fromZ: number, toZ: number): void {
+    if (!this.player.grounded) return
+
+    const first = Math.floor(fromZ / SEGMENT_LENGTH) - 1
+    const last = Math.floor(toZ / SEGMENT_LENGTH)
+    const segmentCount = this.world.track.length
+
+    for (let index = first; index <= last; index++) {
+      const here = this.rampsBySegment.get(((index % segmentCount) + segmentCount) % segmentCount)
+
+      if (!here) continue
+
+      for (const ramp of here) {
+        if (toZ < ramp.z || fromZ > ramp.z + RAMP_DEPTH) continue
+        if (!ridesOver(this.player, ramp)) continue
+
+        this.player = launch(this.player, RAMP_LAUNCH_V, RAMP_SPINS, RAMP_AIR_CONTROL)
+        squashOnLaunch(this.squash, this.time.now)
+        playSfx(SFX.JUMP, { detune: -400 })
+
+        return
+      }
+    }
+  }
+
+  /**
+   * Re-lays a ramp's arc chain for the speed the run is actually doing, once, on approach.
+   *
+   * **⚠ An arc in world space is a function of the run speed, and the placer cannot know it.** The
+   * heights come from the flight solver and are right in *time*; the positions those heights sit at
+   * are `speed * t`. `verify:formations` measured what that costs: a chain laid at `SPEED_CAP` is
+   * collected 5 of 5 at the cap, 3 of 5 at Fever speed and **0 of 5** at the speed a run starts at.
+   *
+   * The two ways out are pinning the horizontal speed through the flight — which would make the
+   * ramp overrule the run's whole speed economy for a second — or laying the chain from the real
+   * speed. This is the second. It happens `ARC_RELAY_Z` out, where the speed is within a couple of
+   * percent of what it will be at the ramp (`SPEED_ACCEL` has a 5.9-second time constant, and this
+   * is under two seconds of road), and the chain is far enough away that nothing is seen moving.
+   *
+   * Once per ramp per lap: re-laying every frame would keep sliding a chain the player is already
+   * lining up on.
+   */
+  private relayArcs(playerZ: number): void {
+    for (const ramp of this.ramps) {
+      if (this.arcRelaid.has(ramp.id)) continue
+
+      const ahead = wrapZ(ramp.z - playerZ, this.world.trackLength)
+
+      if (ahead > ARC_RELAY_Z) continue
+
+      this.arcRelaid.add(ramp.id)
+
+      const mine = this.pickups.filter((pickup) => pickup.arcOf === ramp.id)
+
+      if (mine.length === 0) continue
+
+      const points = chainPoints({
+        kind: 'arc',
+        pickup: 'coin',
+        count: mine.length,
+        fromZ: ramp.z,
+        offsetX: ramp.offsetX,
+        launchV: RAMP_LAUNCH_V,
+        speed: this.run.speed,
+      })
+
+      for (let i = 0; i < mine.length; i++) {
+        this.movePickup(mine[i], wrapZ(points[i].z, this.world.trackLength), points[i].offsetX, points[i].y)
+      }
+    }
+  }
+
+  /**
+   * Moves one pickup and keeps the segment index it is filed under in step.
+   *
+   * The index is what both the collection sweep and the sprite pool walk, so a pickup moved without
+   * it is a pickup that is drawn in one place and collected in another — the same class of defect
+   * as `formations.ts`'s own clamp-after-check.
+   */
+  private movePickup(pickup: Pickup, z: number, offsetX: number, y: number): void {
+    const count = this.world.track.length
+    const from = Math.floor(pickup.z / SEGMENT_LENGTH) % count
+    const to = Math.floor(z / SEGMENT_LENGTH) % count
+
+    if (from !== to) {
+      const bucket = this.pickupsBySegment.get(from)
+
+      if (bucket) {
+        const at = bucket.indexOf(pickup)
+
+        if (at >= 0) bucket.splice(at, 1)
+      }
+
+      const target = this.pickupsBySegment.get(to)
+
+      if (target) target.push(pickup)
+      else this.pickupsBySegment.set(to, [pickup])
+    }
+
+    pickup.z = z
+    pickup.offsetX = offsetX
+    pickup.y = y
   }
 
   /**
@@ -641,6 +794,8 @@ export class RunScene extends Phaser.Scene {
       this.slimeTrail.gameObject,
       ...this.obstacleSprites.gameObjects,
       ...this.pickupSprites.gameObjects,
+      ...this.rampSprites.gameObjects,
+      ...this.dust.gameObjects,
       ...this.playerView.gameObjects,
     ]
   }
@@ -680,11 +835,14 @@ export class RunScene extends Phaser.Scene {
     if (lap !== this.laidLap) this.layLap(lap * this.world.trackLength)
 
     if (playerZ >= this.previousPlayerZ) {
+      this.resolveRamps(this.previousPlayerZ, playerZ)
       this.collectPickups(this.previousPlayerZ, playerZ)
       this.resolveObstacles(this.previousPlayerZ, playerZ, lap, time)
     } else {
       // The frame crossed the loop seam. Two calls rather than one wrapped comparison: the second
       // is a different lap, and an obstacle straddling the seam must be live in both.
+      this.resolveRamps(this.previousPlayerZ, this.world.trackLength)
+      this.resolveRamps(0, playerZ)
       this.collectPickups(this.previousPlayerZ, this.world.trackLength)
       this.collectPickups(0, playerZ)
       this.resolveObstacles(this.previousPlayerZ, this.world.trackLength, lap - 1, time)
@@ -696,6 +854,10 @@ export class RunScene extends Phaser.Scene {
       squashOnLanding(this.squash, time)
       addFreeze(this.playerFreeze, time, LANDING_HITSTOP_MS)
       playSfx(SFX.LAND)
+      // The puff is thrown from where the snail was *drawn* last frame — its own feet on screen,
+      // which is the only place a landing can be. `PlayerView` keeps that point because it is the
+      // one that already went through the road's projection.
+      this.dust.burst(this.playerView.groundX, this.playerView.groundY, time, width)
     }
     const feverWas = this.run.fever.phase
 
@@ -708,6 +870,7 @@ export class RunScene extends Phaser.Scene {
     // where it was pulled to. Doing it after the draw would put the sprite one frame behind the
     // position the collection test is using, which at Fever speed is a whole blob's width.
     if (feverMagnet(this.run.fever)) this.pullPickups(playerZ, delta)
+    this.relayArcs(playerZ)
 
     // **The world is told where the camera is, not how fast to go.** `WorldView.advance` integrates
     // a speed of its own, which is right for the menu (it rides on a script) and wrong here: the
@@ -731,6 +894,14 @@ export class RunScene extends Phaser.Scene {
     // After the world, before everything that stands on the road: it reads this frame's segment
     // projections out of the mesh pass exactly as the sprite pools do.
     this.slimeTrail.render(this.slime, this.world.track, this.world.baseIndex, this.run.z, width)
+    this.rampSprites.render(
+      this.rampsBySegment,
+      this.world.track,
+      this.world.baseIndex,
+      this.world.clipY,
+      width,
+      height,
+    )
     this.obstacleSprites.render(
       this.obstaclesBySegment,
       this.world.track,
@@ -752,6 +923,7 @@ export class RunScene extends Phaser.Scene {
 
     this.hud.update(this.run, width)
     this.feverView.update(this.run.fever, delta, width, height)
+    this.dust.update(time, delta, height)
 
     if (import.meta.env.DEV && this.debugMarks && !this.marksVisible) {
       // Cleared once when it is switched off, or the last labelled frame stays on screen.

@@ -353,11 +353,10 @@ check('a line and a wave sit on the ground; only an arc leaves it', () => {
   assert.ok(Math.max(...arc.map((p) => p.y)) > PICKUP_HEIGHT * 2, 'the arc never left the ground')
 })
 
-check('arcs are laid only where there is a launch, and there are none yet', () => {
-  // The trampoline is the next chunk. Until it exists the launch list is empty and no arc is
-  // placed -- an arc over flat road is a chain hanging in the air, which is the failure the whole
-  // module is about. Asserted rather than left to a comment, so the day launches arrive the check
-  // is what notices.
+check('arcs are laid only where there is a launch', () => {
+  // An arc over flat road is a chain hanging in the air, which is the failure the whole module is
+  // about. The launches come from `placeRamps` now -- what is asserted here is the rule itself,
+  // over a call with none and a call with one, so neither half can quietly stop being true.
   const obstacles = placeRunObstacles(5, TRACK, 0)
   const without = placeFormations({ rng: createRng(2), fromZ: 0, toZ: TRACK, trackLength: TRACK, obstacles })
 

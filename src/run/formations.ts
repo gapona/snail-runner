@@ -104,6 +104,25 @@ export const ARC_REFERENCE_SPEED = SPEED_CAP
 /** How many times a chain is redrawn elsewhere before it is dropped. Same shape as `ROW_ATTEMPTS`. */
 export const CHAIN_ATTEMPTS = 6
 
+/**
+ * How many pickups an arc off one launch carries.
+ *
+ * Five, sampled evenly in time across the flight with both ends left off — enough that the chain
+ * reads as a curve rather than as three dots, and few enough that a missed one is a miss rather
+ * than most of the reward.
+ */
+export const ARC_COUNT = 5
+
+/**
+ * How far ahead of a ramp its arc is re-laid for the run's real speed, in world units.
+ *
+ * 90 segments — under two seconds of road at the cap, which is well inside `SPEED_ACCEL`'s
+ * 5.9-second time constant, so the speed then is within a couple of percent of the speed at the
+ * ramp. Far enough out that nothing is seen moving; near enough that the number used is the number
+ * that matters. See `RunScene.relayArcs`.
+ */
+export const ARC_RELAY_Z = SEGMENT_LENGTH * 90
+
 /** Milliseconds of chain rhythm, in world units at the fastest the game can go. */
 export function chainSpacingZ(gapMs: number): number {
   return (gapMs / 1000) * MAX_ATTAINABLE_SPEED
@@ -242,7 +261,7 @@ export interface FormationOptions {
    * chunk that adds the trampoline supplies the list. An arc laid anywhere else is a chain in the
    * air over flat road, which is the exact failure this module's header is about.
    */
-  launches?: readonly { z: number; launchV: number }[]
+  launches?: readonly { id: number; z: number; offsetX: number; launchV: number }[]
 }
 
 /**
@@ -266,15 +285,25 @@ export function placeFormations(options: FormationOptions): Pickup[] {
     const spec: ChainSpec = {
       kind: 'arc',
       pickup: 'coin',
-      count: 5,
+      count: ARC_COUNT,
       fromZ: launch.z,
-      offsetX: 0,
+      // The ramp's own lane: the snail leaves it going straight, and a chain laid down the
+      // centreline off a ramp by the verge would be a chain the launch cannot reach.
+      offsetX: launch.offsetX,
       launchV: launch.launchV,
       speed: ARC_REFERENCE_SPEED,
     }
 
     for (const point of chainPoints(spec)) {
-      pickups.push({ id: id++, z: wrapZ(point.z, trackLength), offsetX: point.offsetX, y: point.y, kind: 'coin', taken: false })
+      pickups.push({
+        id: id++,
+        z: wrapZ(point.z, trackLength),
+        offsetX: point.offsetX,
+        y: point.y,
+        kind: 'coin',
+        arcOf: launch.id,
+        taken: false,
+      })
     }
   }
 
