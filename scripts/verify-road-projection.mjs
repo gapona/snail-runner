@@ -71,6 +71,8 @@ import {
   SUN_RAYS,
   sunRay,
   BIOME_SKYLINE_WEIGHT,
+  CLOUD_LAYER,
+  CLOUD_TEXTURE_SIZE,
   CAMERA_DEPTH,
   CAMERA_HEIGHT,
   hasRung,
@@ -2934,6 +2936,55 @@ check('the sun stays inside the frame at every supported aspect, and out of the 
   assert.ok(offFrameWithoutClamp > 0, 'no supported aspect needs the clamp, so `sunCenterX` is untested')
   console.log(
     `    sun spans ${(SUN.size * 100).toFixed(0)}% of frame height; ${offFrameWithoutClamp} of ${viewports.length} aspects would put it off the edge unclamped; closest its top edge comes is ${(worstTop * 100).toFixed(1)}%`,
+  )
+})
+
+
+check('the cloud band is a layer of its own, slower than the range and never stretched', () => {
+  // **⚠ Clouds may not live in a sky plate, and this is that written down where it can fail.** A
+  // sky layer tiles horizontally at 1:1 and is stretched to the full viewport vertically -- about
+  // 3x on a 945px frame against a 320px plate -- so round lobes come out as spires. `day_v5` was
+  // re-picked for exactly that. The band is its own `TileSprite` with ONE scale applied to both
+  // axes, which is what keeps the shape identical at every viewport height.
+  assert.ok(CLOUD_TEXTURE_SIZE.width > CLOUD_TEXTURE_SIZE.height, 'the cloud strip is not a strip')
+
+  // The scale `layoutClouds` computes, reproduced here at the three heights the acceptance names.
+  // It is one number by construction; what this asserts is that the number it produces actually
+  // preserves the texture's aspect, which is the property a stretch destroys.
+  const aspect = CLOUD_TEXTURE_SIZE.width / CLOUD_TEXTURE_SIZE.height
+
+  for (const height of [320, 945, 1440]) {
+    const scale = (height * 0.26) / CLOUD_TEXTURE_SIZE.height
+    const drawn = (CLOUD_TEXTURE_SIZE.width * scale) / (CLOUD_TEXTURE_SIZE.height * scale)
+
+    assert.ok(Math.abs(drawn - aspect) < 1e-9, `at ${height}px the band draws at aspect ${drawn} against the texture's ${aspect}`)
+  }
+
+  // Slower than the range, because a cloud is further away than a ridge.
+  assert.ok(
+    CLOUD_LAYER.driftPixels < SKYLINE_LAYER.driftPixels,
+    `clouds drift at ${CLOUD_LAYER.driftPixels} against the range's ${SKYLINE_LAYER.driftPixels} -- the nearer thing must move faster`,
+  )
+
+  // And held to the same budget the range is, measured off the real circuit rather than guessed:
+  // `horizonDriftX` is in WORLD units and swings enormously, which is how the mountains once ran.
+  const track = buildRunCircuit()
+  let worst = 0
+  let drift = 0
+  let d = 0
+
+  for (const segment of track) {
+    d += segment.curve
+    drift += d
+    worst = Math.max(worst, Math.abs(d) * DRAW_DISTANCE)
+  }
+
+  const perSecond = worst * CLOUD_LAYER.driftPixels * (MAX_ATTAINABLE_SPEED / SEGMENT_LENGTH) / DRAW_DISTANCE
+
+  assert.ok(perSecond < 60, `clouds move ${perSecond.toFixed(0)}px a second on the worst bend`)
+
+  console.log(
+    `    cloud band: aspect ${aspect.toFixed(2)} held at 320/945/1440px, drift ${CLOUD_LAYER.driftPixels} against the range's ${SKYLINE_LAYER.driftPixels}, worst ${perSecond.toFixed(1)}px/s`,
   )
 })
 

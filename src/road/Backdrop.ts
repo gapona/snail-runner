@@ -2,6 +2,8 @@ import * as Phaser from 'phaser'
 import { createRng } from '../race/rng'
 import {
   BIOME_SKYLINE_WEIGHT,
+  CLOUD_LAYER,
+  CLOUD_TEXTURE_SIZE,
   HORIZON_Y,
   ROAD_MESH_DEPTH,
   SKYLINE_LAYER,
@@ -119,6 +121,7 @@ export class Backdrop {
 
   private readonly layers: Phaser.GameObjects.TileSprite[]
   private readonly sun: Phaser.GameObjects.Image
+  private readonly clouds: Phaser.GameObjects.TileSprite
   private readonly skyline: Phaser.GameObjects.TileSprite | undefined
   private readonly glow: Phaser.GameObjects.Graphics
   private readonly vignette: Phaser.GameObjects.Image
@@ -138,6 +141,15 @@ export class Backdrop {
     // texture here for the same reason the vignette is: `getRoadTheme()` has to be answerable.
     ensureSunTexture(scene)
     this.sun = scene.add.image(0, 0, sunTextureKey()).setOrigin(0.5, 0.5).setDepth(SKY_DEPTH + 0.5)
+
+    ensureCloudTexture(scene)
+    // **Between the sky and the range, which is the whole of the ordering requirement.** Sky
+    // layers run `SKY_DEPTH + 0..2` and the skyline sits at `+3`, so `+2.5` puts cloud in front of
+    // every haze band and behind the ridge — a mountain occludes a cloud, as it must.
+    this.clouds = scene.add
+      .tileSprite(0, 0, 1, 1, cloudTextureKey())
+      .setOrigin(0, 0)
+      .setDepth(SKY_DEPTH + 2.5)
     // Only if the strip actually loaded. A missing plate degrades the sky to its procedural
     // gradient; a missing range degrades the horizon to bare sky, which is what it was before.
     this.skyline = scene.textures.exists(SKYLINE_TEXTURE)
@@ -154,6 +166,7 @@ export class Backdrop {
     this.gameObjects = [
       ...this.layers,
       this.sun,
+      this.clouds,
       ...(this.skyline ? [this.skyline] : []),
       this.glow,
       this.vignette,
@@ -208,6 +221,7 @@ export class Backdrop {
     // Re-pointed every layout for the same reason the sky layers are: a theme switch removes and
     // rebuilds this texture under a new key, and an `Image` left holding the old one throws inside
     // the renderer a few frames later.
+    this.clouds.setTexture(cloudTextureKey())
     this.sun.setTexture(sunTextureKey())
     this.sun.setDisplaySize(height * SUN.size, height * SUN.size)
     // Clamped rather than placed at the bare fraction: `SUN.x` is a share of the width and
@@ -215,9 +229,39 @@ export class Backdrop {
     // the sun off the edge. See `sunCenterX`.
     this.sun.setPosition(sunCenterX(width, height), height * SUN.y)
 
+    this.layoutClouds()
     this.layoutSkyline()
     this.drawGlow()
     this.drawVignette()
+  }
+
+  /**
+   * Sizes the cloud band.
+   *
+   * **⚠ `tileScaleX` and `tileScaleY` are one number, and the band's height comes from the
+   * TEXTURE's height rather than from the viewport's.** That is the entire difference between this
+   * layer and a sky plate, and the reason clouds cannot live in one: a sky layer is drawn at full
+   * viewport height with `tileScaleY = height / textureHeight`, which stretches its content
+   * vertically by whatever ratio the frame happens to have — about 3x on a 945px frame. Horizontal
+   * haze bands survive that; round lobes come out as spires, which is what got `day_v5` re-picked.
+   *
+   * One uniform scale preserves the aspect exactly, so the clouds are the same shape at 320px and
+   * at 1440px and only their size on the frame differs.
+   */
+  private layoutClouds(): void {
+    const texture = this.clouds.frame
+
+    const scale = (this.height * CLOUD_BAND_FRACTION) / (texture.realHeight || CLOUD_TEXTURE_SIZE.height)
+
+    this.clouds.tileScaleX = scale
+    this.clouds.tileScaleY = scale
+    // Height from the texture, not from the frame: the band is exactly one vertical repeat, so a
+    // `TileSprite`'s own vertical tiling can never expose a second copy below the first.
+    this.clouds.setSize(this.width, (texture.realHeight || CLOUD_TEXTURE_SIZE.height) * scale * CLOUD_LAYER.height)
+    this.clouds.setPosition(
+      0,
+      this.height * HORIZON_Y + this.height * CLOUD_LAYER.sink - this.clouds.height,
+    )
   }
 
   /**
@@ -285,6 +329,10 @@ export class Backdrop {
     if (this.skyline) {
       this.skyline.tilePositionX = (driftX * SKYLINE_LAYER.driftPixels) / (this.skyline.tileScaleX || 1)
     }
+
+    // Curvature only, and slower than the range: a cloud is further away than a ridge. No vertical
+    // term at all -- cresting a hill does not move it, the same limitation the sky has always had.
+    this.clouds.tilePositionX = (driftX * CLOUD_LAYER.driftPixels) / (this.clouds.tileScaleX || 1)
 
     for (const [index, layer] of this.layers.entries()) {
       const factor = LAYER_PARALLAX[index]
@@ -640,6 +688,107 @@ function drawSunRays(context: CanvasRenderingContext2D, half: number, rgb: strin
 
   context.restore()
 }
+
+/**
+ * How much of the frame's height the cloud band covers.
+ *
+ * A share of the viewport rather than a fixed pixel count, so clouds stay proportionate on a
+ * phone and on an ultrawide; the *scale* it produces is applied to both axes at once, which is
+ * what keeps the shape identical. See `layoutClouds`.
+ */
+const CLOUD_BAND_FRACTION = 0.26
+
+/** Texture key for the generated cloud strip of the active theme. */
+export function cloudTextureKey(): string {
+  return `clouds-${getRoadThemeId()}`
+}
+
+/**
+ * Generates the cloud strip for the active theme, if it does not exist yet.
+ *
+ * **Procedural, and clouds are the one subject a canvas is genuinely good at**: overlapping soft
+ * radial lobes with a flat base is what a cumulus *is*, and it costs zero bytes and regenerates per
+ * theme like the sun and the vignette. Tinted from the theme's own sky rather than painted white,
+ * so a night sky gets dark cloud and an ember one gets lit cloud with nothing branching on it.
+ *
+ * **⚠ Every lobe is drawn three times — at `x`, `x - width` and `x + width`.** The strip is tiled
+ * horizontally, so a cloud that runs off one edge has to arrive at the other or there is a seam
+ * sweeping the sky. Drawing the copies is what makes it actually wrap rather than merely look
+ * symmetrical, which is the same thing `build_skyline` does for the mountains.
+ */
+export function ensureCloudTexture(scene: Phaser.Scene): void {
+  const key = cloudTextureKey()
+
+  if (scene.textures.exists(key)) return
+
+  const { width, height } = CLOUD_TEXTURE_SIZE
+  const canvasTexture = scene.textures.createCanvas(key, width, height)
+
+  if (!canvasTexture) throw new Error(`ensureCloudTexture: could not create canvas texture "${key}"`)
+
+  const context = canvasTexture.context
+  const theme = getRoadTheme()
+  // Lifted off the sky it sits on rather than taken from a palette entry of its own: a cloud is
+  // the sky with more light in it, and this way it cannot disagree with the plate behind it.
+  const lit = blendColor(theme.sky.bottom, 0xffffff, 0.62)
+  const rgb = `${(lit >> 16) & 0xff}, ${(lit >> 8) & 0xff}, ${lit & 0xff}`
+  const rng = createRng(CLOUD_SEED)
+
+  context.clearRect(0, 0, width, height)
+
+  // **⚠ Every lobe is kept strictly inside the canvas, and the first version was not.** A radial
+  // gradient that reaches the texture's top edge is cut there by the canvas rather than faded, and
+  // a `TileSprite` then draws that cut as a hard horizontal rule across the whole width of the
+  // frame. It was immediately visible in the first screenshot: a straight line with pale sky under
+  // it and blue sky above. So the reach of each lobe is clamped against both edges rather than the
+  // spread being chosen small and hoped for.
+  const margin = height * 0.06
+
+  for (let cloud = 0; cloud < CLOUD_COUNT; cloud++) {
+    const cx = rng() * width
+    const cy = height * (0.4 + rng() * 0.22)
+    const spread = height * (0.16 + rng() * 0.14)
+    const lobes = 4 + Math.floor(rng() * 4)
+
+    for (let lobe = 0; lobe < lobes; lobe++) {
+      const dx = (rng() - 0.5) * spread * 2.6
+      const dy = (rng() - 0.5) * spread * 0.5
+      const wanted = spread * (0.42 + rng() * 0.5)
+      const radius = Math.min(wanted, cy + dy - margin, height - margin - (cy + dy))
+
+      if (!(radius > 1)) continue
+
+      for (const wrap of [-width, 0, width]) {
+        const gradient = context.createRadialGradient(cx + dx + wrap, cy + dy, 0, cx + dx + wrap, cy + dy, radius)
+
+        gradient.addColorStop(0, `rgba(${rgb}, ${CLOUD_ALPHA})`)
+        gradient.addColorStop(0.55, `rgba(${rgb}, ${(CLOUD_ALPHA * 0.72).toFixed(3)})`)
+        gradient.addColorStop(1, `rgba(${rgb}, 0)`)
+
+        context.fillStyle = gradient
+        context.beginPath()
+        context.arc(cx + dx + wrap, cy + dy, radius, 0, Math.PI * 2)
+        context.fill()
+      }
+    }
+  }
+
+  canvasTexture.refresh()
+}
+
+/** Removes the cloud strip of `themeId`, alongside its sky set. */
+export function removeCloudTexture(scene: Phaser.Scene, themeId: string): void {
+  const key = `clouds-${themeId}`
+
+  if (scene.textures.exists(key)) scene.textures.remove(key)
+}
+
+/** How many cloud clusters the strip carries, and how solid each lobe is drawn. */
+const CLOUD_COUNT = 10
+const CLOUD_ALPHA = 0.4
+
+/** Fixed, like every other generated thing here, so a screenshot can be compared with one. */
+const CLOUD_SEED = 40213
 
 /** Removes the sun texture of `themeId`, alongside its sky set. */
 export function removeSunTexture(scene: Phaser.Scene, themeId: string): void {

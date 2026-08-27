@@ -35,8 +35,15 @@
  */
 export const WORLD_LAYER = {
   scenery: 0,
+  /**
+   * **⚠ Below everything solid, not just below the snail.** This was 0.35 — above `obstacle` —
+   * back when the only shadow in the game belonged to the player and the only thing it had to sit
+   * under was the player. Pickups and overhead obstacles cast one now, and a shadow lies *on the
+   * ground*: anything standing on that ground at the same distance has to paint over it, or a
+   * boulder gets a dark ellipse laid across its foot.
+   */
+  shadow: 0.15,
   obstacle: 0.3,
-  shadow: 0.35,
   player: 0.4,
   pickup: 0.5,
 } as const

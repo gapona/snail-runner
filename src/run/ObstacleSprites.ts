@@ -9,11 +9,21 @@ import { billboardAppear, billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, ROAD_W
 import type { Segment } from '../road/track'
 import { createObstacleTextures, obstacleTextureKey } from './obstacleArt'
 import { WORLD_LAYER, worldDepth } from './worldDepth'
+import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowScale } from './shadows'
 import type { Obstacle } from './obstacles'
 
 /** What one pool slot is currently showing, so a frame can skip work it does not need. */
 interface SlotState {
   image: Phaser.GameObjects.Image
+  /**
+   * The shadow, owned by the same slot as the sprite it belongs to.
+   *
+   * Only an `overhead` ever shows one: `low` and `blocking` sit on the road, and a shadow under
+   * something already touching the ground is a dark rim nobody can read. Kept as a field rather
+   * than a second pool for the reason `PickupSprites` states — two pools filled in the same order
+   * on every frame is a desync waiting to happen, and its symptom is a shadow with no object.
+   */
+  shadow: Phaser.GameObjects.Ellipse
   key: string
   cropped: boolean
 }
@@ -47,7 +57,15 @@ export const OBSTACLE_POOL_SIZE = 48
  */
 export class ObstacleSprites {
   /** Every pooled object. Callers need them for camera `ignore()` lists. */
-  readonly gameObjects: readonly Phaser.GameObjects.Image[]
+  /**
+   * Everything this pool draws, for the scene's camera `ignore` lists.
+   *
+   * **Shadows included, and a missed one is not an error but a duplicate** — an object left out
+   * of the exclusion is drawn by the UI camera as well, which shows up as a faint second copy
+   * rather than as anything that throws. Built from the same `slots` array as the sprites, so a
+   * slot cannot contribute one without the other.
+   */
+  readonly gameObjects: readonly Phaser.GameObjects.GameObject[]
 
   /** Obstacles that passed culling last frame, including any the pool had no room for. */
   wantedLastFrame = 0
@@ -57,6 +75,8 @@ export class ObstacleSprites {
 
   private readonly slots: SlotState[]
   private readonly rect = createBillboardRect()
+  /** A second scratch rect: the shadow's own projection, taken at height zero. */
+  private readonly shadowRect = createBillboardRect()
 
   constructor(scene: Phaser.Scene, poolSize = OBSTACLE_POOL_SIZE) {
     createObstacleTextures(scene)
@@ -72,11 +92,15 @@ export class ObstacleSprites {
         // No depth here: it is set per object per frame from how far away it is — see
         // `worldDepth.ts` for what a flat depth did to the draw order.
         .setVisible(false),
+      shadow: scene.add
+        .ellipse(0, 0, 1, 1, 0x000000)
+        .setBlendMode(Phaser.BlendModes.MULTIPLY)
+        .setVisible(false),
       key: initialKey,
       cropped: false,
     }))
 
-    this.gameObjects = this.slots.map((slot) => slot.image)
+    this.gameObjects = this.slots.flatMap((slot) => [slot.shadow, slot.image])
   }
 
   /**
@@ -143,12 +167,30 @@ export class ObstacleSprites {
         // honest measure of demand. Breaking out early would report the pool as exactly big enough.
         if (used >= capacity) continue
 
-        this.place(this.slots[used], key, rect, visible, n, (obstacle.id & 1) === 1)
+        // Height zero, same segment, same `offsetX` -- projected rather than drawn in screen
+        // coordinates, so it rides the road through a bend and over a crest.
+        const shadowRect = obstacle.yLow > 0
+          ? billboardRectInto(
+              this.shadowRect,
+              ground,
+              obstacle.offsetX,
+              0,
+              worldWidth / SPRITE_SCALE,
+              worldHeight / SPRITE_SCALE,
+              screenWidth,
+              screenHeight,
+            )
+          : null
+
+        this.place(this.slots[used], key, rect, visible, n, (obstacle.id & 1) === 1, shadowRect, obstacle.yLow)
         used++
       }
     }
 
-    for (let i = used; i < previousUsed; i++) this.slots[i].image.setVisible(false)
+    for (let i = used; i < previousUsed; i++) {
+      this.slots[i].image.setVisible(false)
+      this.slots[i].shadow.setVisible(false)
+    }
 
     this.usedLastFrame = used
     this.wantedLastFrame = wanted
@@ -159,11 +201,15 @@ export class ObstacleSprites {
     for (const slot of this.slots) {
       slot.key = ''
       slot.image.setVisible(false)
+      slot.shadow.setVisible(false)
     }
   }
 
   destroy(): void {
-    for (const slot of this.slots) slot.image.destroy()
+    for (const slot of this.slots) {
+      slot.image.destroy()
+      slot.shadow.destroy()
+    }
   }
 
   /** Points one pool slot at one billboard. */
@@ -174,8 +220,25 @@ export class ObstacleSprites {
     visibleFraction: number,
     distanceIndex: number,
     flipX: boolean,
+    shadowRect: { x: number; y: number; w: number; h: number } | null,
+    height: number,
   ): void {
     const image = slot.image
+
+    if (shadowRect) {
+      const scale = shadowScale(height)
+
+      slot.shadow.setVisible(true)
+      slot.shadow.setPosition(shadowRect.x, shadowRect.y)
+      slot.shadow.setSize(
+        shadowRect.w * SHADOW_FOOTPRINT.width * scale,
+        shadowRect.w * SHADOW_FOOTPRINT.height * scale,
+      )
+      slot.shadow.setAlpha(shadowAlpha(height) * SHADOW_DARKEN)
+      slot.shadow.setDepth(worldDepth(distanceIndex, WORLD_LAYER.shadow))
+    } else {
+      slot.shadow.setVisible(false)
+    }
 
     if (slot.key !== key) {
       // Crops are expressed in the frame's own pixels, so one left over from the previous texture

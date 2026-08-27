@@ -5341,6 +5341,82 @@ frames from the *same* run: the distance index is recoverable from the sprite's 
 photographed, and put back. The two frames drift by one metre, because taking a screenshot forces a
 paint and a paint runs a frame.
 
+## Shadows Are A Height Gauge, And Clouds Are Their Own Layer
+
+### The shadows
+
+`src/run/shadows.ts` (pure, `npm run verify:jump`), used by `PlayerView`, `PickupSprites` and
+`ObstacleSprites`.
+
+- **⚠ The report was "the spots lie away from their objects", and most of those spots were not
+  shadows at all.** Only the snail had one. What is scattered across the road and the verge is
+  `decals.ts` — stains, puddles, scatter, dozens of them since the field widened — and a soft dark
+  patch on the ground is indistinguishable from a shadow at a glance. **So shape is now reserved:
+  a shadow is a hard-edged ellipse and a decal is a soft irregular patch**, and the two are told
+  apart before position ever comes into it.
+- **Two pickups had no shadow because nothing gave them one**, not because a pool drifted out of
+  step. There was no shadow pool. There still is not: the shadow is a **field of the sprite's own
+  slot**, so whatever hides the sprite hides its shadow and whatever places one places the other.
+  Two pools filled in the same order on every frame is the desync that was suspected, and making it
+  unrepresentable is cheaper than checking for it.
+- Cast by **everything with `y > 0`**: the snail through its jump, every pickup (they float at
+  `PICKUP_HEIGHT`), and `overhead` obstacles. `low` and `blocking` sit on the road and get none — a
+  shadow under something already touching the ground is a dark rim nobody can read.
+- **Projected, never drawn as a screen-space circle.** Each one goes through `billboardRectInto`
+  with the same segment `s1` its owner used, the same `offsetX`, and height zero. So it rides the
+  road through a bend and over a crest because it is the road's own arithmetic that placed it.
+- **⚠ The colour is a MULTIPLY blend, not a grey fill.** A neutral ellipse on pale sand reads as a
+  puddle — a thing lying there rather than an absence of light. Multiplying takes the ground's own
+  colour down, so the shadow is sand on sand and flagstone on flagstone with nothing branching on
+  the biome, the theme, the fog step or which of the five ground shades that segment carries. The
+  compositor does it against the pixels actually on screen, which is stricter than recomputing the
+  palette column and cannot drift from it.
+- **⚠ Size and alpha now move in OPPOSITE directions, which reverses a documented decision.** The
+  old rule shrank the ellipse and held its alpha, because the version before *that* shrank and faded
+  together — the two multiplied and the apex shadow was 41px wide at alpha 0.18, i.e. gone at the
+  one moment its whole job is to report height. Spreading while fading is the physically right
+  answer and is only safe because the terms now pull against each other. Measured on the shipped
+  constants: **ground scale 1.00 at alpha 0.420, apex scale 1.75 at alpha 0.160**, total ink
+  (`scale² × alpha`) **0.42 → 0.49**. `verify:jump` asserts the apex keeps at least 80% of the
+  ground's ink and is shown to reject shrink-and-fade, which scores **0.02**.
+- **⚠ `WORLD_LAYER.shadow` moved 0.35 → 0.15.** It sat above `obstacle` while the only shadow
+  belonged to the player and the only thing it had to be under was the player. A shadow is a mark
+  on the ground: anything standing on that ground at the same distance has to paint over it, or a
+  boulder gets a dark ellipse across its foot. Delivered live at 1920x889: shadow width **94 / 114 /
+  147** and alpha **0.189 / 0.156 / 0.102** at heights 0 / 120 / 320.
+
+### The clouds
+
+`CLOUD_LAYER` in `road/constants.ts`, `ensureCloudTexture` and `layoutClouds` in `Backdrop.ts`.
+
+- **⚠ Clouds cannot be baked into a sky plate, and that is measured rather than assumed.** A sky
+  layer tiles horizontally at 1:1 while being stretched to the full viewport vertically — about 3x
+  on a 945px frame against a 320px plate. Horizontal haze bands survive that; round lobes come out
+  as spires, which is exactly why `day_v5` was re-picked. A plate may carry horizontal structure
+  and nothing else.
+- So the band is the **fifth `TileSprite`**, on the mountain range's pattern, at depth
+  `SKY_DEPTH + 2.5` — after every haze band and **before the skyline at `+3`, so a ridge occludes a
+  cloud.**
+- **`tileScaleX` and `tileScaleY` are one number and the band's height comes from the TEXTURE's**,
+  which is the whole difference from a sky layer. Verified at the three heights the acceptance
+  names: scale **0.2889 / 0.8531 / 1.3000** at 320 / 945 / 1440, identical in both axes, so the
+  aspect (7.11) is held exactly and only the size on the frame changes.
+- **Parallax is half the range's** (`driftPixels` 0.0006 against 0.0012), because a cloud is further
+  away than a ridge, and it is stated in **screen pixels per world unit of drift** — the unit
+  `SKYLINE_LAYER` had to be restated in after a bare factor sent the mountains running.
+  Curvature only, no camera-height term. Worst bend: **15.6px a second**.
+- **Procedural, zero bytes, per theme.** Overlapping soft radial lobes with the colour lifted off
+  `theme.sky.bottom` rather than painted white, so a night sky gets dark cloud with nothing
+  branching on it. Regenerated and torn down on the same beat as the sun and the vignette.
+- **⚠ Every lobe is drawn three times** — at `x`, `x - width` and `x + width` — because the strip
+  tiles, and a cloud running off one edge has to arrive at the other or a seam sweeps the sky.
+- **⚠ And every lobe is clamped inside the canvas, which the first version was not.** A radial
+  gradient reaching the texture's top edge is *cut* there rather than faded, and the tile then drew
+  that cut as a hard horizontal rule across the whole frame with pale sky below it and blue above.
+  It was visible in the first screenshot taken.
+- **No cloud shadows on the ground**, deliberately: they would be more soft dark patches, which is
+  the class of mark this round has just finished separating a real shadow from.
+
 ## The Ground Has Fibre
 
 `GROUND_SHADES_PER_BIOME`, `GROUND_SHADE_SPREAD`, `groundShadesForTheme` and `groundShadeFor` in

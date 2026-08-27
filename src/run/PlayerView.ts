@@ -5,6 +5,7 @@ import { segmentPercent, surfaceHeight, trackLengthOf, type Segment } from '../r
 import { createScreenPoint, wrapZ } from '../road/project'
 import { playerGroundInto } from './playerProjection'
 import { WORLD_LAYER, worldDepth } from './worldDepth'
+import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowScale } from './shadows'
 import { PLAYER_BODY_H, PLAYER_WIDTH, PLAYER_Z } from './constants'
 import { createSnailTexture, snailFrameKey, SNAIL_TEXTURE } from './snailArt'
 import type { PlayerState } from './playerMotion'
@@ -20,15 +21,10 @@ import type { PlayerState } from './playerMotion'
  */
 const DRAW_UNITS = { width: PLAYER_WIDTH / SPRITE_SCALE, height: PLAYER_BODY_H / SPRITE_SCALE }
 
-/**
- * How dark the ground shadow is, and how small it is allowed to get.
- *
- * Both are read-at-a-glance numbers rather than physical ones — see the note in `render`. 0.38 is
- * dark enough to separate from the asphalt at every theme's road colour without reading as a hole;
- * the floor keeps the apex's ellipse at 45% of the footprint, which is still obviously an ellipse.
- */
-const SHADOW_ALPHA = 0.38
-const SHADOW_MIN_SCALE = 0.45
+// The shadow's size, alpha and colour rule all live in `shadows.ts` now, shared with every other
+// object that leaves the ground. What used to be here was a second copy of them for the one object
+// that had a shadow at all — and a second copy is how the snail's height cue and a pickup's end up
+// meaning different things.
 
 /**
  * The invulnerability blink: how fast, and how far down it dips.
@@ -110,8 +106,11 @@ export class PlayerView {
     // sprite would read as a hole rather than as a shadow.
     // Both depths are constant, unlike every other world object's: the snail never changes its
     // distance from the camera. They still come from the same scale everything else sorts on.
+    // Multiply, not a grey fill: on pale sand a neutral ellipse reads as a puddle rather than as
+    // an absence of light. See `SHADOW_DARKEN`.
     this.shadow = scene.add
-      .ellipse(0, 0, 10, 4, 0x000000, SHADOW_ALPHA)
+      .ellipse(0, 0, 10, 4, 0x000000)
+      .setBlendMode(Phaser.BlendModes.MULTIPLY)
       .setDepth(worldDepth(PLAYER_DISTANCE_INDEX, WORLD_LAYER.shadow))
     this.sprite = scene.add
       .image(0, 0, SNAIL_TEXTURE)
@@ -197,22 +196,18 @@ export class PlayerView {
     const groundY = this.rect.y
     const footprint = this.rect.w
 
-    // **The shadow shrinks with altitude and does not fade, and the alpha being constant is the
-    // load-bearing half.** The first version scaled both, which is what a shadow physically does
-    // and is exactly wrong here: the two multiply, so at the apex it was 41px wide at alpha 0.18
-    // on grey asphalt — invisible at the one moment the player needs to know how high they are.
-    // Measured in the running game, not reasoned about. A fading shadow is also ambiguous with a
-    // dark patch of road; a smaller one is unambiguously "further from the ground".
-    //
-    // The floor on the shrink is the same argument taken to the limit: past a point a smaller
-    // ellipse stops reading as height and starts reading as absence.
+    // **Wider and weaker with height, which is the reverse of what shipped before.** The old rule
+    // shrank it and held the alpha, because an earlier version had shrunk *and* faded it and the
+    // two multiplied to nothing. Spreading it while fading pulls the two terms against each other
+    // instead, and `shadows.ts` carries the arithmetic that says the apex stays at least as
+    // visible as the ground -- along with the check that holds it there.
     const lift = Math.max(0, player.y)
-    const shrink = Math.max(SHADOW_MIN_SCALE, 1 / (1 + lift / 260))
+    const scale = shadowScale(lift)
 
     this.shadow.setVisible(true)
     this.shadow.setPosition(groundX, groundY)
-    this.shadow.setSize(footprint * 0.82 * shrink, footprint * 0.22 * shrink)
-    this.shadow.setAlpha(SHADOW_ALPHA)
+    this.shadow.setSize(footprint * SHADOW_FOOTPRINT.width * scale, footprint * SHADOW_FOOTPRINT.height * scale)
+    this.shadow.setAlpha(shadowAlpha(lift) * SHADOW_DARKEN)
 
     // Then the snail itself, lifted by its world height through the same helper — so the lift is
     // in the projection's own units and shrinks with distance exactly as the sprite does.
@@ -241,7 +236,7 @@ export class PlayerView {
     const blink = look.invulnerable && Math.floor(look.now / BLINK_PERIOD_MS) % 2 === 1 ? BLINK_DIM : 1
 
     this.sprite.setAlpha(blink)
-    this.shadow.setAlpha(SHADOW_ALPHA * blink)
+    this.shadow.setAlpha(shadowAlpha(Math.max(0, player.y)) * SHADOW_DARKEN * blink)
 
     this.screenX = this.rect.x
     this.screenY = this.rect.y

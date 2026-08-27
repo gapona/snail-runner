@@ -2,9 +2,11 @@ import * as Phaser from 'phaser'
 import { createDecorTextures, generatedDecorKeys } from './decor'
 import {
   ensureSkyTextures,
+  ensureCloudTexture,
   ensureSunTexture,
   ensureVignetteTexture,
   removeSkyTextures,
+  removeCloudTexture,
   removeSunTexture,
   removeVignetteTexture,
 } from './Backdrop'
@@ -86,12 +88,14 @@ export function applyTheme(scene: Phaser.Scene, id: string): boolean {
   // down on the same beat. Missing this leaves the old theme's tint hanging over the new one.
   removeVignetteTexture(scene, previous)
   removeSunTexture(scene, previous)
+  removeCloudTexture(scene, previous)
 
   createDecorTextures(scene)
   createObstacleTextures(scene)
   ensureSkyTextures(scene)
   ensureVignetteTexture(scene)
   ensureSunTexture(scene)
+  ensureCloudTexture(scene)
 
   return true
 }

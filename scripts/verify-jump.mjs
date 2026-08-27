@@ -11,6 +11,13 @@
 // moment anything asks "is this obstacle jumpable?" the model has been replaced by a lookup table
 // and the third class stops being free.
 import assert from 'node:assert/strict'
+import {
+  SHADOW_APEX,
+  SHADOW_GROUND_ALPHA,
+  shadowAlpha,
+  shadowInk,
+  shadowScale,
+} from '../src/run/shadows.ts'
 import { createPlayerState, jump, stepPlayer } from '../src/run/playerMotion.ts'
 import {
   JUMP_AIR_MS,
@@ -242,6 +249,53 @@ check('the overhead is not so low that a grounded snail grazes it', () => {
   assert.ok(clearance > 0, 'the overhead band starts inside the snail')
   assert.ok(clearance >= PLAYER_BODY_H * 0.3, `only ${clearance}u of headroom under an overhead`)
   console.log(`    ${clearance}u of headroom (${((clearance / PLAYER_BODY_H) * 100).toFixed(0)}% of the snail's own height)`)
+})
+
+check('the shadow reports height: it spreads as it fades, and never fades to nothing', () => {
+  // **⚠ This project has already shipped the invisible version of this shadow once.** That one
+  // shrank AND faded with height: the two multiply, so at the apex it was 41px wide at alpha 0.18
+  // on grey asphalt -- gone at the one moment its whole job is to say how high the snail is. The
+  // rule is reversed now, spreading while fading, and the reversal is only safe because the two
+  // terms pull against each other. That is arithmetic, and it is invisible in any single frame,
+  // which is why it is asserted here rather than looked at.
+  assert.ok(shadowScale(0) < shadowScale(JUMP_APEX), 'the shadow does not spread with height')
+  assert.ok(shadowAlpha(0) > shadowAlpha(JUMP_APEX), 'the shadow does not weaken with height')
+
+  // Both monotone across the arc, or the same size would mean two different heights.
+  for (let y = 0; y < JUMP_APEX; y += JUMP_APEX / 40) {
+    const next = y + JUMP_APEX / 40
+
+    assert.ok(shadowScale(next) >= shadowScale(y), `the spread reverses between ${y} and ${next}`)
+    assert.ok(shadowAlpha(next) <= shadowAlpha(y), `the fade reverses between ${y} and ${next}`)
+  }
+
+  // The one that matters: total ink on the ground must not collapse.
+  const ground = shadowInk(0)
+  const apex = shadowInk(JUMP_APEX)
+
+  assert.ok(
+    apex >= ground * 0.8,
+    `the apex shadow carries ${(apex / ground).toFixed(2)} of the ground one's ink -- wide and weak has become gone`,
+  )
+
+  // Shown to reject the arrangement it replaced: shrinking and fading together.
+  const shrunk = (1 / (1 + JUMP_APEX / 260)) ** 2 * (SHADOW_GROUND_ALPHA * SHADOW_APEX.alphaKept)
+
+  assert.ok(
+    shrunk < ground * 0.8,
+    'shrink-and-fade is not being rejected, so this check is measuring nothing',
+  )
+
+  // And the height has to be *readable*, not merely different: a spread the eye cannot separate
+  // from the ground ellipse is a gauge with one mark on it.
+  assert.ok(
+    shadowScale(JUMP_APEX) / shadowScale(0) > 1.4,
+    `the apex ellipse is only ${shadowScale(JUMP_APEX).toFixed(2)}x the ground one -- too close to tell apart`,
+  )
+
+  console.log(
+    `    ground: scale ${shadowScale(0).toFixed(2)} alpha ${shadowAlpha(0).toFixed(3)}; apex: scale ${shadowScale(JUMP_APEX).toFixed(2)} alpha ${shadowAlpha(JUMP_APEX).toFixed(3)}; ink ${ground.toFixed(2)} -> ${apex.toFixed(2)} (shrink-and-fade would give ${shrunk.toFixed(2)})`,
+  )
 })
 
 console.log(`${passed} checks passed`)

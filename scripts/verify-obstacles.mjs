@@ -495,10 +495,10 @@ check('the snail sits between the segment behind it and the one ahead', () => {
 
   assert.ok(worldDepth(9, WORLD_LAYER.obstacle) > snail, 'an obstacle the snail has passed draws behind it')
   assert.ok(worldDepth(10, WORLD_LAYER.obstacle) < snail, 'an obstacle still ahead draws over the snail')
-  // ...and its shadow stays immediately underneath it rather than joining the sort somewhere else.
+  // ...and its shadow is under it.
   const shadow = worldDepth(PLAYER_Z / SEGMENT_LENGTH, WORLD_LAYER.shadow)
 
-  assert.ok(shadow < snail && snail - shadow < 0.1, 'the shadow is not directly under the snail')
+  assert.ok(shadow < snail, 'the snail is drawn under its own shadow')
 })
 
 check('the distance haze obstacles now share costs the reaction budget nothing', () => {
@@ -677,6 +677,29 @@ check('the ink is not pure black, which verify:mattes would reject', () => {
   // defect `verify:mattes` exists for, and it caught it on a real sprite once already.
   assert.ok(lightnessOf(INK) > 20, `ink at lightness ${lightnessOf(INK).toFixed(0)} is effectively black`)
   assert.ok(lightnessOf(INK) < INK_LIGHTNESS, 'the ink is not dark enough to be ink')
+})
+
+check('a shadow lies on the ground, so everything solid paints over it', () => {
+  // **⚠ This was 0.35 -- above `obstacle` -- and it was right while the only shadow in the game
+  // belonged to the player and the only thing it had to sit under was the player.** Pickups and
+  // overhead obstacles cast one now. A shadow is a mark on the ground: anything standing on that
+  // ground at the same distance has to be drawn over it, or a boulder gets a dark ellipse laid
+  // across its foot. Asserted at one distance, because a tiebreak is what decides ties.
+  for (const layer of ['obstacle', 'player', 'pickup']) {
+    assert.ok(
+      worldDepth(20, WORLD_LAYER.shadow) < worldDepth(20, WORLD_LAYER[layer]),
+      `a shadow draws over ${layer} on the same segment`,
+    )
+  }
+
+  // Above the ground itself, or there would be nothing to see: the mesh and its decals are far
+  // below every one of these tiebreaks.
+  assert.ok(WORLD_LAYER.shadow > 0, 'the shadow shares the ground mesh\'s own slot')
+
+  // The one thing it is deliberately NOT under, stated rather than left as an accident: scenery
+  // stands at the verge and a shadow is cast on the road, so the two overlap rarely, and a
+  // multiply over a prop's foot is a better outcome than a shadow drawn on top of a solid object.
+  assert.ok(WORLD_LAYER.shadow > WORLD_LAYER.scenery, 'the shadow ordering against scenery is no longer the documented one')
 })
 
 console.log(`${passed} checks passed`)

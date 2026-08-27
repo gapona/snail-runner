@@ -514,6 +514,32 @@ export const BIOME_SKYLINE_WEIGHT = 0.15
 export const SKYLINE_TEXTURE_SIZE = { width: 3072, height: 384 } as const
 
 /**
+ * The cloud band: how tall it is drawn, where it sits, and how fast it answers to a bend.
+ *
+ * **⚠ Clouds may not be baked into a sky plate, and that is recorded rather than guessed.** A sky
+ * layer tiles horizontally at 1:1 while being stretched to the full viewport vertically — roughly
+ * three times on a 945px frame against a 320px plate — so anything with shape in both axes comes
+ * out as spires. That is exactly why `day_v5` was re-picked: its round cloud lobes drew as pale
+ * vertical spikes along the horizon. A plate may carry horizontal structure and nothing else.
+ *
+ * So this is its own `TileSprite`, the fifth layer, on the mountain range's pattern:
+ *
+ * - `height` is a fraction of the **texture's** own height, applied as one uniform scale to both
+ *   axes. That is the whole difference from a sky layer, which derives its vertical scale from the
+ *   viewport. Uniform means the aspect is preserved exactly, which is what makes the shape the same
+ *   on a 320px frame and a 1440px one.
+ * - `sink` puts the band's foot below the horizon, so a cloud never appears to stand on the ground.
+ * - `driftPixels` is **screen pixels per world unit of horizon drift**, the unit `SKYLINE_LAYER`
+ *   had to be restated in after a bare factor sent the mountains running: `horizonDriftX` is the
+ *   curvature integrated to the draw distance, in world units, and it swings ±90 000 over a lap.
+ *   Half the range's figure, because a cloud is further away than a ridge.
+ */
+export const CLOUD_LAYER = { height: 1, sink: 0.02, driftPixels: 0.0006 } as const
+
+/** Size of the generated cloud strip. Wide, because it wraps horizontally and must outrun a frame. */
+export const CLOUD_TEXTURE_SIZE = { width: 2048, height: 288 } as const
+
+/**
  * Where the sun sits and how big it is drawn, as fractions of the frame.
  *
  * **Pinned to the frame, and that is a property of the projection rather than a simplification.**
