@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node scripts/verify-mattes.mjs && node scripts/check-bundle.mjs",
+    "build": "tsc && vite build && node scripts/verify-mattes.mjs && node --import ./scripts/register-ts-loader.mjs scripts/verify-palettes.mjs && node scripts/check-bundle.mjs",
     "bundle": "npm run build && node scripts/make-bundle.mjs",
     "preview": "vite preview",
     "verify:scroll": "node --import ./scripts/register-ts-loader.mjs scripts/verify-scroll-momentum.mjs",
@@ -26,7 +26,8 @@
     "verify:platform": "node --import ./scripts/register-ts-loader.mjs scripts/verify-platform.mjs",
     "verify:menu": "node --import ./scripts/register-ts-loader.mjs scripts/verify-menu.mjs",
     "verify:layout": "node --import ./scripts/register-ts-loader.mjs scripts/verify-layout.mjs",
-    "verify:skins": "node --import ./scripts/register-ts-loader.mjs scripts/verify-skins.mjs"
+    "verify:skins": "node --import ./scripts/register-ts-loader.mjs scripts/verify-skins.mjs",
+    "verify:palettes": "node --import ./scripts/register-ts-loader.mjs scripts/verify-palettes.mjs"
   },
   "dependencies": {
     "phaser": "^4.2.0"

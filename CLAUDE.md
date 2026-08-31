@@ -224,6 +224,15 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
   aimed with. Defaults to `public/assets/decor`. **Its old reading of that directory — 111 / 5% /
   34% — is no longer the target**: those props were replaced, and what the numbers are now compared
   against is stated in "The Regeneration: A Glossy World".
+- `npm run verify:palettes` — every theme, every biome and every mascot skin, through the real
+  bake (`surfaceColour`) rather than the authored constants. **Also wired into `npm run build`**,
+  because a palette rule nobody runs is a palette rule nobody has. Holds three things: a theme's sky
+  is not in its own ground's hue family (measured at `sky.top`, chroma-gated on both sides — see the
+  section for why the horizon is the one point at which this cannot be asked), the themes agree on
+  how legible the road's edge is (a *ratio*, never absolute lightness — that rule belongs to biomes
+  and is explained where it is stated), and no mascot skin merges with any theme's ground or with
+  its own slime trail. **Currently red on purpose**, and it prints all three blocks rather than
+  stopping at the first. See "One Palette Check For Every Theme, Biome And Skin".
 - `npm run verify:mattes` — not a logic suite: it reads every RGBA sprite in `public/assets/` and
   checks the two things a matte can be wrong about independently of what is drawn (alpha under the
   floor, colour flooded under the transparency). Runs inside `npm run build` — see "The Matte That
@@ -8037,6 +8046,109 @@ is the trade the previous round asked for (colour in the near and middle field) 
 (no field competing with the sky), and where the two disagree is the authored saturation of each
 biome. `fungal` needed three passes down — 49% to 30% to 17% — before it stopped reading as a
 ribbon.
+
+## One Palette Check For Every Theme, Biome And Skin
+
+`scripts/verify-palettes.mjs` (`npm run verify:palettes`), and it is the fifth thing wired into
+`npm run build` rather than left to be run by hand — a palette rule nobody runs is a palette rule
+nobody has.
+
+**Why a suite of its own.** `verify:road` is about the renderer: the projection, the fog rows, the
+reserved threat hue, the absolute `GROUND_AIR_HUE_BAND`. This one is about a **theme as a product**
+— whether two of them are distinguishable, whether one puts the sky in its own ground's colour
+family, whether the mascot survives being drawn on top of it. **Aerial perspective is deliberately
+not restated here**: `verify:road` already asserts it as *"approaching the horizon the ground is
+lighter and less saturated than the sky above it"*, and a rule kept in two places is a rule that
+will be applied in one of them.
+
+Everything is read through `surfaceColour`, never off an authored constant — the bake lifts
+saturation, fades toward a target that is part fog and part sky, and dissolves into the sky over the
+last quarter, so an authored value is not a colour anybody sees. That is `paletteColour.ts`'s own
+lesson, applied.
+
+### ⚠ Measured at `sky.top`, and measuring it at the horizon made the rule unsatisfiable
+
+The first version asked how far the sky sits from the ground and asked it at **`sky.bottom`** — and
+rejected all seven themes, including the ones nobody has ever complained about. It could not have
+done anything else. **The horizon is exactly where aerial perspective is *required* to bring the two
+together**: the check one section above asserts that it does, and `surfaceColour` dissolves the
+ground into the sky over the last quarter of the ramp. Two conditions pulling against each other
+cannot both hold, so no palette could have passed and the instrument would have driven a repaint
+toward a contradiction.
+
+The question the rule is actually asking — *is the sky made of the same stuff as the ground* — is
+about the top of the frame against the bottom of it, where nothing is supposed to converge. The old
+point is kept as the **negative control** and still rejects 7 of 7.
+
+### ⚠ And both sides need a chroma gate, or the healthy themes rank worst
+
+Moved to `sky.top`, the check still failed everything — and now `day` (4°) and `ice` (5°) were the
+*worst* in the set. Their worst biome is `ruins`, whose ground is very nearly neutral, and
+**`hueDistance` between a blue sky and a grey is numerical noise.** The project already owns that
+escape: `THREAT_MIN_CHROMA` exists because below it "a hue angle is numerical noise". Applied to
+both sides, `day` goes 4° → 62° and `ice` 5° → 70°, and it is also what makes a deliberately
+monochrome theme legal — a sky with no chroma cannot be in anything's family. Carried as a second
+control.
+
+**The threshold is then derived rather than inherited.** Gated and measured at `sky.top` the themes
+fall into two groups with nothing between them — `dusk` 8 and `verdant` 14 against `ember` 43, `day`
+62, `ice` 70. The gap 14–43 is empty, so 30 is a value inside it at 2.1x the worst failure and 0.70x
+the best pass. It happens to equal the number the first version carried over; that it is now
+*derivable* is the difference.
+
+### ⚠ Equal near-field lightness is a BIOME rule and does not transfer to themes
+
+Stated because it was nearly implemented the other way, and implementing it would have deleted the
+night theme.
+
+**A biome seam is crossed mid-run**, several times a lap, with the player looking at it — so a step
+in overall brightness there reads as an artefact of the renderer rather than as a change of place.
+That is why the biome grounds are held to one another.
+
+**A theme has no seam.** It is chosen before the run and held for the whole of it, so there is
+nothing to compare it against inside a run at all. Absolute brightness is therefore an expressive
+tool and stays one: `RoadTheme.groundLight` is 0.34 on `night` against 1 on `day`, and the measured
+39x spread in near-field ground luminance is the feature, not the defect. An earlier round already
+paid for this from the other side — removing the dimming rule showed *"bright daylight sand under a
+black sky"*, which is what a theme that cannot say it is night looks like.
+
+What may **not** move between themes is how legible the road's edge is, which is a *ratio*. The
+check holds the per-theme mean ground-to-road contrast inside `THEME_CONTRAST_SPREAD`, measured
+rather than picked: six themes sit between 1.73 and 2.28 (1.32x) and `day` sits alone at 3.28, so
+1.5 admits the six and rejects the one.
+
+### ⚠ The mascot's worst backdrop is its own trail, and no palette can reach it
+
+The skin-versus-theme matrix was built to answer "does the snail drown in the active theme". It
+does, a little — and the dominant term is somewhere else entirely. `SlimeTrail.ts` draws in a fixed
+`0x9fc24a`/`0xe8f7a6` yellow-green that **no theme tints**, so a mascot in that hue merges with its
+own trail identically on all seven. Measured over the shipped render's 15041 chromatic pixels:
+
+| skin | worst ground | own trail |
+|---|---|---|
+| amber | 16% (`ice`) | 16% |
+| fern | 16% (`day`) | **36%** |
+| teal | 5% | 0% |
+| indigo | 14% (`day`) | 0% |
+| rose | 16% (`day`) | 0% |
+
+So the fix is not "keep the snail's colour out of the theme" — repainting every palette in the game
+would not move the 36%. It is a **constant ink rim on the mascot**, which answers both backdrops at
+once and touches no palette; and only then tinting the slime *toward* the active skin, which is safe
+once the rim guarantees the separation and is what makes the trail read as belonging to the snail.
+
+**`teal` is the best skin in the set, not the worst** — 0% against the trail and 2–5% against every
+ground. It was reported as the drowning one from a frame; the frame was `amber` on `ice`, which is
+the actual 16%. Recorded because it is the standing rule read from the good side: a screenshot names
+the symptom and the measurement names the object.
+
+### It is red on purpose, and it reports every failure rather than the first
+
+Every other suite here guards a rule that already holds, so the first break is the news and stopping
+there is right. This one is the instrument seven themes are about to be repainted against, so it
+collects and prints all three blocks before exiting non-zero — a repaint answered one theme per run
+is a repaint nobody finishes. Currently failing: `dusk` (8°) and `verdant` (14°) on A1.1, `day` on
+the contrast spread, and 12 skin/backdrop pairs on A5.
 
 ## The Middle Distance Was Pale, And The Fog Was Why
 
