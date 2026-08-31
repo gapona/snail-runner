@@ -26,6 +26,7 @@
  */
 import type * as Phaser from 'phaser'
 import { getRoadTheme } from '../road/themes'
+import { paintInkRim, rimWidthPx } from './inkRim'
 import { OBSTACLE_BANDS, type ObstacleKind } from './constants'
 import { INK, OBSTACLE_MATERIALS } from './artPalette'
 
@@ -118,6 +119,56 @@ export const OBSTACLE_ART_KEYS: readonly string[] = OBSTACLE_TEXTURE_KEYS.filter
   (key) => !PULLED_ART.has(key),
 )
 
+/**
+ * The contour every obstacle wears, and the answer to a reservation that could not exist.
+ *
+ * **⚠ A4 asked for a colour range reserved to obstacles and appearing in no theme's landscape. There
+ * is none, and that was measured three ways before this was written:**
+ *
+ * - **hue** — of 24 sectors, every one carrying usable chroma is occupied by some sky, ground, fog
+ *   or prop tint; the only empty sectors are the ones the threat colour already owns.
+ * - **chroma** — swept over the whole sRGB cube against all 728 world surfaces, the most isolated
+ *   colour in this game is pure magenta at a distance of 0.231. Every *muted* colour is closer. So
+ *   the reservation is satisfiable only at full saturation, and saturation in this game means
+ *   "come and get it" — a magenta boulder reads as a reward, and the pickups lose their meaning to
+ *   buy the obstacles theirs.
+ * - **lightness** — the grounds sweep 0.089 to 0.867 with no gap; the emptiest band still holds 6%.
+ *
+ * The colour budget was spent before this question was asked: red is the threat, saturated is a
+ * reward, muted is the world. Measured on the shipped PNGs rather than on `OBSTACLE_MATERIALS`
+ * (which is the procedural fallback), every obstacle body sits **0.008 to 0.011** from some
+ * theme's ground — the same colour, on six of seven themes.
+ *
+ * So an obstacle gets what the mascot got for the identical reason: **a contour that does not
+ * answer to what is behind it.** Two tones bracketing the luminance range, so whatever ground it is
+ * standing on, one of them is far from it. See `inkRim.ts` — it is one module because it is one
+ * rule.
+ *
+ * **Darker and heavier than the mascot's.** The mascot is one object the player is tracking; an
+ * obstacle is one of a row of fourteen at the far end of a reaction distance, so its edge has to
+ * survive more downscaling. The pale tone is dimmer than the snail's for the opposite reason: a
+ * bright edge on a hazard is the "come and get it" signal again.
+ */
+export const OBSTACLE_RIM = {
+  widthFraction: 0.02,
+  minPx: 2,
+  color: 0x1a1c1a,
+  innerColor: 0xbcc0b6,
+  innerShare: 0.35,
+} as const
+
+/**
+ * The key an obstacle is actually drawn from — the source art with its contour painted in.
+ *
+ * Separate from `obstacleTextureKey`, which stays the key `Preloader` loads a PNG into and the key
+ * the procedural fallback draws into. Same split, and the same reason, as the mascot's: the rim is
+ * built *from* whatever the source key holds, so it works over a loaded render and over a failed
+ * load alike, and neither path has to know contours exist.
+ */
+export function obstacleDrawKey(kind: ObstacleKind, seed: number): string {
+  return `${obstacleTextureKey(kind, seed)}-rim`
+}
+
 /** Which of the keys above this module drew itself, as opposed to the loader having filled them. */
 const generated = new Set<string>()
 
@@ -126,7 +177,14 @@ const generated = new Set<string>()
  *
  * **Only generated keys, never every declared key** — the rule inherited from `decor.ts`: a slot
  * showing *loaded* art has nothing to regenerate from, so removing it would blank that slot for
- * the rest of the session. Art-backed obstacles are themed by tint at draw time instead.
+ * the rest of the session.
+ *
+ * **⚠ This used to end "art-backed obstacles are themed by tint at draw time instead", and that
+ * was not true.** `ObstacleSprites` calls `setTint` nowhere: a shipped render is drawn in its own
+ * colours on every theme, and only the procedural fallback is themed (`multiply(..., tint)`
+ * above). Found while measuring A4, by looking for the tint the sentence promised. What follows
+ * from it is that `OBSTACLE_MATERIALS` describes the fallback and not the game — which is why
+ * `verify:palettes` measures the PNGs.
  */
 export function generatedObstacleKeys(): readonly string[] {
   return OBSTACLE_TEXTURE_KEYS.filter((key) => generated.has(key))
@@ -175,6 +233,47 @@ export function createObstacleTextures(scene: Phaser.Scene): void {
 
       g.generateTexture(key, width, height)
       g.destroy()
+      generated.add(key)
+    }
+  }
+
+  createObstacleRims(scene)
+}
+
+/**
+ * Paints the two-tone contour into a copy of every obstacle texture.
+ *
+ * **Run last, and over whatever the source keys hold.** The loop above fills only the keys nobody
+ * loaded a PNG into, so by this point each source key is either a shipped render or a procedural
+ * fallback — and this reads the texture manager rather than the file system, so it cannot tell and
+ * does not need to.
+ *
+ * The rim keys join `generated`, so `applyTheme` removes them with everything else it regenerates:
+ * a fallback redrawn in a new theme's tint must not keep the previous theme's contour beside it.
+ */
+function createObstacleRims(scene: Phaser.Scene): void {
+  for (const kind of Object.keys(OBSTACLE_VARIANTS) as ObstacleKind[]) {
+    for (let variant = 0; variant < OBSTACLE_VARIANTS[kind]; variant++) {
+      const source = obstacleTextureKey(kind, variant)
+      const key = obstacleDrawKey(kind, variant)
+
+      if (scene.textures.exists(key) || !scene.textures.exists(source)) continue
+
+      const image = scene.textures.get(source).getSourceImage()
+
+      if (!(image instanceof HTMLImageElement) && !(image instanceof HTMLCanvasElement)) continue
+
+      const canvas = scene.textures.createCanvas(key, image.width, image.height)
+
+      if (!canvas) continue
+
+      canvas.draw(0, 0, image)
+
+      const data = canvas.getData(0, 0, image.width, image.height)
+
+      paintInkRim(data.data, image.width, image.height, rimWidthPx(image.width, image.height, OBSTACLE_RIM), OBSTACLE_RIM)
+      canvas.putData(data, 0, 0)
+      canvas.refresh()
       generated.add(key)
     }
   }

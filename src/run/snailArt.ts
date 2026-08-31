@@ -28,7 +28,7 @@
 import * as Phaser from 'phaser'
 import { INK, SNAIL_BODY as BODY, SNAIL_SHELL as SHELL } from './artPalette'
 import { DEFAULT_SNAIL_SKIN, recolour, snailSkin } from './snailSkins'
-import { paintInkRim, rimWidthPx } from './snailRim'
+import { paintInkRim, rimWidthPx } from './inkRim'
 
 /** How many frames the glide cycle has. */
 export const SNAIL_FRAMES = 6

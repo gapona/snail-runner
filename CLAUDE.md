@@ -8305,7 +8305,64 @@ lightness difference rather than a ratio — which would make the rule equally s
 and let dark themes keep non-black verges. It is a change to a function `verify:road`'s 116 checks
 are built on, so it is its own round.
 
-All seven checks green, and `npm run build` with them.
+All ten checks green, and `npm run build` with them.
+
+### ⚠ A4: there is no colour left to reserve, and the proof is three sweeps
+
+The instruction was to reserve a colour range for obstacles appearing in no theme's decor or
+landscape, and verify it on a composited frame. **No such range exists**, and that is measured
+rather than argued:
+
+| channel | swept | result |
+|---|---|---|
+| hue | all 763 non-obstacle colours, 24 sectors | every sector with usable chroma is occupied; the only empty ones are the threat colour's own |
+| chroma | whole sRGB cube against 728 world surfaces | the most isolated colour in the game is **pure magenta at 0.231**; every *muted* colour is nearer |
+| lightness | 630 ground samples | they sweep **0.089–0.867 with no gap**; the emptiest band still holds 6% |
+
+So the reservation is satisfiable only at full saturation — and **saturation in this game means
+"come and get it"**. A magenta boulder reads as a reward: the pickups would lose their meaning to
+buy the obstacles theirs. The colour budget was spent before the question was asked — red is the
+threat, saturated is a reward, muted is the world — and 7 themes x 9 biomes x 5 shades x fog is a
+deliberate attempt to cover the space, so of course nothing is left.
+
+**⚠ And the mechanism in the report is not the one that is failing.** It was that the grey slabs
+match the mountains. An obstacle **never crosses the horizon**: `CAMERA_HEIGHT` is 1000 against a
+tallest band of 620, so an obstacle's top projects from 1247px down to 996px against a horizon at
+992 on a 900x1600 frame — approaching from below and never reaching it. It is *always* silhouetted
+against the ground. What happens with the skyline is **confusion** (two pale grey shapes in one
+frame, and the eye cannot say which is the hazard); what happens with the ground is
+**disappearance**, and that one was worse and unreported: `blocking` on `ice`/`coast` at 0.029.
+
+### The answer is the mascot's, for the identical reason
+
+A colour that merges with more backdrops than there is colour to avoid is not a palette problem.
+`inkRim.ts` is now **one module for both subjects** — a rule kept in two places is a rule that will
+be applied in one of them — and `OBSTACLE_RIM` is its second consumer:
+
+- **Two tones bracketing the luminance range**, ink at 0.01 and a dim pale at 0.63, so whatever
+  ground an obstacle stands on, one of them is far from it. Asserted structurally: over all 693
+  surfaces the weakest the contour ever gets is **3.06:1**, on `day`/`forest`.
+- **Heavier than the mascot's** (`widthFraction` 0.02 against 0.016): the mascot is one object the
+  player is already tracking, an obstacle is one of fourteen in a wall at the far end of a reaction
+  distance, so its edge survives more downscaling. **Dimmer pale tone** for the opposite reason — a
+  bright edge on a hazard is the "come and get it" signal again.
+- Built from whatever the source key holds, so it works over a shipped render and over a failed
+  load alike, and joins `generated` so `applyTheme` rebuilds it with the fallback it was cut from.
+- `obstacleDrawKey` is what `ObstacleSprites` draws; `obstacleTextureKey` stays the key `Preloader`
+  loads a PNG into. Same split, same reason, as the mascot's.
+
+Delivered: every shipped render sits **0.008–0.011** from some theme's ground and is carried by its
+contour at **3.1–5.7:1**.
+
+### ⚠ Two things the round found by looking for what a sentence promised
+
+- **`OBSTACLE_MATERIALS` is the procedural fallback's palette, not the game's.** The first version of
+  this check measured that table and reported numbers about art nobody sees. `ObstacleSprites`
+  applies no tint, so a shipped render is drawn in its own colours on every theme. `verify:palettes`
+  measures the PNGs now, as `verify:skins` already did for the mascot.
+- **And the comment that sent me looking was wrong.** `generatedObstacleKeys`' docstring ended
+  "art-backed obstacles are themed by tint at draw time instead"; there is no `setTint` anywhere in
+  `ObstacleSprites`. Corrected in place, with what actually follows from it written down.
 
 ### A5: the mascot got a contour, and the slime is why it is not a palette rule
 

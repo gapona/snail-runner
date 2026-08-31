@@ -7,7 +7,7 @@ import {
 } from '../road/billboard'
 import { billboardAppear, billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, ROAD_WIDTH, SPRITE_SCALE } from '../road/constants'
 import type { Segment } from '../road/track'
-import { createObstacleTextures, obstacleTextureKey } from './obstacleArt'
+import { createObstacleTextures, obstacleDrawKey } from './obstacleArt'
 import { WORLD_LAYER, worldDepth } from './worldDepth'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowClipFade, shadowScale } from './shadows'
 import { OBSTACLE_POOL_SIZE, type Obstacle } from './obstacles'
@@ -91,7 +91,7 @@ export class ObstacleSprites {
   constructor(scene: Phaser.Scene, poolSize = OBSTACLE_POOL_SIZE) {
     createObstacleTextures(scene)
 
-    const initialKey = obstacleTextureKey('low', 0)
+    const initialKey = obstacleDrawKey('low', 0)
 
     this.slots = Array.from({ length: poolSize }, () => ({
       image: scene.add
@@ -155,7 +155,7 @@ export class ObstacleSprites {
       const clip = clipY[n]
 
       for (const obstacle of here) {
-        const key = obstacleTextureKey(obstacle.kind, obstacle.id)
+        const key = obstacleDrawKey(obstacle.kind, obstacle.id)
         // The world box, converted into the texture-pixel units `billboardRectInto` wants — the
         // same conversion `PlayerView` does, and for the same reason: the drawn size has to be the
         // collision box, so the sprite can never claim ground the model does not.

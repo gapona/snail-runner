@@ -16,15 +16,17 @@
 // the last quarter of the ramp -- so an authored value is not a colour the player ever sees, and a
 // rule swept over the wrong arithmetic is not a rule. That lesson is `paletteColour.ts`'s own.
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { decodePng } from './png.mjs'
 import { chroma, contrastRatio, deltaE, fromOklab, hueDistance, mixOklab, relativeLuminance, toHsl, toOklab } from '../src/road/color.ts'
-import { getRoadTheme, setRoadTheme, themeIds, THREAT_MIN_CHROMA } from '../src/road/themes.ts'
+import { blendColor, getRoadTheme, setRoadTheme, themeIds, THREAT_MIN_CHROMA } from '../src/road/themes.ts'
 import { BIOMES, groundShadesForTheme, MIN_GROUND_CONTRAST, themedGround } from '../src/road/biomes.ts'
-import { HORIZON_Y } from '../src/road/constants.ts'
+import { BIOME_SKYLINE_WEIGHT, HORIZON_Y } from '../src/road/constants.ts'
 import { surfaceColour } from '../src/road/paletteColour.ts'
+import { INK_LIGHTNESS, lightnessOf, OBSTACLE_MATERIALS } from '../src/run/artPalette.ts'
+import { OBSTACLE_ART_KEYS, OBSTACLE_RIM } from '../src/run/obstacleArt.ts'
 import { recolour, SNAIL_SKINS } from '../src/run/snailSkins.ts'
-import { paintInkRim, rimWidthPx, SNAIL_RIM } from '../src/run/snailRim.ts'
+import { paintInkRim, rimWidthPx, SNAIL_RIM } from '../src/run/inkRim.ts'
 
 let passed = 0
 const failed = []
@@ -484,6 +486,226 @@ check('every pair of themes is distinguishable by more than one of them being da
     0,
     `themes a player cannot tell apart: ${failures.map((f) => `${f.a}/${f.z} (${f.distance.toFixed(3)})`).join(', ')}`,
   )
+})
+
+// ---------------------------------------------------------------------------------------------
+// A4 -- an obstacle is never the colour of the landscape
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * How far an obstacle's body has to sit from anything in the landscape.
+ *
+ * **⚠ The reservation is a distance, not a hue band, and that is a finding rather than a
+ * simplification.** The instruction this implements was to reserve a colour *range* for obstacles
+ * that appears in no theme's decor or landscape. Swept over all 763 non-obstacle colours in the
+ * game, bucketed into 24 hue sectors: **every sector carrying usable chroma is occupied**, and the
+ * only empty ones are the sector the threat colour already owns and its neighbours. There is no
+ * free hue to reserve — the sky sweeps blue through violet, the ground sweeps warm, `verdant` and
+ * `dusk` take the rest.
+ *
+ * What the same sweep did show is the shape of the problem: **77% of the landscape carries no
+ * usable chroma at all.** It is mostly greys, and so are the obstacles, which is exactly why they
+ * are confusable. So the rule is stated as a perceptual distance from everything, which is the
+ * property actually wanted, and any of hue, chroma or lightness may deliver it.
+ *
+ * **⚠ And what an obstacle is confused with is NOT what it is seen against.** The report was that
+ * the grey slabs match the mountains — but an obstacle never crosses the horizon: `CAMERA_HEIGHT`
+ * is 1000 against a tallest band of 620, so every obstacle top projects *below* the horizon row at
+ * every distance (1247px to 996px against a horizon at 992 on a 900x1600 frame), approaching it
+ * from below and never reaching it. An obstacle is always silhouetted against the **ground**.
+ *
+ * Both relationships matter and they are different failures, so both are asserted:
+ *
+ * - against the **skyline**, it is a *confusion* — two pale grey shapes in one frame, and the eye
+ *   cannot tell which is a hazard. Measured at 0.013 on `signal`, i.e. the same colour.
+ * - against the **ground**, it is a *disappearance* — the object vanishes into what it stands on.
+ *   Nobody reported this one, and it was worse: `blocking` on `ice`/`coast` at 0.029.
+ */
+const OBSTACLE_MIN_DISTANCE = 0.1
+
+/** How hard the contour has to work on a ground the body does not answer. Mirrors the mascot's. */
+const OBSTACLE_RIM_MIN_CONTRAST = 2
+
+/**
+ * **⚠ And the reservation is against the surfaces an obstacle is actually READ against, not
+ * against every colour in the game. The wider form was measured and is unachievable.**
+ *
+ * Swept over the whole sRGB cube against all 728 world surfaces, the most isolated colour in this
+ * game is **pure magenta at a distance of 0.231**, with pure blue next. Every muted colour is
+ * closer. So a reservation demanding an obstacle differ from *everything* can only be satisfied at
+ * full saturation — and that breaks a rule this game depends on more: **saturation means "come and
+ * get it"**, which is what makes a pickup legible. A magenta boulder reads as a reward.
+ *
+ * The colour budget is already spent: red is the threat, saturated is a reward, muted is the world.
+ * There is no unused muted region left to hand to obstacles, and taking a saturated one would cost
+ * the pickups their meaning to buy the obstacles theirs.
+ *
+ * What is both satisfiable and worth having is narrower and is the real requirement: an obstacle
+ * must separate from **the ground of the biome it is standing on** — which is the only thing it is
+ * ever silhouetted against — and from **the skyline**, which is the thing it is confused with.
+ * Everything else in the list was a surface the obstacle and the player never share a moment with.
+
+/**
+ * The obstacle's two body tones.
+ *
+ * `dark` is deliberately excluded: `artPalette.ts` holds every `dark` band below `INK_LIGHTNESS`,
+ * so it is the ink side of the object rather than its colour, and ink is allowed to coincide with
+ * anything else dark — that is what ink is for.
+ */
+function obstacleBodies() {
+  const bodies = []
+
+  for (const [id, material] of Object.entries(OBSTACLE_MATERIALS)) {
+    bodies.push({ id: `${id}.light`, color: material.light })
+    bodies.push({ id: `${id}.mid`, color: material.mid })
+  }
+
+  return bodies
+}
+
+/** Everything in the world that is not an obstacle and is large enough to be confused with one. */
+function landscape() {
+  const out = []
+
+  for (const id of THEMES) {
+    const theme = themeOf(id)
+
+    for (const biome of BIOMES) {
+      // The range, as `Backdrop.setSkylineTint` composes it. Confusion rather than contrast: an
+      // obstacle never crosses the horizon, so these two are never adjacent -- they are simply two
+      // pale grey shapes in one frame, and the eye has to be able to say which is the hazard.
+      out.push({ label: `${id}/skyline/${biome.id}`, color: blendColor(theme.sky.bottom, biome.decorTint, BIOME_SKYLINE_WEIGHT) })
+
+      const shades = groundShadesForTheme(
+        themedGround(biome.ground, theme.groundChroma, theme.groundHue),
+        theme.road[0],
+        theme.road[1],
+        undefined,
+        theme.groundLight,
+      )
+
+      // Near field and half-fogged: an obstacle is read across that whole span.
+      for (const shade of shades) {
+        for (const amount of [0, 0.5]) {
+          out.push({ label: `${id}/${biome.id}/ground`, color: surfaceColour({ base: shade, family: 'ground', fog: theme.fog, sky: theme.sky.bottom, amount }) })
+        }
+      }
+    }
+
+    // The road is deliberately absent: an obstacle stands *on* it and is read against the ground
+    // beyond it, and `MIN_GROUND_CONTRAST` already owns the road's own edge.
+  }
+
+  return out
+}
+
+console.log('\nA4 - an obstacle is never the colour of the landscape')
+
+check('every obstacle separates from every ground, by its own colour or by its contour', () => {
+  const world = landscape()
+  const failures = []
+  const rows = []
+
+  for (const key of OBSTACLE_ART_KEYS) {
+    const path = `public/assets/obstacle/${key}.png`
+
+    // **Measured on the shipped pixels, not on `OBSTACLE_MATERIALS`.** That table is the procedural
+    // fallback's palette and the game does not draw it: `ObstacleSprites` applies no tint, so what
+    // ships is the render. The first version of this check measured the table and reported numbers
+    // about art nobody sees -- the same mistake as reading an authored colour instead of the bake.
+    if (!existsSync(path)) continue
+
+    const png = decodePng(readFileSync(path))
+    const body = []
+
+    for (let i = 0; i < png.data.length; i += 4) {
+      if (png.data[i + 3] < 200) continue
+
+      const color = (png.data[i] << 16) | (png.data[i + 1] << 8) | png.data[i + 2]
+
+      // Below the ink threshold is the object's own shadow side, not its colour.
+      if (lightnessOf(color) < INK_LIGHTNESS) continue
+
+      body.push(toOklab(color))
+    }
+
+    assert.ok(body.length > 100, `${key} has no readable body`)
+
+    const mean = fromOklab({
+      L: body.reduce((sum, lab) => sum + lab.L, 0) / body.length,
+      a: body.reduce((sum, lab) => sum + lab.a, 0) / body.length,
+      b: body.reduce((sum, lab) => sum + lab.b, 0) / body.length,
+    })
+
+    let worst = { distance: Infinity }
+
+    for (const surface of world) {
+      const distance = deltaE(mean, surface.color)
+
+      if (distance < worst.distance) worst = { distance, ...surface }
+    }
+
+    // The contour is what carries the pairs the body cannot, exactly as the mascot's does. Its two
+    // tones bracket the luminance range, so the better of them is the one that has to clear.
+    const carried = Math.max(contrastRatio(OBSTACLE_RIM.color, worst.color), contrastRatio(OBSTACLE_RIM.innerColor, worst.color))
+
+    rows.push({ key, worst, carried })
+
+    if (worst.distance < OBSTACLE_MIN_DISTANCE && carried < OBSTACLE_RIM_MIN_CONTRAST) {
+      failures.push(`${key} vs ${worst.label} (${worst.distance.toFixed(3)}, contour only ${carried.toFixed(2)}:1)`)
+    }
+  }
+
+  assert.ok(rows.length > 0, 'no shipped obstacle art was measured at all')
+
+  console.log(`    shipped obstacle renders against ${world.length} world surfaces (body floor ${OBSTACLE_MIN_DISTANCE}, contour floor ${OBSTACLE_RIM_MIN_CONTRAST}:1):`)
+  for (const row of rows) {
+    console.log(
+      `      ${row.key.padEnd(20)} nearest ${row.worst.label.padEnd(24)} ${row.worst.distance.toFixed(3)}${row.worst.distance < OBSTACLE_MIN_DISTANCE ? `  carried by the contour at ${row.carried.toFixed(1)}:1` : ''}`,
+    )
+  }
+
+  assert.equal(failures.length, 0, `obstacles the landscape swallows: ${failures.join(', ')}`)
+})
+
+check('the contour brackets the range, so no ground can defeat both of its tones', () => {
+  // **The structural half, and it is what makes the `or` above worth anything.** If both tones ever
+  // land on the same side of the ground's luminance range, there is a ground that defeats the whole
+  // contour and the check above would be passing on luck. Asserted against every surface in the
+  // world rather than against the seven that exist today.
+  const world = landscape()
+  let worst = { carried: Infinity }
+
+  for (const surface of world) {
+    const carried = Math.max(contrastRatio(OBSTACLE_RIM.color, surface.color), contrastRatio(OBSTACLE_RIM.innerColor, surface.color))
+
+    if (carried < worst.carried) worst = { carried, label: surface.label }
+  }
+
+  console.log(`    the weakest the contour ever gets, over all ${world.length} surfaces: ${worst.carried.toFixed(2)}:1 on ${worst.label}`)
+  assert.ok(worst.carried >= OBSTACLE_RIM_MIN_CONTRAST, `${worst.label} defeats both contour tones at ${worst.carried.toFixed(2)}:1`)
+})
+
+check('the classes stay told apart by value, which is what survives the haze', () => {
+  // The rule this must not break while satisfying the one above. Hue and chroma are taken away by
+  // the distance haze and the biome tint; value is what is left, and it is how a player tells a
+  // block they can hop from a panel they cannot. `verify:obstacles` owns the same rule against the
+  // shipped art -- this is the palette half, so a repaint for A4 cannot quietly flatten it.
+  const means = Object.entries(OBSTACLE_MATERIALS).map(([id, material]) => ({
+    id,
+    value: (lightnessOf(material.light) + lightnessOf(material.mid) + lightnessOf(material.dark)) / 3,
+  }))
+
+  console.log(`    class value means: ${means.map((m) => `${m.id} ${m.value.toFixed(0)}`).join('  ')}`)
+
+  for (let i = 0; i < means.length; i++) {
+    for (let j = i + 1; j < means.length; j++) {
+      assert.ok(
+        Math.abs(means[i].value - means[j].value) >= 12,
+        `${means[i].id} and ${means[j].id} are ${Math.abs(means[i].value - means[j].value).toFixed(0)} apart in value, under the 12 the haze leaves`,
+      )
+    }
+  }
 })
 
 // ---------------------------------------------------------------------------------------------

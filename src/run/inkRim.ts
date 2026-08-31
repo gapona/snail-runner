@@ -1,5 +1,10 @@
 /**
- * The mascot's ink contour: a constant edge that does not answer to what is behind it.
+ * A constant two-tone contour: an edge that does not answer to what is behind it.
+ *
+ * Worn by the mascot (`SNAIL_RIM`) and by every obstacle (`OBSTACLE_RIM`). **One module rather than
+ * two, because it is one rule** — and a rule kept in two places is a rule that will be applied in
+ * one of them. The colours differ per subject; the pass, the inward direction and the bracketing
+ * argument do not.
  *
  * **Rule: this file never imports `phaser`** — it is a pass over a pixel buffer, covered by
  * `npm run verify:palettes`.
@@ -99,8 +104,8 @@ export const SNAIL_RIM = {
 } as const
 
 /** The contour's width in pixels, for a frame of this size. */
-export function rimWidthPx(width: number, height: number): number {
-  return Math.max(SNAIL_RIM.minPx, Math.round(Math.sqrt(width * height) * SNAIL_RIM.widthFraction))
+export function rimWidthPx(width: number, height: number, spec: { widthFraction: number; minPx: number } = SNAIL_RIM): number {
+  return Math.max(spec.minPx, Math.round(Math.sqrt(width * height) * spec.widthFraction))
 }
 
 /**
@@ -118,7 +123,19 @@ export function rimWidthPx(width: number, height: number): number {
  * Euclidean rather than Chebyshev distance: a square neighbourhood puts a visibly thicker contour
  * on the diagonals, and on a shape made almost entirely of curves that reads as a lumpy edge.
  */
-export function paintInkRim(pixels: Uint8ClampedArray | Uint8Array, width: number, height: number, rim: number): number {
+export interface RimTones {
+  color: number
+  innerColor: number
+  innerShare: number
+}
+
+export function paintInkRim(
+  pixels: Uint8ClampedArray | Uint8Array,
+  width: number,
+  height: number,
+  rim: number,
+  tones: RimTones = SNAIL_RIM,
+): number {
   if (rim <= 0) return 0
 
   const opaque = (x: number, y: number) => {
@@ -144,7 +161,7 @@ export function paintInkRim(pixels: Uint8ClampedArray | Uint8Array, width: numbe
   //
   // 1 is the outer ink band, 2 the pale one inside it. The distance is measured once, in the same
   // sweep, so the two bands cannot disagree about where the edge is.
-  const inner = Math.max(1, Math.round(rim * SNAIL_RIM.innerShare))
+  const inner = Math.max(1, Math.round(rim * tones.innerShare))
   const outer = Math.max(1, rim - inner)
   const mark = new Uint8Array(width * height)
   let painted = 0
@@ -172,8 +189,8 @@ export function paintInkRim(pixels: Uint8ClampedArray | Uint8Array, width: numbe
   }
 
   const band = (color: number) => [(color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff]
-  const ink = band(SNAIL_RIM.color)
-  const lit = band(SNAIL_RIM.innerColor)
+  const ink = band(tones.color)
+  const lit = band(tones.innerColor)
 
   for (let i = 0; i < mark.length; i++) {
     if (!mark[i]) continue
