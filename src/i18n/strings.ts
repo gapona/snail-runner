@@ -163,7 +163,11 @@ const en = {
   levelLocked: 'Locked',
   nextLevel: 'Next',
   levelLockedBy: 'Clear {name}',
-  themeAuto: 'Match level',
+  // **Named for the palette it applies, not for the mechanism.** `auto` means "no override",
+  // which resolves to `DEFAULT_ROAD_THEME` — and that is `day`. The old label said "Match level",
+  // which described a rail shooter that had levels; this fork has none, so it named a concept the
+  // player could not find. **Coupled to `DEFAULT_ROAD_THEME`: move the default and this lies.**
+  themeAuto: 'Day',
   // The mascot's five recolours. Names of colours rather than of species: what a skin changes is
   // where the shell and the foot sit on the hue wheel, and calling one "Forest Snail" would promise
   // a different creature. See `run/snailSkins.ts`.
@@ -312,7 +316,7 @@ const es: Record<StringKey, string> = {
   levelLocked: 'Bloqueado',
   nextLevel: 'Siguiente',
   levelLockedBy: 'Completa {name}',
-  themeAuto: 'Según el nivel',
+  themeAuto: 'Día',
   snail_amber: 'Ámbar',
   snail_fern: 'Helecho',
   snail_teal: 'Turquesa',

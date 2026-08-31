@@ -92,16 +92,19 @@ export const THEME_CATEGORY = 'shopTabThemes'
 
 export function buildThemeCatalog(): ShopItem[] {
   return [
-    // **First row, and it is not a theme.** `AUTO_THEME_ID` is the absence of an override — the
-    // value that lets each level use its own authored light. Without a row for it, buying any theme
-    // would be one-way: the player could pick `ice` and never get level identity back, which is the
-    // same trap the free themes were in before they were listed. A choice the game can enter and
-    // not leave is not a choice.
+    // **First row, and its id is not a theme id.** `AUTO_THEME_ID` is the absence of an override.
+    // It was written for the rail shooter, where that meant "let each level use its own authored
+    // light"; this fork has no levels, so what it means here is simply `DEFAULT_ROAD_THEME`. The row
+    // stays because it is the save's own default value — without it, buying any theme would be
+    // one-way, which is the trap the free themes were in before they were listed.
+    //
+    // It is therefore labelled and iconed as the theme it applies, `day`, rather than as the
+    // mechanism. See `themeAuto` in `i18n/strings.ts` for the coupling that creates.
     {
       id: themeItemId(AUTO_THEME_ID),
       priceCoins: 0,
       titleKey: 'themeAuto',
-      icon: '\u{2726}',
+      icon: '\u{2600}',
       category: THEME_CATEGORY,
       kind: 'unlock' as const,
     },
