@@ -117,6 +117,56 @@ function shiftLightnessAndChroma(colour: number, lightness: number, chromaDelta:
 }
 
 /**
+ * A biome's authored ground, under a theme's own light — hue and chroma only.
+ *
+ * **The lever `groundLight` was missing, and its absence is what made four themes one theme.**
+ * A theme could darken every biome and nothing else, so `dusk`, `ember`, `verdant` and `signal`
+ * all rendered the same ground: measured through the real bake, their mean pairwise ground
+ * `deltaE` ran 0.003 to 0.072, i.e. below the point at which two of them are different products.
+ * The biome's hue survived and its *identity* did not, because a place is not only its brightness.
+ *
+ * Two terms, and they answer different halves of that:
+ *
+ * - **`chroma`** is how much of the biome's own colour survives the theme's light. At 1 a forest
+ *   is as green as it was authored; at 0 it is a grey, which is what a deliberately monochrome
+ *   theme means and the only way to get one — `signal` says it is monochrome in its own comment
+ *   and could not be, because the ground came from the biome and ignored it.
+ * - **`hue`** pushes every ground the same number of degrees toward the theme's own light. It is
+ *   a rotation and not a replacement on purpose: a sunset does not make grass and sand the same
+ *   colour, it moves both toward the sun. Biomes keep their order on the wheel and their spread.
+ *
+ * **⚠ Applied before `groundPairForTheme`, never after.** That function pushes a pair away from
+ * the asphalt until it clears `MIN_GROUND_CONTRAST` and stops exactly on the floor; a chroma
+ * scale applied afterwards moves luminance too (see `clearOfRoad` for the same finding at the
+ * shade level) and would walk a cleared pair straight back into the road. Same ordering argument
+ * as `groundLight`'s own, one step earlier.
+ */
+export function themedGround(
+  ground: readonly [number, number],
+  groundChroma = 1,
+  groundHue = 0,
+): [number, number] {
+  if (groundChroma === 1 && groundHue === 0) return [ground[0], ground[1]]
+
+  const radians = (groundHue * Math.PI) / 180
+  const cos = Math.cos(radians)
+  const sin = Math.sin(radians)
+
+  const treat = (colour: number) => {
+    const lab = toOklab(colour)
+    // Rotated first, then scaled. The other order is the same arithmetic for a pure rotation, and
+    // is not once the scale can be 0: a grey has no angle, so rotating it afterwards would be
+    // rotating noise back into a colour the theme has just said it does not want.
+    const a = lab.a * cos - lab.b * sin
+    const b = lab.a * sin + lab.b * cos
+
+    return fromOklab({ L: lab.L, a: a * groundChroma, b: b * groundChroma })
+  }
+
+  return [treat(ground[0]), treat(ground[1])]
+}
+
+/**
  * The `GROUND_SHADES_PER_BIOME` colours a biome's ground is drawn in, under one theme.
  *
  * **Derived from the pair rather than authored per biome, and the order matters.** The pair is
@@ -136,14 +186,31 @@ function shiftLightnessAndChroma(colour: number, lightness: number, chromaDelta:
  * exactly as the separation push decides it — splitting a set across the road's brightness is
  * the one arrangement guaranteed to make part of it invisible.
  */
+/**
+ * **⚠ The trailing parameters are in `groundPairForTheme`'s order, and they were not.**
+ *
+ * This used to take `(alternation, groundLight)` while the function it forwards to takes
+ * `(minContrast, groundLight, alternation)`, so the two disagreed about what slot 4 means. Every
+ * caller passed `undefined` there and the defect stayed dormant — but the alternation knob was
+ * being handed to the road-edge contrast floor, and a caller that ever turned it on would have
+ * lowered that floor instead, silently.
+ *
+ * TypeScript cannot see this: all three are `number | undefined`, so every wrong arrangement
+ * typechecks. **The class to watch for is two or more consecutive optional parameters of the same
+ * type**, and the durable fix is not to correct the call, it is to make the two signatures agree
+ * so there is nothing to get wrong. Swept across `src/road/`: `decalsIn` is the only other
+ * function of this shape and its one call site is correct.
+ */
 export function groundShadesForTheme(
   ground: readonly [number, number],
   roadDark: number,
   roadLight: number,
-  alternation?: number,
+  minContrast?: number,
   groundLight?: number,
+  alternation?: number,
 ): number[] {
-  const pair = groundPairForTheme(ground, roadDark, roadLight, alternation, groundLight)
+  // Slot for slot, now that the two signatures agree. See this function's own note.
+  const pair = groundPairForTheme(ground, roadDark, roadLight, minContrast, groundLight, alternation)
   const roadHi = Math.max(relativeLuminance(roadDark), relativeLuminance(roadLight))
   const brighten = relativeLuminance(pair[0]) >= roadHi
 

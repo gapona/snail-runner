@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser'
-import { BIOMES, GROUND_SHADES_PER_BIOME, groundShadesForTheme, roadShadesForTheme } from './biomes'
+import { BIOMES, GROUND_SHADES_PER_BIOME, groundShadesForTheme, roadShadesForTheme, themedGround } from './biomes'
 import { FOG_STEPS, PALETTE_COLUMNS, PALETTE_INDEX } from './constants'
 import { surfaceColour } from './paletteColour'
 import { getRoadTheme } from './themes'
@@ -60,7 +60,14 @@ export function createRoadPalette(scene: Phaser.Scene, key: string): Phaser.Text
             theme.road[PALETTE_INDEX.ASPHALT_LIGHT],
           )[column - groundEnd]
         : groundShadesForTheme(
-            BIOMES[Math.floor((column - theme.road.length) / GROUND_SHADES_PER_BIOME)].ground,
+            // The theme's own treatment of the biome's colour, applied before anything measures
+            // or separates it -- see `themedGround`. A theme that sets neither field hands the
+            // authored pair straight through.
+            themedGround(
+              BIOMES[Math.floor((column - theme.road.length) / GROUND_SHADES_PER_BIOME)].ground,
+              theme.groundChroma,
+              theme.groundHue,
+            ),
             theme.road[PALETTE_INDEX.ASPHALT_DARK],
             theme.road[PALETTE_INDEX.ASPHALT_LIGHT],
             undefined,

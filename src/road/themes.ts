@@ -96,6 +96,21 @@ export interface RoadTheme {
    * road's edge readable, so a dark theme may make the ground dim but may not make it merge.
    */
   groundLight: number
+  /**
+   * How much of every biome's own colour survives this theme's light, and how far it is rotated.
+   *
+   * **These exist because `groundLight` alone made four themes into one.** A theme could change
+   * how bright the ground was and nothing else, so `dusk`, `ember`, `verdant` and `signal` all
+   * drew the same earth under different skies — mean pairwise ground `deltaE` of 0.003 to 0.072
+   * through the real bake, which is below the point at which two of them are separate products.
+   *
+   * **Required rather than optional, and `verify:road` is why.** It asserts every theme carries an
+   * identical set of keys, so that a theme cannot quietly lack one and inherit a default nobody
+   * chose. `1` and `0` are the identity here and say "this theme leaves the biomes alone" out
+   * loud, which is a decision; an absent field is only an omission. See `themedGround`.
+   */
+  groundChroma: number
+  groundHue: number
   /** Additive glow laid over the road surface, and how strong it is at its brightest. */
   glow: { color: number; alpha: number }
   vignette: number
@@ -125,6 +140,8 @@ export const THEMES: Record<string, RoadTheme> = {
   day: {
     id: 'day',
     groundLight: 1,
+    groundChroma: 1,
+    groundHue: 0,
     // ── ⚠ THE ROAD IS A GARDEN PATH ON THIS THEME, NOT ASPHALT ────────────────────
     //
     // The five slots are `PALETTE_INDEX`: two alternating surface shades, two rumble-stripe
@@ -165,6 +182,8 @@ export const THEMES: Record<string, RoadTheme> = {
   night: {
     id: 'night',
     groundLight: 0.34,
+    groundChroma: 1,
+    groundHue: 0,
     road: [0x363b48, 0x404554, 0x4a7fd6, 0xf2f2f5, 0xb0b4bd],
     fog: 0x2c3550,
     sky: { top: 0x121a33, bottom: 0x3a4a70, band: 0x6a80ad },
@@ -178,9 +197,14 @@ export const THEMES: Record<string, RoadTheme> = {
   dusk: {
     id: 'dusk',
     groundLight: 0.6,
+    // **The sky was violet at the top and `crystal`'s ground is violet, 8 degrees apart.** A
+    // sunset's deepest sky is the blue the sun has left, not more of the sun -- so the top goes
+    // indigo and the warmth stays where it belongs, at the horizon and on the ground.
+    groundChroma: 0.9,
+    groundHue: -12,
     road: [0x5a4450, 0x67505c, 0xffd45e, 0xffe9d6, 0xd6c3b4],
     fog: 0x8a6a9a,
-    sky: { top: 0x3d2a63, bottom: 0xc87fa8, band: 0xffc27a },
+    sky: { top: 0x27285e, bottom: 0xc87fa8, band: 0xffc27a },
     decor: { body: 0x4a2f3d, rim: 0x9c6a8c },
     decorTint: 0xd8a973, // low warm sun
     // **Repainted from a cyan `0x66e0ff`, which measured 1.6 degrees from the ship's own hull.**
@@ -195,9 +219,31 @@ export const THEMES: Record<string, RoadTheme> = {
   ice: {
     id: 'ice',
     groundLight: 0.88,
+    // **`day` and `ice` were the same product, and only the weighted criterion could see it.**
+    // Both a blue sky over a bright ground: pair distance 0.031 against a next-closest of 0.072,
+    // while the ground-only metric had them at 0.110 and called them fine. `day` is the free
+    // default and does not move, so the cold theme takes its own ground -- snow washes colour out
+    // of a place and cools what is left, which is a rotation toward blue and most of the chroma
+    // gone. Held above the point at which every ground would fall under the A1.1 chroma gate:
+    // passing that rule by having no hue left is dodging it, not satisfying it.
+    groundChroma: 0.5,
+    groundHue: 42,
     road: [0x53687a, 0x5f7789, 0x7fdcff, 0xffffff, 0xc9d6de],
     fog: 0x9fc4d8,
-    sky: { top: 0x5f9fc4, bottom: 0xcfe6f0, band: 0xffffff },
+    // **A polar sky, because the cold had to move somewhere `day` is not.** `day` and `ice` were
+    // one product at a weighted distance of 0.033 against a floor of 0.05, and 62% of that weight
+    // is sky: giving `ice` its own snow-washed ground moved the pair by 0.002, so the separation
+    // could only come from here. Deep blue over bright snow rather than the pale blue `day` also
+    // owns — the cold identity stays in the ground, which is where `groundChroma`/`groundHue` put
+    // it, and the sky says which of the two bright themes this is.
+    //
+    // Swept against every constraint before it was picked, and two candidates were rejected by
+    // them rather than by eye: a paler "whiteout" sky drops to chroma 0.049 and would be *exempt*
+    // from A1.1, i.e. would pass that rule by having no hue rather than by keeping it out of the
+    // ground's family; and a mid teal lands 0.050 from `verdant`, exactly on the floor. This is
+    // 0.123 from `day`, 0.082 from its own nearest theme, 116 degrees clear on A1.1, and leaves
+    // the horizon lighter than every one of its grounds.
+    sky: { top: 0x14496b, bottom: 0xa8cfe0, band: 0xffffff },
     decor: { body: 0x2c3f4f, rim: 0x7f9fb2 },
     decorTint: 0xa8d2ea, // pale and cold, barely darkened -- this theme is the bright one
     enemy: { body: 0x2a0f14, rim: 0xff5d5d, telegraph: THREAT_COLOR },
@@ -208,6 +254,12 @@ export const THEMES: Record<string, RoadTheme> = {
   ember: {
     id: 'ember',
     groundLight: 0.5,
+    // **Ash, not more fire.** The sky carries the burn; a ground rotated toward it as well left
+    // this theme sharing its earth with `dusk`, `verdant` and `signal` at a `deltaE` of 0.07. The
+    // chroma comes most of the way out and what is left leans cold, which is what burnt ground
+    // under a hot sky actually looks like and what separates it from the three.
+    groundChroma: 0.72,
+    groundHue: 30,
     road: [0x4a3a34, 0x56443d, 0xffa726, 0xffd9a8, 0xd8b98f],
     fog: 0x8a6f28,
     sky: { top: 0x5a2410, bottom: 0xd49a2a, band: 0xffb45c },
@@ -226,9 +278,15 @@ export const THEMES: Record<string, RoadTheme> = {
   verdant: {
     id: 'verdant',
     groundLight: 0.9,
+    // **A green sky over green grass, 14 degrees apart: the theme was one colour.** The sky is a
+    // humid blue-teal now -- the air of an overgrown place rather than more of the place -- and
+    // the green goes into the ground instead, where the theme's name belongs. Chroma up rather
+    // than hue rotated far: `verdant` is *lusher* biomes, not different ones.
+    groundChroma: 1.25,
+    groundHue: 6,
     road: [0x4a5a4e, 0x56685a, 0x86e05a, 0xe8ffe0, 0xd8e4cf],
     fog: 0xa8d4b4,
-    sky: { top: 0x69b88f, bottom: 0xcdeacf, band: 0xf2ffe8 },
+    sky: { top: 0x2f6f8a, bottom: 0xcdeacf, band: 0xf2ffe8 },
     decor: { body: 0x1e3a2c, rim: 0x4f8f6a },
     decorTint: 0x9ad18f, // green shade, close to neutral
     enemy: { body: 0x2e1030, rim: 0xff5ad0, telegraph: THREAT_COLOR },
@@ -239,6 +297,16 @@ export const THEMES: Record<string, RoadTheme> = {
   signal: {
     id: 'signal',
     groundLight: 0.62,
+    // **`groundChroma: 0` is what finally makes the sentence below true.** It has claimed to be
+    // monochrome since it was written and never was: the ground came from the biome, and a theme
+    // had no way to say otherwise, so five of nine biomes rendered their own colour under it.
+    // With the biome colour taken out, the reserved threat hue is the only chromatic thing left
+    // in the frame -- which is also the cheapest honest test of whether the reservation holds at
+    // all, since anything else that shows up as colour here is something that should not have it.
+    groundChroma: 0,
+    // A rotation of a grey has no direction to point in, so this is 0 rather than unset: the theme
+    // is saying it leaves the hue alone because it has already removed it.
+    groundHue: 0,
     // Monochrome with exactly one chromatic colour in the frame, and it means "enemy". Doubles
     // as the readable option for anyone who cannot separate the red/green pairs the other
     // themes lean on.

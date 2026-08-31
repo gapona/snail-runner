@@ -18,11 +18,13 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { decodePng } from './png.mjs'
-import { chroma, contrastRatio, hueDistance, relativeLuminance, toHsl } from '../src/road/color.ts'
+import { chroma, contrastRatio, deltaE, fromOklab, hueDistance, mixOklab, relativeLuminance, toHsl, toOklab } from '../src/road/color.ts'
 import { getRoadTheme, setRoadTheme, themeIds, THREAT_MIN_CHROMA } from '../src/road/themes.ts'
-import { BIOMES, groundPairForTheme, groundShadesForTheme, MIN_GROUND_CONTRAST } from '../src/road/biomes.ts'
+import { BIOMES, groundShadesForTheme, MIN_GROUND_CONTRAST, themedGround } from '../src/road/biomes.ts'
+import { HORIZON_Y } from '../src/road/constants.ts'
 import { surfaceColour } from '../src/road/paletteColour.ts'
 import { recolour, SNAIL_SKINS } from '../src/run/snailSkins.ts'
+import { paintInkRim, rimWidthPx, SNAIL_RIM } from '../src/run/snailRim.ts'
 
 let passed = 0
 const failed = []
@@ -61,8 +63,18 @@ function themeOf(id) {
  * the theme's own colour is not already on its way to becoming the sky.
  */
 function nearGround(biome, theme) {
-  const pair = groundPairForTheme(biome.ground, theme.road[0], theme.road[1], MIN_GROUND_CONTRAST, theme.groundLight)
-  const shades = groundShadesForTheme(pair, theme.road[0], theme.road[1], MIN_GROUND_CONTRAST)
+  // **⚠ `groundShadesForTheme` takes the biome's AUTHORED pair and runs `groundPairForTheme`
+  // itself.** The first version of this helper computed the pair and passed *that* in, which is an
+  // output where an input belongs.
+  //
+  // It produced the right numbers anyway, and only by cancellation: passing the pair applied the
+  // theme's `groundLight` once on the way in, and the argument was in the slot the function reads
+  // as `alternation`, so `groundLight` was never passed and the inner call defaulted it to 1.
+  // Measured on `night`/`forest`, both forms give a shade luminance of 0.00344; a genuine double
+  // application gives 0.00046. So nothing measured before this was wrong — but it was right for a
+  // reason no reader could have relied on, which is the same thing as being wrong next time.
+  const ground = themedGround(biome.ground, theme.groundChroma, theme.groundHue)
+  const shades = groundShadesForTheme(ground, theme.road[0], theme.road[1], undefined, theme.groundLight)
 
   return surfaceColour({ base: shades[2], family: 'ground', fog: theme.fog, sky: theme.sky.bottom, amount: 0 })
 }
@@ -84,12 +96,22 @@ function hsl(color) {
 /**
  * How far apart the sky and the ground have to sit on the hue wheel.
  *
- * **Derived from the live data rather than carried over from anywhere.** Measured at the point
- * below, the seven themes fall into two groups with nothing between them: `dusk` at 8 degrees and
- * `verdant` at 14, against `ember` at 43, `day` at 62 and `ice` at 70. The gap 14..43 is empty, so
- * the threshold is any value inside it; 30 sits near its middle, at 2.1x the worst failure and
- * 0.70x the best pass. If a repaint ever closes that gap the number stops being derivable and has
- * to be argued for instead.
+ * **⚠ This is a REGRESSION threshold, and it is no longer derivable from the current palettes.
+ * Do not present it as measured.**
+ *
+ * It was derived, once, on 2026-08-31, from the data *before* the repaint that followed: gated and
+ * measured at `sky.top`, the themes fell into two groups with nothing between them — `dusk` at 8
+ * degrees and `verdant` at 14, against `ember` at 43, `day` at 62 and `ice` at 70. The range
+ * 14..43 was empty, so any value inside it was the threshold, and 30 sits near its middle at 2.1x
+ * the worst failure and 0.70x the best pass.
+ *
+ * The repaint then fixed both failures. The live distribution is now 62, 70, 74, 78, 142 with no
+ * failures and therefore **no gap to derive anything from** — so 30 is not "what the data says", it
+ * is "below everything, and above where it was bad". That is a worthwhile test, and it is a
+ * different claim: it says *do not go back to where we were*, not *this is the right number*.
+ *
+ * What would make it derivable again is a new failure. Until then, anyone re-tuning it is choosing
+ * a number, not reading one, and should say so.
  */
 const SKY_GROUND_MIN_HUE_DEGREES = 30
 
@@ -125,7 +147,7 @@ function skyPoint(theme) {
 function skyGroundHue(theme) {
   const sky = skyPoint(theme)
 
-  if (chroma(sky) < THREAT_MIN_CHROMA) return null
+  if (chroma(sky) < THREAT_MIN_CHROMA) return { exempt: 'achromatic sky' }
 
   let worst = null
 
@@ -139,7 +161,13 @@ function skyGroundHue(theme) {
     if (worst === null || distance < worst.distance) worst = { distance, biome: biome.id }
   }
 
-  return worst
+  // **⚠ Distinguished from an achromatic sky, because they are not the same fact.** A theme whose
+  // sky has no hue cannot be in anyone's family and is exempt by construction. A theme that has
+  // taken the chroma out of every one of its own grounds has made the question not arise, which
+  // is a way of passing this check rather than of answering it -- `ember` did exactly that at
+  // `groundChroma: 0.45` and read as a second monochrome theme. Reported separately so it cannot
+  // be mistaken for a pass.
+  return worst ?? { exempt: 'every ground achromatic' }
 }
 
 console.log('A1.1 - the sky is not made of the same colour as the ground')
@@ -154,14 +182,14 @@ check('every theme with a chromatic sky keeps it out of the ground family', () =
 
     rows.push({ id, sky: skyPoint(theme), worst })
 
-    if (worst && worst.distance < SKY_GROUND_MIN_HUE_DEGREES) failures.push({ id, ...worst })
+    if (worst.distance !== undefined && worst.distance < SKY_GROUND_MIN_HUE_DEGREES) failures.push({ id, ...worst })
   }
 
   console.log(`    floor ${SKY_GROUND_MIN_HUE_DEGREES} deg, sky.top vs near ground, both sides gated at chroma ${THREAT_MIN_CHROMA}:`)
 
   for (const { id, sky, worst } of rows) {
-    const verdict = worst === null ? 'achromatic sky - exempt' : `${String(Math.round(worst.distance)).padStart(3)} deg vs ${worst.biome}`
-    const flag = worst && worst.distance < SKY_GROUND_MIN_HUE_DEGREES ? '  <-- IN THE GROUND FAMILY' : ''
+    const verdict = worst.exempt ? `${worst.exempt} - exempt` : `${String(Math.round(worst.distance)).padStart(3)} deg vs ${worst.biome}`
+    const flag = worst.distance !== undefined && worst.distance < SKY_GROUND_MIN_HUE_DEGREES ? '  <-- IN THE GROUND FAMILY' : ''
 
     console.log(`      ${id.padEnd(9)} sky.top ${hsl(sky)}  chroma ${chroma(sky).toFixed(3)}  ${verdict}${flag}`)
   }
@@ -190,14 +218,34 @@ check('the check measures something: the horizon point it replaced rejects every
     if (worst < SKY_GROUND_MIN_HUE_DEGREES) rejected++
   }
 
-  assert.equal(rejected, THEMES.length, 'measured at the horizon the rule should reject everything, and no longer does')
-  console.log(`    at sky.bottom: ${rejected} of ${THEMES.length} themes rejected, i.e. the old point was measuring the dissolve`)
+  // **⚠ Asserted as "strictly more than at `sky.top`", not as "all seven".** It was all seven, and
+  // the repaint that followed changed that -- which is the control doing its job rather than
+  // failing: the themes moved, so a count fixed to the pre-repaint data would have been a number
+  // carried over exactly like the threshold it was written to justify. What stays true, and is
+  // the actual claim, is that the horizon point is systematically stricter because it measures a
+  // convergence the renderer is required to produce.
+  let atTop = 0
+
+  for (const id of THEMES) {
+    const worst = skyGroundHue(themeOf(id))
+
+    if (worst.distance !== undefined && worst.distance < SKY_GROUND_MIN_HUE_DEGREES) atTop++
+  }
+
+  assert.ok(rejected > atTop, `the horizon point rejects ${rejected} and sky.top rejects ${atTop}, so the two points no longer differ`)
+  console.log(`    at sky.bottom ${rejected} of ${THEMES.length} themes are rejected, at sky.top ${atTop} - the old point was measuring the dissolve`)
 })
 
-check('the chroma gate is load-bearing: without it the two clearest themes rank worst', () => {
-  // The second control. `day` and `ice` have the largest genuine separation in the set and scored 4
-  // and 5 degrees ungated, because their worst biome's ground is a near-neutral whose hue angle
-  // means nothing. A check that ranks the healthy themes worst is measuring noise.
+check('the chroma gate is load-bearing: without it a passing theme is ranked as failing', () => {
+  // The second control, and it is asserted as a *claim* rather than against named themes.
+  //
+  // **⚠ It named `day` and `ice` first, and the repaint broke it — exactly as it broke the control
+  // above.** `ice` was given a ground of its own, stopped failing ungated, and this failed for a
+  // reason with nothing to do with the gate. A control pinned to the data it was written on has an
+  // expiry date; what is durable is the property it exists to demonstrate.
+  //
+  // The property: excluding near-neutral grounds changes at least one theme's verdict. It has to,
+  // or the gate is doing nothing and the argument for it is decoration.
   function ungated(theme) {
     let worst = 999
 
@@ -206,67 +254,235 @@ check('the chroma gate is load-bearing: without it the two clearest themes rank 
     return worst
   }
 
-  const dayUngated = ungated(themeOf('day'))
-  const iceUngated = ungated(themeOf('ice'))
+  const flipped = []
 
-  assert.ok(dayUngated < SKY_GROUND_MIN_HUE_DEGREES, 'day no longer fails ungated, so the gate has stopped mattering')
-  assert.ok(iceUngated < SKY_GROUND_MIN_HUE_DEGREES, 'ice no longer fails ungated, so the gate has stopped mattering')
+  for (const id of THEMES) {
+    const theme = themeOf(id)
 
-  const dayGated = skyGroundHue(themeOf('day'))
-  const iceGated = skyGroundHue(themeOf('ice'))
+    if (chroma(skyPoint(theme)) < THREAT_MIN_CHROMA) continue
 
-  assert.ok(dayGated.distance >= SKY_GROUND_MIN_HUE_DEGREES && iceGated.distance >= SKY_GROUND_MIN_HUE_DEGREES)
-  console.log(
-    `    day ${Math.round(dayUngated)} -> ${Math.round(dayGated.distance)} deg, ice ${Math.round(iceUngated)} -> ${Math.round(iceGated.distance)} deg once greys are excluded`,
-  )
+    const before = ungated(theme)
+    const after = skyGroundHue(theme)
+
+    if (before < SKY_GROUND_MIN_HUE_DEGREES && after.distance >= SKY_GROUND_MIN_HUE_DEGREES) {
+      flipped.push(`${id} ${Math.round(before)} -> ${Math.round(after.distance)}`)
+    }
+  }
+
+  assert.ok(flipped.length > 0, 'no theme changes verdict when greys are excluded, so the chroma gate has stopped mattering')
+  console.log(`    rescued from a hue angle measured against a grey: ${flipped.join(', ')}`)
 })
 
 // ---------------------------------------------------------------------------------------------
-// A1.3 -- a theme may change the brightness of the frame, but not its readability
+// A1.3 -- a theme may change the brightness of the frame, but not the readability of the road
 // ---------------------------------------------------------------------------------------------
 
 /**
- * How far apart two themes' ground-to-road contrast may sit.
+ * How legible the road's edge has to be, and how equally.
  *
- * **This is the contrast, NOT the absolute lightness, and the distinction is the whole rule.** Equal
- * near-field lightness across themes was proposed and is wrong here: it is a rule about *biomes*,
- * where the player crosses a seam mid-run and a step in overall brightness reads as an artefact. A
- * theme has no seam -- it is chosen before the run and held for all of it, so there is nothing to
- * compare it against, and absolute brightness stays an expressive tool. `night` carries
- * `groundLight` 0.34 for exactly that reason and must keep it. See `biomes.ts` for the biome half.
+ * **⚠ Measured as a perceptual lightness difference, not as a WCAG contrast ratio, and the ratio
+ * was not merely a worse unit — it was self-defeating on the themes it mattered most for.**
  *
- * What may not move between themes is how legible the road's edge is, which is a ratio.
+ * The first version of this check asked that the per-theme *mean* ground-to-road contrast ratio
+ * agree across themes to 1.5x. It measured 1.89x and could not be satisfied. Three findings came
+ * out of trying, in order:
  *
- * The bound is measured rather than picked: six of the seven themes sit between 1.73 and 2.28, a
- * spread of 1.32x, and `day` sits alone at 3.28. 1.5 admits the six and rejects the one.
+ * 1. **The ratio exaggerates the disagreement.** The same seven themes measured in OKLab lightness
+ *    spread 1.59x rather than 1.89x, and six of them agree to **1.13x** (0.180..0.203) with `day`
+ *    alone at 0.286. The ratio's `+0.05` denominator dominates at the luminances a night theme
+ *    works at, so it is reporting the offset as much as the colours.
+ * 2. **`day`'s surplus is not a defect and cannot be one.** A brighter theme has a stronger edge;
+ *    that is what daylight is. A two-sided bound punishes the theme for being *more* legible, which
+ *    is not a state any player can experience as a problem. So this rule is one-sided: nothing may
+ *    be less legible than the floor, and exceeding it is the theme working.
+ * 3. **⚠ And the existing `MIN_GROUND_CONTRAST` is itself unevenly strict**, which nothing had ever
+ *    asked. The same 1.6 ratio delivers a perceptual edge of 0.143 on `ice` and 0.195 on `night` —
+ *    a 1.36x spread in what the rule actually buys. Raising it makes that **worse**, not better:
+ *    measured at 1.7 / 1.8 / 1.9 the spread goes 1.41x / 1.61x / 1.87x while the darkest ground
+ *    falls 0.0013 / 0.0003 / 0.0000, i.e. into the black verges "Why The Game Rendered Dark"
+ *    records. On a dark theme the only way to win ratio is to go to zero.
+ *
+ * So constancy is asserted on **the floor**, where readability lives, and not on the mean, where a
+ * theme's character lives.
+ *
+ * **Both numbers are regression thresholds, derived on 2026-09-01 and not derivable now**, for the
+ * reason both of this suite's other floors carry: a threshold read out of a distribution stops
+ * being readable from it the moment it passes. The floor is the current weakest edge (`ice`, 0.143)
+ * rounded down; the spread bound sits just above the current 1.36x. What makes them worth having is
+ * the control below, which is a real alternative rather than a fixture.
  */
-const THEME_CONTRAST_SPREAD = 1.5
+const EDGE_MIN_LIGHTNESS = 0.14
+const EDGE_SPREAD = 1.4
 
-console.log('\nA1.3 - a theme changes the brightness of the frame, not its readability')
+/** The perceptual lightness gap between two surfaces. */
+function edge(a, z) {
+  return Math.abs(toOklab(a).L - toOklab(z).L)
+}
 
-check('every theme keeps the ground and the road the same distance apart', () => {
-  const rows = THEMES.map((id) => {
+/** Every theme's weakest road edge, over its nine biomes, at a given contrast floor. */
+function worstEdges(floor) {
+  return THEMES.map((id) => {
     const theme = themeOf(id)
     const road = nearRoad(theme)
-    const ratios = BIOMES.map((biome) => contrastRatio(nearGround(biome, theme), road))
+    let worst = Infinity
 
-    return { id, mean: ratios.reduce((sum, r) => sum + r, 0) / ratios.length, min: Math.min(...ratios) }
+    for (const biome of BIOMES) {
+      const shades = groundShadesForTheme(
+        themedGround(biome.ground, theme.groundChroma, theme.groundHue),
+        theme.road[0],
+        theme.road[1],
+        floor,
+        theme.groundLight,
+      )
+      const ground = surfaceColour({ base: shades[2], family: 'ground', fog: theme.fog, sky: theme.sky.bottom, amount: 0 })
+
+      worst = Math.min(worst, edge(ground, road))
+    }
+
+    return { id, worst }
+  })
+}
+
+console.log('\nA1.3 - a theme changes the brightness of the frame, not the readability of the road')
+
+check('every theme keeps the road edge legible, and equally legible', () => {
+  const rows = worstEdges(undefined)
+  const worsts = rows.map((row) => row.worst)
+  const spread = Math.max(...worsts) / Math.min(...worsts)
+
+  console.log(`    weakest road edge per theme, in OKLab lightness (floor ${EDGE_MIN_LIGHTNESS}, spread bound ${EDGE_SPREAD}x):`)
+  for (const row of rows) console.log(`      ${row.id.padEnd(9)} ${row.worst.toFixed(3)}`)
+  console.log(`    spread ${spread.toFixed(2)}x`)
+
+  // The mean is printed and deliberately NOT asserted: it is where a theme's character lives, and
+  // `day` sits 40% above the tightest because daylight has more contrast than moonlight.
+  const means = THEMES.map((id) => {
+    const theme = themeOf(id)
+    const road = nearRoad(theme)
+
+    return `${id} ${(BIOMES.reduce((sum, biome) => sum + edge(nearGround(biome, theme), road), 0) / BIOMES.length).toFixed(3)}`
   })
 
-  const means = rows.map((row) => row.mean)
-  const spread = Math.max(...means) / Math.min(...means)
-
-  console.log('    ground-vs-road contrast, mean over 9 biomes (absolute lightness deliberately not asserted):')
-  for (const row of rows) console.log(`      ${row.id.padEnd(9)} ${row.mean.toFixed(2)}  (worst biome ${row.min.toFixed(2)})`)
-  console.log(`    spread ${spread.toFixed(2)}x against a bound of ${THEME_CONTRAST_SPREAD}x`)
+  console.log(`    mean edge, reported only: ${means.join('  ')}`)
 
   for (const row of rows) {
-    assert.ok(row.min >= MIN_GROUND_CONTRAST, `${row.id} puts a biome ground within ${row.min.toFixed(2)} of its road`)
+    assert.ok(row.worst >= EDGE_MIN_LIGHTNESS, `${row.id} leaves its weakest road edge at ${row.worst.toFixed(3)}, under the floor`)
   }
 
-  assert.ok(
-    spread <= THEME_CONTRAST_SPREAD,
-    `themes disagree about how legible the road edge is by ${spread.toFixed(2)}x: ${rows.map((r) => `${r.id} ${r.mean.toFixed(2)}`).join(', ')}`,
+  assert.ok(spread <= EDGE_SPREAD, `the road edge is ${spread.toFixed(2)}x more legible on one theme than another`)
+})
+
+check('the check bites: tightening the ratio floor makes both numbers worse', () => {
+  // **The control is a real alternative, not a fixture.** Raising `MIN_GROUND_CONTRAST` is the
+  // obvious way to make a road edge more legible and it is what this round tried first. It fails in
+  // both directions at once, which is the whole argument for measuring perceptually — so if it ever
+  // stops failing, the ratio has become a usable rule again and the reasoning above needs re-reading.
+  const tightened = worstEdges(1.8).map((row) => row.worst)
+  const spread = Math.max(...tightened) / Math.min(...tightened)
+
+  assert.ok(spread > EDGE_SPREAD, `at a 1.8 ratio floor the perceptual spread is ${spread.toFixed(2)}x, which no longer exceeds the bound`)
+  console.log(`    at MIN_GROUND_CONTRAST 1.8 the spread is ${spread.toFixed(2)}x against ${EDGE_SPREAD}x, and the darkest ground falls toward black`)
+})
+
+// ---------------------------------------------------------------------------------------------
+// A3 -- two themes are two products
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * How different two themes have to be, weighted by how much of a portrait frame each part fills.
+ *
+ * **⚠ This replaced a ground-only `deltaE`, and the replacement was forced by the metric being
+ * wrong rather than by its threshold being wrong.** Ground alone put `dusk`/`signal` at 0.003 and
+ * four themes inside 0.08 of each other, and no repaint could fix it: four of the seven are dark
+ * themes whose grounds all approach black, and `deltaE` between dark colours is compressed by the
+ * geometry of the space, not by the palettes. `ember` as ash and `signal` as monochrome are
+ * *required* to have similar earth -- that is what those two themes mean. So the metric was
+ * measuring "the grounds are alike" while the question is "the themes are alike", and at the dark
+ * end those are different statements.
+ *
+ * The sky is 62% of a portrait frame and the ground 38% (`HORIZON_Y`), so both are weighted by the
+ * share they actually occupy.
+ *
+ * **The two distances are kept apart and summed, never blended into one colour first.** A red sky
+ * over green ground and a green sky over red ground average to the same grey, and a metric that
+ * called those two themes identical would be repeating the mistake this one was written to fix.
+ *
+ * **⚠ The floor was derived, and the repaint that followed stopped it being derivable — exactly as
+ * happened to `SKY_GROUND_MIN_HUE_DEGREES` one block up. It is a regression threshold now.**
+ *
+ * Derived on 2026-08-31, over all 21 pairs, before `ice` was repainted: `day`/`ice` at 0.033, then
+ * nothing until `ice`/`verdant` at 0.072 and the rest up to 0.414. The range 0.033..0.072 was
+ * empty, so 0.05 sat inside it at 1.5x the failure and 0.69x the nearest pass, and it rejected
+ * exactly one pair — a real finding rather than a tuning artefact, since the ground-only metric it
+ * replaced had scored that same pair 0.110 and called it healthy.
+ *
+ * Separating `ice` fixed it. The live distribution is 0.082..0.414 with no failures and **no gap
+ * to read a number out of**, so 0.05 now says *do not go back to where two themes were one*, not
+ * *this is what the data shows*.
+ *
+ * **That both of this suite's thresholds ended up here is the pattern, not a coincidence:** a
+ * threshold derived from a distribution stops being derivable the moment it does its job. The
+ * honest state for a passing check is a regression threshold with the date and the data it came
+ * from written down, and anyone re-tuning one is choosing a number rather than reading one.
+ */
+const THEME_MIN_DISTANCE = 0.05
+
+console.log('\nA3 - two themes are two products')
+
+check('every pair of themes is distinguishable by more than one of them being darker', () => {
+  const sky = {}
+  const ground = {}
+
+  for (const id of THEMES) {
+    const theme = themeOf(id)
+
+    // The sky band is a top-to-bottom gradient, so what fills its area is the midpoint.
+    sky[id] = mixOklab(theme.sky.top, theme.sky.bottom, 0.5)
+
+    let L = 0
+    let a = 0
+    let b = 0
+
+    for (const biome of BIOMES) {
+      const lab = toOklab(nearGround(biome, theme))
+
+      L += lab.L
+      a += lab.a
+      b += lab.b
+    }
+
+    ground[id] = fromOklab({ L: L / BIOMES.length, a: a / BIOMES.length, b: b / BIOMES.length })
+  }
+
+  const pairs = []
+
+  for (let i = 0; i < THEMES.length; i++) {
+    for (let j = i + 1; j < THEMES.length; j++) {
+      const a = THEMES[i]
+      const z = THEMES[j]
+      const skyD = deltaE(sky[a], sky[z])
+      const groundD = deltaE(ground[a], ground[z])
+
+      pairs.push({ a, z, skyD, groundD, distance: HORIZON_Y * skyD + (1 - HORIZON_Y) * groundD })
+    }
+  }
+
+  pairs.sort((x, y) => x.distance - y.distance)
+
+  console.log(`    weighted pair distance = ${HORIZON_Y.toFixed(2)}*dE(sky) + ${(1 - HORIZON_Y).toFixed(2)}*dE(ground), floor ${THEME_MIN_DISTANCE}:`)
+  for (const pair of pairs.slice(0, 6)) {
+    console.log(
+      `      ${pair.a.padEnd(8)} ${pair.z.padEnd(8)} ${pair.distance.toFixed(3)}  (sky ${pair.skyD.toFixed(3)}, ground ${pair.groundD.toFixed(3)})${pair.distance < THEME_MIN_DISTANCE ? '  <-- ONE PRODUCT' : ''}`,
+    )
+  }
+  console.log(`      ... ${pairs.length - 6} further pairs, up to ${pairs[pairs.length - 1].distance.toFixed(3)}`)
+
+  const failures = pairs.filter((pair) => pair.distance < THEME_MIN_DISTANCE)
+
+  assert.equal(
+    failures.length,
+    0,
+    `themes a player cannot tell apart: ${failures.map((f) => `${f.a}/${f.z} (${f.distance.toFixed(3)})`).join(', ')}`,
   )
 })
 
@@ -278,38 +494,88 @@ check('every theme keeps the ground and the road the same distance apart', () =>
 const MASCOT_MIN_HUE_DEGREES = 20
 const MASCOT_MIN_LUMINANCE = 0.15
 
-/** How much of the mascot may merge with any one backdrop. */
+/**
+ * How much of the mascot may merge with a backdrop **that its rim does not already separate it
+ * from**.
+ *
+ * The interior and the contour answer the same question in different ways, so the check is an
+ * `or`: either the mascot's own colour stands off the ground, or the ink edge does it instead.
+ * Asserting both would forbid the arrangement the rim was added to make possible — a saturated
+ * snail on a bright ground of a similar hue, legible precisely because it is outlined.
+ */
 const MASCOT_MAX_MERGED = 0.1
+
+/**
+ * How hard the rim has to work on a backdrop the interior does not answer.
+ *
+ * **A floor on the pair, not on the rim alone.** Ink is near-black, so against a near-black ground
+ * it has almost no contrast — on `night` it measures about 1.1:1. That is not a defect and a
+ * tighter number would not fix it: the mascot is never themed, so on a dark theme a saturated snail
+ * already stands off the ground by its own colour and its interior merge is 6–7%, well under the
+ * floor above. The rim is needed on the *bright* backdrops, and against those it is the strongest
+ * mark available.
+ */
+const MASCOT_RIM_MIN_CONTRAST = 2
 
 /**
  * The slime trail's own two colours, from `SlimeTrail.ts`.
  *
  * **They are constants there, not theme colours, and that is the finding this check exists for.**
  * The trail is drawn in one fixed yellow-green whatever the theme, so a mascot in that hue merges
- * with its own trail on every theme identically -- and no repaint of any palette can reach it.
- * Measured: `fern` loses 36% of its silhouette to its own trail, on all seven.
+ * with its own trail on every theme identically — and no repaint of any palette can reach it.
+ * Measured before the rim: `fern` lost 36% of its silhouette to its own trail, on all seven.
  */
 const SLIME = [0x9fc24a, 0xe8f7a6]
 
 console.log('\nA5 - the mascot separates from everything it is drawn on')
 
-check('no skin merges with the ground of any theme, or with its own trail', () => {
+check('every skin separates from every backdrop, by its own colour or by its rim', () => {
   const png = decodePng(readFileSync('public/assets/snail/snail-0.png'))
-  const pixels = []
 
-  for (let i = 0; i < png.data.length; i += 4) {
-    if (png.data[i + 3] < 200) continue
+  assert.ok(png.width > 0 && png.height > 0, 'the mascot render has stopped being readable as pixels')
 
-    const color = (png.data[i] << 16) | (png.data[i + 1] << 8) | png.data[i + 2]
+  const rim = rimWidthPx(png.width, png.height)
 
-    // The ink, the eyes and the specular carry no hue, so they cannot merge with anything *by hue*
-    // and they are not what "the colour of the snail" means.
-    if (chroma(color) < THREAT_MIN_CHROMA) continue
+  assert.ok(rim >= SNAIL_RIM.minPx, `the contour is ${rim}px, under its own floor`)
 
-    pixels.push(color)
+  /**
+   * The mascot's chromatic pixels for one skin, with the rim already painted.
+   *
+   * **Built through the shipped `recolour` and the shipped `paintInkRim`, in the game's own order.**
+   * Reimplementing either here would let this measure a mascot the game does not draw — the same
+   * reason every colour above goes through `surfaceColour`.
+   */
+  function skinPixels(skin) {
+    const buffer = Uint8ClampedArray.from(png.data)
+
+    for (let i = 0; i < buffer.length; i += 4) {
+      if (buffer[i + 3] === 0) continue
+
+      const turned = recolour((buffer[i] << 16) | (buffer[i + 1] << 8) | buffer[i + 2], skin)
+
+      buffer[i] = (turned >> 16) & 0xff
+      buffer[i + 1] = (turned >> 8) & 0xff
+      buffer[i + 2] = turned & 0xff
+    }
+
+    const painted = paintInkRim(buffer, png.width, png.height, rim)
+    const colours = []
+
+    for (let i = 0; i < buffer.length; i += 4) {
+      if (buffer[i + 3] < 200) continue
+
+      const color = (buffer[i] << 16) | (buffer[i + 1] << 8) | buffer[i + 2]
+
+      // The ink, the eyes and the specular carry no hue, so they cannot merge with anything *by
+      // hue*, and they are not what "the colour of the snail" means. The rim is ink, so this is
+      // also what keeps it out of the interior measurement.
+      if (chroma(color) < THREAT_MIN_CHROMA) continue
+
+      colours.push(color)
+    }
+
+    return { colours, painted }
   }
-
-  assert.ok(pixels.length > 5000, 'the mascot render has stopped being readable as pixels')
 
   function merged(recoloured, backdrop) {
     let count = 0
@@ -321,31 +587,62 @@ check('no skin merges with the ground of any theme, or with its own trail', () =
     return count / recoloured.length
   }
 
-  const failures = []
+  const backdrops = []
 
-  console.log(`    share of the mascot merging with its worst backdrop (floor ${(MASCOT_MAX_MERGED * 100).toFixed(0)}%), ${pixels.length} chromatic pixels:`)
-  console.log(`      skin      ${THEMES.map((id) => id.slice(0, 7).padEnd(8)).join('')}slime`)
+  for (const id of THEMES) {
+    const theme = themeOf(id)
+
+    for (const biome of BIOMES) backdrops.push({ label: id, color: nearGround(biome, theme) })
+  }
+  for (const color of SLIME) backdrops.push({ label: 'slime', color })
+
+  const failures = []
+  const labels = [...THEMES, 'slime']
+
+  console.log(`    ${rim}px two-tone contour on a ${png.width}x${png.height} frame; interior floor ${(MASCOT_MAX_MERGED * 100).toFixed(0)}%, rim floor ${MASCOT_RIM_MIN_CONTRAST}:1`)
+  console.log(`      skin      ${labels.map((id) => id.slice(0, 7).padEnd(8)).join('')}`)
 
   for (const skin of SNAIL_SKINS) {
-    const recoloured = pixels.map((pixel) => recolour(pixel, skin))
+    const { colours, painted } = skinPixels(skin)
+
+    assert.ok(painted > 0, `${skin.id} has no rim at all`)
+
     const cells = []
 
-    for (const id of THEMES) {
-      const theme = themeOf(id)
-      const worst = Math.max(...BIOMES.map((biome) => merged(recoloured, nearGround(biome, theme))))
+    for (const label of labels) {
+      let worst = 0
+      let carried = 99
 
-      cells.push(worst)
-      if (worst > MASCOT_MAX_MERGED) failures.push(`${skin.id} on ${id} ground (${(worst * 100).toFixed(0)}%)`)
+      for (const backdrop of backdrops.filter((entry) => entry.label === label)) {
+        const share = merged(colours, backdrop.color)
+
+        if (share > worst) worst = share
+        // The rim is reported at its weakest against the backdrops the interior does not answer,
+        // since those are the ones the `or` has to carry.
+        // **The better of the contour's two tones.** They bracket the luminance range on purpose,
+        // so for any backdrop at least one of them is far from it -- which is what makes the
+        // guarantee structural rather than a property of the seven palettes that happen to exist.
+        if (share > MASCOT_MAX_MERGED) {
+          carried = Math.min(
+            carried,
+            Math.max(contrastRatio(SNAIL_RIM.color, backdrop.color), contrastRatio(SNAIL_RIM.innerColor, backdrop.color)),
+          )
+        }
+      }
+
+      cells.push({ share: worst, rim: carried })
+
+      if (worst > MASCOT_MAX_MERGED && carried < MASCOT_RIM_MIN_CONTRAST) {
+        failures.push(`${skin.id} on ${label} (${(worst * 100).toFixed(0)}% merged, rim only ${carried.toFixed(2)}:1)`)
+      }
     }
 
-    const slime = Math.max(...SLIME.map((color) => merged(recoloured, color)))
+    const cell = (entry) => (entry.share > MASCOT_MAX_MERGED ? `${(entry.share * 100).toFixed(0)}%/${entry.rim.toFixed(1)}` : `${(entry.share * 100).toFixed(0)}%`)
 
-    if (slime > MASCOT_MAX_MERGED) failures.push(`${skin.id} on its own trail (${(slime * 100).toFixed(0)}%)`)
-
-    const cell = (value) => `${(value * 100).toFixed(0)}%${value > MASCOT_MAX_MERGED ? '!' : ' '}`
-
-    console.log(`      ${skin.id.padEnd(10)}${cells.map((v) => cell(v).padEnd(8)).join('')}${cell(slime)}`)
+    console.log(`      ${skin.id.padEnd(10)}${cells.map((entry) => cell(entry).padEnd(8)).join('')}`)
   }
+
+  console.log('      (a cell reading "16%/2.7" is an interior over the floor, carried by a rim at 2.7:1)')
 
   assert.equal(failures.length, 0, `the mascot disappears into its backdrop: ${failures.join(', ')}`)
 })

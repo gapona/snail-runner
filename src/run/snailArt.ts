@@ -28,6 +28,7 @@
 import * as Phaser from 'phaser'
 import { INK, SNAIL_BODY as BODY, SNAIL_SHELL as SHELL } from './artPalette'
 import { DEFAULT_SNAIL_SKIN, recolour, snailSkin } from './snailSkins'
+import { paintInkRim, rimWidthPx } from './snailRim'
 
 /** How many frames the glide cycle has. */
 export const SNAIL_FRAMES = 6
@@ -40,15 +41,22 @@ export function snailFrameKey(index: number): string {
 /**
  * Texture key for frame `index` **in a skin**.
  *
- * The default skin returns the base key unchanged, and that is load-bearing rather than tidy: the
- * base keys are what `Preloader` loads from disk and what the procedural fallback draws into, so a
- * player who has bought nothing costs exactly what they cost before skins existed — no canvas, no
- * pixel pass, no second copy of six textures in the atlas.
+ * **⚠ The default skin no longer returns the base key, and that is a deliberate loss.** It used to,
+ * and the reason was good: the base keys are what `Preloader` loads from disk, so a player who had
+ * bought nothing paid nothing — no canvas, no pixel pass, no second copy of six textures.
+ *
+ * The ink rim ended that, because the rim is a property of *the mascot* rather than of a purchase.
+ * Leaving the free skin on the raw PNG would mean the one snail most players see is the one without
+ * the contour that makes it findable, which is the whole feature aimed at exactly the wrong player.
+ * What the old arrangement still buys is that `recolour` is an identity for the default skin, so
+ * that pass costs a hash lookup per colour and nothing else — see `createSkinTextures`.
+ *
+ * The **base** keys stay untouched and unrimmed, and `Preloader` still draws its loading-screen
+ * snail from them: that one sits on the brand backdrop rather than on any theme's ground, and it is
+ * on screen before `createSnailTexture` has run at all.
  */
 export function snailSkinFrameKey(index: number, skinId: string): string {
-  const base = snailFrameKey(index)
-
-  return skinId === DEFAULT_SNAIL_SKIN ? base : `${base}-${skinId}`
+  return `${snailFrameKey(index)}-${skinId}`
 }
 
 /** The first frame, for anything needing a key before it has a distance to derive one from. */
@@ -114,7 +122,7 @@ export function createSnailTexture(scene: Phaser.Scene, skinId: string = DEFAULT
 function createSkinTextures(scene: Phaser.Scene, skinId: string): void {
   const skin = snailSkin(skinId)
 
-  if (!skin || skinId === DEFAULT_SNAIL_SKIN) return
+  if (!skin) return
 
   // One cache for all six frames. The sprites are quantised to 64 colours by `build-sprites.py`, so
   // this turns 187k OKLab round trips into about 64 — which is the difference between a pixel pass
@@ -158,6 +166,12 @@ function createSkinTextures(scene: Phaser.Scene, skinId: string): void {
       pixels[i + 2] = turned & 0xff
       // Alpha is untouched, so a skin cannot change the silhouette `verify:mattes` measures.
     }
+
+    // **After the recolour, never before.** The rim is a constant — the one part of the mascot that
+    // must read the same on every skin and against every ground — so rotating it with the rest
+    // would make the thing carrying the guarantee depend on the thing it is guaranteeing against.
+    // It also reads alpha only, which is why it is identical for all five skins.
+    paintInkRim(pixels, source.width, source.height, rimWidthPx(source.width, source.height))
 
     canvas.putData(image, 0, 0)
     canvas.refresh()

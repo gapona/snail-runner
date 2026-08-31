@@ -8142,6 +8142,233 @@ ground. It was reported as the drowning one from a frame; the frame was `amber` 
 the actual 16%. Recorded because it is the standing rule read from the good side: a screenshot names
 the symptom and the measurement names the object.
 
+### ⚠ The ground stripes never worked, and a positional argument is why
+
+`GROUND_ALTERNATION` is 0 and this file discusses it as a knob that is switched off but functional
+— "switched off" and "never worked" need different fixes, and `verify:road` was written asserting
+it still produces the authored split when turned fully on. That assertion passes. The renderer
+would not have.
+
+`groundShadesForTheme` took `(ground, roadDark, roadLight, alternation?, groundLight?)` and
+forwarded to `groundPairForTheme`, which takes `(ground, roadDark, roadLight, minContrast,
+groundLight, alternation)`. **The two signatures disagreed about what slot 4 means.** So the
+alternation knob was being handed to `MIN_GROUND_CONTRAST` — the floor that keeps the road's edge
+readable — and the real alternation never arrived at all.
+
+Dormant, on two accidents at once: the knob is 0, and every caller passes `undefined` there. A
+caller that ever turned it on would have set the contrast floor to 1 instead, i.e. quietly deleted
+the rule that stops the verge merging with the asphalt, with the parameter it thought it was
+setting having no effect.
+
+- **TypeScript cannot see this.** All three are `number | undefined`, so every wrong arrangement of
+  them typechecks. The class to watch for is **two or more consecutive optional parameters of the
+  same type**, and it is the only place in this codebase where an argument can silently land on the
+  wrong parameter.
+- **Swept across `src/road/` rather than fixed in place.** Four functions have that shape:
+  `groundPairForTheme`, `groundShadesForTheme`, `decalsIn` and `fogBlend`. `decalsIn`'s one call
+  site is correct; `fogBlend` has no call sites at all outside its declaration (it is the
+  silhouette half of a pair with `fogBlendFill`, kept deliberately — see "The Middle Distance Was
+  Pale"). `groundShadesForTheme` was the only defect.
+- **Fixed by making the two signatures agree, not by correcting the call.** Both now read
+  `(ground, roadDark, roadLight, minContrast, groundLight, alternation)`, so there is no longer an
+  ordering to get wrong. Every existing caller passed `(…, undefined, groundLight)`, which means
+  the same thing under both orders — the repair is behaviour-preserving and was confirmed against
+  all 116 of `verify:road`'s checks.
+
+### ⚠ Two errors in the check cancelled, and that is worse than either
+
+`verify:palettes`' own `nearGround` passed an already-computed pair into `groundShadesForTheme`,
+which is an output where an input belongs — that function takes the biome's *authored* colours and
+runs `groundPairForTheme` itself.
+
+It produced the right numbers anyway. Passing the pair applied the theme's `groundLight` once on
+the way in, and the argument sat in the slot the function then read as `alternation`, so
+`groundLight` was never forwarded and the inner call defaulted it to 1. Measured on
+`night`/`forest`: **both forms give a shade luminance of 0.00344, and a genuine double application
+gives 0.00046.**
+
+So nothing measured before the repair was wrong. It was *right for a reason no reader could have
+relied on*, which is the same as being wrong the next time either half changes — and the next time
+was one edit away, since adding `groundChroma` meant touching exactly that call.
+
+**This is the same class as a green test over a live bug, and it is the more dangerous direction:**
+a red test gets investigated, a green one gets trusted. The lesson is not "read the arguments
+carefully", it is that **a suite has to be checked for discriminating power, not only for colour**:
+
+- **Every threshold in this suite carries a negative control**, and the controls are asserted as
+  *claims* rather than against named data. Two of them broke during the repaint — the `sky.bottom`
+  control had been asserted as "rejects all seven" and the chroma-gate control as "`day` and `ice`
+  fail ungated" — and both broke because the themes moved, not because the property stopped
+  holding. Rewritten as "the horizon point rejects strictly more than `sky.top` does" (6 against 0)
+  and "at least one theme changes verdict when greys are excluded" (four do), they survive a
+  repaint and still fail if the mechanism is removed.
+- **A control pinned to the data it was written on has an expiry date.** That is the general form,
+  and it is the same mistake as a threshold presented as derived after the distribution it was
+  derived from has gone — see `SKY_GROUND_MIN_HUE_DEGREES`.
+- **When a fix changes no number, find out why before believing it.** The cancellation above was
+  found by asking that question rather than by assuming the numbers had been wrong; the honest
+  answer changed what the comment says and left every earlier measurement standing.
+
+### A3: two themes are two products, weighted by what fills the frame
+
+The first version of this asked whether two themes' **grounds** differ, and it could not be
+satisfied. Four of the seven are dark themes whose grounds all approach black, and `deltaE` between
+dark colours is compressed by the geometry of the space rather than by the palettes — `ember` as
+ash and `signal` as monochrome are *required* to have similar earth, because that is what those two
+themes mean. Ground-only put `dusk`/`signal` at **0.003** and four themes inside 0.08 of each other,
+and no repaint could have moved it.
+
+**The metric was measuring "the grounds are alike" while the question is "the themes are alike", and
+at the dark end those are different statements.** It is now the sky and the ground weighted by the
+share of a portrait frame each fills — 62% and 38%, from `HORIZON_Y` — with the two distances kept
+apart and summed rather than blended into one colour first, since a red sky over green ground and a
+green sky over red ground average to the same grey.
+
+That broke the cluster and immediately found something the old metric had cleared: **`day` and
+`ice` were one product at 0.033**, against a next-closest of 0.072 and a ground-only score of 0.110.
+Both a blue sky over a bright ground.
+
+**The fix had to be the sky, and that is arithmetic rather than preference.** 62% of the weight is
+sky, the two skies differed by 0.031, and giving `ice` its own snow-washed ground moved the pair by
+**0.002**. So `ice` keeps its cold in the ground — where `groundChroma` 0.5 and `groundHue` +42 put
+it — and takes a deep polar sky over that bright snow, which is the half `day` does not own.
+
+Two candidates were rejected by the constraints rather than by eye, and the first is the more
+instructive: **a pale "whiteout" sky drops to chroma 0.049 and would have been *exempt* from A1.1**
+— passing that rule by having no hue rather than by keeping its hue out of the ground's family,
+which is the same dodge `ember` was caught at. A mid teal landed 0.050 from `verdant`, exactly on
+the floor. What shipped is 0.123 from `day`, 0.082 from its own nearest theme, 116 degrees clear on
+A1.1, with the horizon still lighter than every one of its grounds.
+
+**And fixing it cost A3 its derivable threshold, exactly as A1.1's repaint cost that one.** The
+distribution is 0.082..0.414 with no failures and no gap to read a number out of, so 0.05 is a
+regression threshold now. Both of this suite's floors ended up in that state, and it is the pattern
+rather than a coincidence: *a threshold derived from a distribution stops being derivable the moment
+it does its job.* The honest state for a passing check is a regression threshold carrying the date
+and the data it came from — which is what both now say.
+
+### What the repaint did, and what it did not
+
+`themedGround` gives a theme a lever on the **hue and chroma** of every biome's ground, which it
+never had — `groundLight` could only change how bright the earth was, which is why four themes drew
+the same one. `dusk` takes its sky off the violet `crystal`'s ground sits in and pushes its grounds
+warm; `ember` puts ash on the ground and keeps the fire in the sky; `verdant` stops having a green
+sky over green grass and moves the green into the earth where its name belongs; `signal` sets
+`groundChroma: 0` and finally becomes the monochrome its own comment has claimed to be since it was
+written.
+
+**Two of those passed the check dishonestly on the way and were caught doing it.** `ember` at
+`groundChroma: 0.45` took all nine of its grounds under the chroma gate — passing A1.1 by making
+the question not arise rather than by answering it — so the suite now reports "every ground
+achromatic" separately from "achromatic sky", and only the second is a design choice. And rotating
+grounds *toward* the warm on a warm theme walked them into the mascot: `fern` on `dusk` went 7% to
+43%, then `amber` to 47% once the rotation was flipped. The grounds are rotated away from their own
+sky now, and **A5 is not a palette problem** — see the trail, above.
+
+### ⚠ A1.3: the WCAG ratio is self-defeating on a dark theme
+
+The last of the three, and it closed the way the other two did — by the instrument being wrong
+rather than the palettes. It asked that the per-theme **mean** ground-to-road contrast *ratio* agree
+across themes to 1.5x. It measured 1.89x, `day` alone at 3.28 against 1.73–2.35, and trying to
+satisfy it produced three findings in order:
+
+- **The ratio exaggerates the disagreement.** In OKLab lightness the same seven spread 1.59x, and
+  **six of them agree to 1.13x** (0.180–0.203) with `day` alone at 0.286. The `+0.05` in the ratio's
+  denominator dominates at the luminances a night theme works at, so it reports the offset as much
+  as the colours.
+- **`day`'s surplus is not a defect and cannot be one.** A brighter theme has a stronger edge —
+  that is what daylight is. A two-sided bound punishes a theme for being *more* legible, which is
+  not a state any player experiences as a problem. The rule is one-sided now, and constancy moved
+  from the **mean**, where a theme's character lives, to the **floor**, where readability does.
+- **⚠ And `MIN_GROUND_CONTRAST` is itself unevenly strict, which nothing had ever asked.** The same
+  1.6 ratio buys a perceptual edge of **0.143 on `ice` and 0.195 on `night`** — a 1.36x spread in
+  what the rule actually delivers.
+
+**Raising it makes both numbers worse, and that is the measurement that settled the design.** At
+ratio floors of 1.7 / 1.8 / 1.9 the perceptual spread goes **1.41x / 1.61x / 1.87x** while the
+darkest ground falls **0.0013 / 0.0003 / 0.0000** — into the black verges "Why The Game Rendered
+Dark" was written about. On a dark theme the only way to win ratio is to go to zero, so tightening
+the floor buys unevenness and a void at the same time.
+
+So A1.3 asserts a **perceptual** floor on every theme's weakest road edge and a bound on how much
+that floor's delivery may vary — currently 0.143..0.195, spread 1.36x against 1.4x — and prints the
+mean without asserting it. **Its control is a real alternative rather than a fixture:** the 1.8
+ratio floor is run through the same measurement and must keep failing, so if the ratio ever becomes
+a usable rule again the check says so.
+
+Both numbers are regression thresholds derived on 2026-09-01, stated as such, for the reason all
+three of this suite's floors now carry.
+
+**Left open, and identified rather than done:** the honest fix for the unevenness is to express
+`MIN_GROUND_CONTRAST` perceptually inside `groundPairForTheme` — push a ground until it clears a
+lightness difference rather than a ratio — which would make the rule equally strict by construction
+and let dark themes keep non-black verges. It is a change to a function `verify:road`'s 116 checks
+are built on, so it is its own round.
+
+All seven checks green, and `npm run build` with them.
+
+### A5: the mascot got a contour, and the slime is why it is not a palette rule
+
+`src/run/snailRim.ts` (pure, `npm run verify:palettes`), applied in `snailArt.ts` after the
+recolour.
+
+The skin-by-theme sweep was built to ask whether the snail drowns in the active theme. It does, a
+little — and **the dominant term is somewhere no palette can reach.** `SlimeTrail.ts` draws in a
+fixed `0x9fc24a` that no theme tints, so `fern` lost **36% of its silhouette to its own trail on
+every one of the seven themes** and `amber` 16%. Repainting all seven would not have moved either
+number.
+
+A contour answers both backdrops at once and answers the ground of a theme nobody has invented yet.
+That is the argument for it over the colour rule that was proposed: *"the mascot's hue is excluded
+from the active theme's palette"* is a constraint every future theme must be checked against and
+every future skin re-checked across — a product of two growing sets — where a contour is one
+property of one object.
+
+- **It is painted INWARD, and that is what keeps the collision box honest.** The drawn box *is* the
+  collision box, and `build-sprites.py` trims each frame to its own alpha box, so the mascot already
+  touches the canvas edge and there is no margin to grow into. The rim repaints the outermost band
+  of the *existing* silhouette: alpha untouched, box untouched, `verify:mattes` measuring the same
+  shape, and the cost is a couple of pixels of the mascot's own edge — where its colour was least
+  legible anyway.
+- **⚠ Ink alone was not enough, and the check found the case rather than an eye.** A near-black
+  contour has almost no contrast against a near-black ground: `rose` on `ice`'s darkest biome came
+  back **12% merged with a rim of 1.49:1**, body and outline both sitting in the ground's own
+  luminance. No single tone can answer that — whatever it is, some ground is that bright or that
+  dark. So the contour is **two tones that bracket the range**: ink outside at 0.01 luminance, a
+  pale band inside at 0.63, and for any backdrop at least one of them is far away. The guarantee
+  stops being a property of the seven palettes that happen to exist.
+- **The pale band is inside the ink one, which is the whole difference from the halo this project
+  already shipped once.** The pickups' bright rim was painted *outside* the silhouette and was
+  reported on sight as "a white background around the icons". Here the outermost pixel is still ink.
+- **Distance is Euclidean, not Chebyshev**: a square neighbourhood puts a visibly thicker contour on
+  the diagonals, and on a shape made almost entirely of curves that reads as a lumpy edge. Marked in
+  one pass and painted in a second, or the contour would creep inward by its own width per row as it
+  tested later pixels against edges it had just created.
+- **Applied after the recolour, never before.** The rim is the one part of the mascot that must read
+  the same on every skin, so rotating it with the rest would make the thing carrying the guarantee
+  depend on the thing it is guaranteeing against. It reads **alpha only**, which is why it is
+  identical for all five skins.
+
+**⚠ The free skin stopped being free of cost, and that is a deliberate loss.** `snailSkinFrameKey`
+returned the base texture key for the default skin, so a player who had bought nothing paid no
+canvas and no pixel pass. It now returns a suffixed key like every other skin, because **the rim is
+a property of the mascot rather than of a purchase** — leaving the default on the raw PNG would mean
+the one snail most players see is the only one without the contour that makes it findable. What the
+old arrangement still buys is that `recolour` is an identity for the default, so that pass costs a
+hash lookup per colour. The **base** keys stay unrimmed and `Preloader` still draws its
+loading-screen snail from them: that one sits on the brand backdrop rather than any theme's ground,
+and it is on screen before `createSnailTexture` has run.
+
+**What the check asserts now is an `or`, and that is not a weakening.** Either the mascot's own
+colour stands off the ground, or the contour does it instead. Requiring both would forbid the
+arrangement the rim exists to make possible — a saturated snail on a bright ground of a similar hue,
+legible precisely because it is outlined. Measured, worst carried case is **4.0:1** against a floor
+of 2:1, and the two interiors that were 47% and 36% are carried at 7.5 and 8.4.
+
+**⚠ Not looked at on a frame.** Every number above is measured and this project's standing rule is
+that a contrast device is judged on a frame rather than on the argument for it — paid for three
+times on the front screen alone. Whether the pale band reads as rim light or as a scratch is open.
+
 ### It is red on purpose, and it reports every failure rather than the first
 
 Every other suite here guards a rule that already holds, so the first break is the news and stopping
