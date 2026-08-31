@@ -18,10 +18,8 @@
  * class is `REACTION_MS` before impact — 9px for a low rock, 27px for a boulder, 23px for a branch
  * on a landscape phone — and that margin is only worth anything if the shapes differ in *outline*:
  *
- * - **low** — a wide, flat cluster of lumps. All mass at the bottom, nothing above the waist.
- * - **blocking** — a tall standing slab with a straight vertical face. Reads as a wall.
- * - **overhead** — a bar hanging in the air with **empty road drawn under it**. The gap is the
- *   whole message, and it is the one silhouette with daylight at its bottom edge.
+ * - **low** — a wide, flat barrier block. All mass at the bottom, nothing above the waist.
+ * - **blocking** — a tall upright panel, a near-square. Reads as a wall.
  *
  * Same swap rule as everything else generated here: **if the key already exists, nothing is
  * drawn**, so dropping real art in under these keys is the entire change.
@@ -40,10 +38,9 @@ import { INK, OBSTACLE_MATERIALS } from './artPalette'
  * tiling rather than as rubble. Three silhouettes and a horizontal flip give six distinct rocks,
  * which is enough that no two neighbours match.
  *
- * `blocking` gets two because two of them occasionally share a row; an `overhead` spans the whole
- * road on its own and never has a neighbour to match.
+ * `blocking` gets two because two of them occasionally share a row.
  */
-export const OBSTACLE_VARIANTS: Record<ObstacleKind, number> = { low: 3, blocking: 2, overhead: 1 }
+export const OBSTACLE_VARIANTS: Record<ObstacleKind, number> = { low: 3, blocking: 2 }
 
 /**
  * The texture key for one obstacle.
@@ -81,7 +78,6 @@ function canvasFor(kind: ObstacleKind): { width: number; height: number } {
 export const OBSTACLE_CANVAS: Record<ObstacleKind, { width: number; height: number }> = {
   low: canvasFor('low'),
   blocking: canvasFor('blocking'),
-  overhead: canvasFor('overhead'),
 }
 
 /**
@@ -106,23 +102,16 @@ export const OBSTACLE_TEXTURE_KEYS: readonly string[] = (
 /**
  * Keys whose rendered art is pulled, and which therefore ship no PNG.
  *
- * **⚠ `overhead-0` was a hollow log with the bore squared off into a dark rectangle in its end
- * face**, and at the size an obstacle is read that is not a log: it is a brown box with a black
- * doorway in it, i.e. a crate or a pipe. Reported by pointing at a row of them lying across the
- * road. It is the third time this exact render has been rejected — `decor-wet_log` went first, and
- * `decor-coa_drift` was kept on the reasoning that a *hexagonal* bore reads as a log where a square
- * one does not. That reasoning is now measured against a player and was wrong: the bore's shape is
- * not what fails, the bore is.
- *
- * The key stays and falls back to the procedural silhouette — `overhead` is a mandatory class (it
- * is the one that punishes being airborne, see `OBSTACLE_BANDS`) and its silhouette carries the
- * whole read anyway: a bar in the air with empty road drawn under it. Same call `ash_mound` and
- * `dune_spire` got, and it is why `createObstacleTextures` draws only what is missing.
+ * **Empty, and the mechanism is kept rather than deleted.** It held `obstacle-overhead-0` while
+ * that class existed: the render was a hollow log whose squared-off bore read as a crate with a
+ * doorway, so it was pulled, and the procedural fallback that replaced it was a log floating on two
+ * stubs. The class itself is gone now — see `OBSTACLE_BANDS` for why a thing drawn inside a band
+ * that starts above the snail cannot be drawn touching the ground.
  *
  * `Preloader` iterates `OBSTACLE_ART_KEYS` rather than every key, so a pulled render is not a
  * 404 on every boot — a loader error is a real signal and must not be spent on a deliberate gap.
  */
-const PULLED_ART = new Set<string>(['obstacle-overhead-0'])
+const PULLED_ART = new Set<string>()
 
 /** The keys that actually have a PNG to load. */
 export const OBSTACLE_ART_KEYS: readonly string[] = OBSTACLE_TEXTURE_KEYS.filter(
@@ -182,8 +171,7 @@ export function createObstacleTextures(scene: Phaser.Scene): void {
       const h: Scale = (f) => height * f
 
       if (kind === 'low') drawLow(g, w, h, palette, variant)
-      else if (kind === 'blocking') drawBlocking(g, w, h, palette, variant)
-      else drawOverhead(g, w, h, palette)
+      else drawBlocking(g, w, h, palette, variant)
 
       g.generateTexture(key, width, height)
       g.destroy()
@@ -209,214 +197,89 @@ function shape(g: Phaser.GameObjects.Graphics, points: number[][], fill: number,
   g.strokePath()
 }
 
+/** A rectangle, filled and inked. Every barrier in this file is built out of these. */
+function board(
+  g: Phaser.GameObjects.Graphics,
+  w: Scale,
+  h: Scale,
+  x0: number,
+  x1: number,
+  y0: number,
+  y1: number,
+  fill: number,
+  palette: Palette,
+): void {
+  shape(g, [[w(x0), h(y0)], [w(x1), h(y0)], [w(x1), h(y1)], [w(x0), h(y1)]], fill, palette)
+}
+
 /**
- * A cluster of low lumps: all mass at the bottom, nothing above the waist. Jump it.
+ * A low barrier block: solid, flat-topped, hop it.
  *
- * Three overlapping rocks rather than one, because a single wedge reads as a ramp — something you
- * would drive *up* — and three lumps read as rubble, which is something you go over.
+ * **⚠ This was a cluster of three rocks, and the whole family it belonged to is gone.** The three
+ * classes used to be a rubble pile, a leaning slab and a fallen trunk — three natural objects with
+ * no vocabulary between them, standing on a made road, which is what was reported. They are one
+ * made object at three heights now; see `dev-assets/cc0-3d/barrier_render.py`, which builds the
+ * shipped renders, for the argument. This is that object flattened to two dimensions.
  *
- * **The three variants exist because a wall is made of nothing but these.** With one silhouette,
- * the jump-only row came out as the same triangular lump repeated across the whole road: a picket
- * fence, not rubble. The variants differ in where the mass sits — centre-heavy, left-heavy,
- * right-heavy — which is the difference that survives being 9px tall, unlike differences in detail.
+ * The lit strip along the top is the whole of the shading and it is not decoration: it is the only
+ * thing that says the block has a top face rather than being a painted rectangle on the road, and
+ * it is the part that survives being 9px tall.
+ *
+ * **The three variants differ in the FACE and never in the height.** `drawWall` lays these edge to
+ * edge to build the one row a jump is required for, and a wall is read from its top edge — blocks
+ * at three heights are a fence with gaps in it, which invites trying to get *through* the row.
  */
 function drawLow(g: Phaser.GameObjects.Graphics, w: Scale, h: Scale, palette: Palette, variant: number): void {
-  // Peak heights per lump, per variant. Everything else about the shape follows from these.
-  const peaks = [
-    [0.28, 0.06, 0.34],
-    [0.1, 0.3, 0.46],
-    [0.44, 0.24, 0.12],
-  ][variant % 3]
+  const cap = 0.3
 
-  const lump = (from: number, to: number, peak: number, fill: number): void => {
-    const mid = (from + to) / 2
-
-    shape(
-      g,
-      [
-        [w(from), h(1.0)],
-        [w(from + 0.02), h(peak + 0.34)],
-        [w(mid - 0.06), h(peak + 0.06)],
-        [w(mid + 0.05), h(peak)],
-        [w(to - 0.02), h(peak + 0.3)],
-        [w(to), h(1.0)],
-      ],
-      fill,
-      palette,
-    )
-    // The shaded half, cut down the middle. **This is where most of the ink comes from** — an
-    // outline alone measured 18% against the scenery's 34%, and a rock lit from one side is what
-    // the verge's own props look like.
-    shape(
-      g,
-      [
-        [w(to - 0.11), h(1.0)],
-        [w(mid + 0.05), h(peak + 0.08)],
-        [w(to - 0.02), h(peak + 0.3)],
-        [w(to), h(1.0)],
-      ],
-      palette.dark,
-      palette,
-    )
+  if (variant === 1) {
+    // Two courses, the joint off centre so a pair of them does not read as a mirror.
+    board(g, w, h, 0.0, 1.0, cap, 0.52, palette.mid, palette)
+    board(g, w, h, 0.02, 0.98, 0.56, 1.0, palette.mid, palette)
+    board(g, w, h, 0.0, 1.0, 0.0, cap, palette.light, palette)
+  } else if (variant === 2) {
+    // A capping stone that overhangs, which is what a kerb does and what puts a second lit edge
+    // across the top of the silhouette.
+    board(g, w, h, 0.05, 0.95, cap, 1.0, palette.mid, palette)
+    board(g, w, h, 0.0, 1.0, 0.0, cap, palette.light, palette)
+  } else {
+    board(g, w, h, 0.0, 1.0, cap, 1.0, palette.mid, palette)
+    board(g, w, h, 0.0, 1.0, 0.0, cap, palette.light, palette)
   }
-
-  // Flanks first, so the centre lump overlaps them and the cluster reads as having a front.
-  lump(0.0, 0.38, peaks[0], palette.mid)
-  lump(0.62, 1.0, peaks[2], palette.mid)
-  lump(0.26, 0.76, peaks[1], palette.light)
 }
 
 /**
- * A standing slab with a straight vertical face. Reads as a wall; go around it.
+ * A tall barrier panel: solid, full height, go around it.
  *
- * The vertical face is the whole silhouette — a boulder with a rounded top would read as a big
- * version of the low cluster, and those two must never be confused at 27px because one is jumpable
- * and the other is not.
+ * **Solid rather than a frame with daylight in it**, which is the one thing this class may not
+ * look like: it means "there is no way through", and a panel you can see between says the opposite
+ * at exactly the distance the decision is taken at.
  *
- * **Three vertical planes, not a gradient.** A lit face, a mid face and a shadow face meeting at
- * hard edges is what makes it read as stone with corners; it is also what carries the ink share,
- * since the shadow plane is dark enough to count as ink on its own.
+ * The two variants divide the face VERTICALLY — boarded, or framed — and that is deliberate: `low`
+ * is read as a horizontal band and this is read as an upright, so dividing this one the same way
+ * would make the two classes the same picture at two sizes.
  */
 function drawBlocking(g: Phaser.GameObjects.Graphics, w: Scale, h: Scale, palette: Palette, variant: number): void {
-  // The two variants lean opposite ways. A row holding both then has no repeated silhouette in it.
-  const lean = variant % 2 === 0 ? 1 : -1
-  const at = (x: number) => (lean > 0 ? x : 1 - x)
-  const top = (x: number) => h(0.02 + Math.abs(at(x) - 0.4) * 0.18)
+  board(g, w, h, 0.0, 1.0, 0.0, 1.0, palette.mid, palette)
+  board(g, w, h, 0.0, 1.0, 0.0, 0.11, palette.light, palette)
 
-  shape(
-    g,
-    [
-      [w(at(0.12)), h(1.0)],
-      [w(at(0.08)), h(0.22)],
-      [w(at(0.4)), h(0.02)],
-      [w(at(0.9)), h(0.14)],
-      [w(at(0.88)), h(1.0)],
-    ],
-    palette.mid,
-    palette,
-  )
-  // The lit face.
-  shape(
-    g,
-    [
-      [w(at(0.12)), h(1.0)],
-      [w(at(0.08)), h(0.22)],
-      [w(at(0.4)), h(0.02)],
-      [w(at(0.44)), h(0.16)],
-      [w(at(0.42)), h(1.0)],
-    ],
-    palette.light,
-    palette,
-  )
-  // The shadow face, taking the far third.
-  shape(
-    g,
-    [
-      [w(at(0.68)), h(1.0)],
-      [w(at(0.7)), h(0.1)],
-      [w(at(0.9)), h(0.14)],
-      [w(at(0.88)), h(1.0)],
-    ],
-    palette.dark,
-    palette,
-  )
-  // One fracture line down the mid face — enough to say "tall", which is the one thing this
-  // silhouette must communicate that the low cluster does not.
-  g.lineStyle(Math.max(1.5, palette.weight * 0.5), palette.ink, 0.45)
-  g.beginPath()
-  g.moveTo(w(at(0.56)), top(0.56))
-  g.lineTo(w(at(0.52)), h(0.96))
-  g.strokePath()
-}
-
-/**
- * A fallen trunk wedged in the air.
- *
- * **The empty space under it is the drawing.** The canvas spans the obstacle's own band, which
- * starts at 250 world units — well above the snail's back — so the sprite is positioned with that
- * gap already accounted for and what the player sees is a mass with daylight beneath it. It is the
- * only silhouette in the game with nothing touching the ground, and that is exactly the read: duck.
- */
-function drawOverhead(g: Phaser.GameObjects.Graphics, w: Scale, h: Scale, palette: Palette): void {
-  const top = h(0.34)
-  const bottom = h(0.82)
-
-  // The two props holding it up, drawn first and darker so the trunk reads in front of them. They
-  // stop well short of the bottom edge — the gap under the trunk is the message.
-  for (const x of [0.16, 0.82]) {
-    shape(
-      g,
-      [
-        [w(x - 0.05), h(0.86)],
-        [w(x - 0.03), top],
-        [w(x + 0.03), top],
-        [w(x + 0.05), h(0.86)],
-      ],
-      palette.mid,
-      palette,
-    )
-  }
-
-  // The trunk: a long horizontal mass with slightly uneven ends, so it reads as a fallen tree
-  // rather than as a fabricated bar.
-  shape(
-    g,
-    [
-      [w(0.0), h(0.46)],
-      [w(0.08), top],
-      [w(0.9), h(0.3)],
-      [w(1.0), h(0.5)],
-      [w(0.96), bottom],
-      [w(0.08), h(0.86)],
-    ],
-    palette.mid,
-    palette,
-  )
-  // The lit upper surface.
-  shape(
-    g,
-    [
-      [w(0.04), h(0.44)],
-      [w(0.09), h(0.36)],
-      [w(0.9), h(0.32)],
-      [w(0.97), h(0.48)],
-      [w(0.9), h(0.5)],
-      [w(0.09), h(0.54)],
-    ],
-    palette.light,
-    palette,
-  )
-
-  // The underside, in shadow across the trunk's whole width. It is what a thing hanging over you
-  // actually looks like, and it is most of this silhouette's ink.
-  shape(
-    g,
-    [
-      [w(0.06), h(0.74)],
-      [w(0.95), h(0.72)],
-      [w(0.96), bottom],
-      [w(0.08), h(0.86)],
-    ],
-    palette.dark,
-    palette,
-  )
-
-  // Broken stubs along that underside — the clearest "there is a ceiling here" cue, and what keeps
-  // the trunk from reading as a distant horizontal wall.
-  g.fillStyle(palette.dark, 1)
-  for (let i = 0; i < 4; i++) {
-    const x = w(0.22 + i * 0.19)
-
-    g.fillTriangle(x - w(0.035), bottom - h(0.04), x + w(0.035), bottom - h(0.04), x - w(0.01), bottom + h(0.16))
-  }
-
-  // Bark: three long strokes, low contrast, only visible when the trunk is close.
-  g.lineStyle(Math.max(1.5, palette.weight * 0.55), palette.ink, 0.35)
-  for (const y of [0.42, 0.56, 0.7]) {
-    g.beginPath()
-    g.moveTo(w(0.1), h(y))
-    g.lineTo(w(0.92), h(y - 0.02))
-    g.strokePath()
+  if (variant === 0) {
+    // Boarded: five uprights proud of the panel.
+    for (let i = 0; i < 5; i++) {
+      board(g, w, h, 0.02 + i * 0.196, 0.02 + i * 0.196 + 0.156, 0.11, 0.97, palette.mid, palette)
+    }
+  } else {
+    // Framed: two posts, a head rail, a mid rail and an upright through the middle.
+    //
+    // **⚠ The middle members are not decoration.** A rectangle inside a rectangle is a DOORWAY, and
+    // this is the class that means there is no way through — a barred opening says the opposite of
+    // the mechanic at exactly the distance the player decides at.
+    board(g, w, h, 0.12, 0.88, 0.24, 0.9, palette.dark, palette)
+    board(g, w, h, 0.0, 0.14, 0.0, 1.0, palette.mid, palette)
+    board(g, w, h, 0.86, 1.0, 0.0, 1.0, palette.mid, palette)
+    board(g, w, h, 0.0, 1.0, 0.06, 0.24, palette.mid, palette)
+    board(g, w, h, 0.0, 1.0, 0.48, 0.62, palette.mid, palette)
+    board(g, w, h, 0.42, 0.58, 0.24, 1.0, palette.mid, palette)
   }
 }
 

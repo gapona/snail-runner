@@ -27,6 +27,8 @@ export const THEME_PRICES: Record<string, number> = {
   // anything; `night` stays at 0 because it was the free one and its id is what every existing
   // save's `themeProgress` and `purchases` were written against. Charging for something a player
   // already had is the one change this table is not allowed to make.
+  // `day` has no row of its own (see `buildThemeCatalog`) and still has to be listed here: this is
+  // what `isThemeFree` and `ownsTheme` read, and a save that explicitly names it must stay valid.
   day: 0,
   night: 0,
   dusk: 300,
@@ -38,7 +40,6 @@ export const THEME_PRICES: Record<string, number> = {
 
 /** Icon per theme. One glyph, no art dependency — the row is a list entry, not a preview. */
 const THEME_ICONS: Record<string, string> = {
-  day: '\u{2600}',
   night: '\u{1F311}',
   dusk: '\u{1F307}',
   ice: '\u{2744}',
@@ -104,14 +105,22 @@ export function buildThemeCatalog(): ShopItem[] {
       category: THEME_CATEGORY,
       kind: 'unlock' as const,
     },
-    ...themeIds().map((id) => ({
-      id: themeItemId(id),
-      priceCoins: THEME_PRICES[id] ?? 0,
-      titleKey: `theme_${id}`,
-      icon: THEME_ICONS[id] ?? '\u{25C6}',
-      category: THEME_CATEGORY,
-      kind: 'unlock' as const,
-    })),
+    // **`day` is deliberately not a row, and this is NOT the free-theme trap above.** That trap was
+    // removing the only way *back* to a theme; this removes the second way to the same one. `day` is
+    // `DEFAULT_ROAD_THEME`, which is exactly what the `auto` row applies — so listing it put two
+    // rows in the panel with one outcome, and only one of them could ever read `In use`. It stays
+    // reachable, through that row. **The coupling is real: if `auto` ever stops resolving to
+    // `DEFAULT_ROAD_THEME`, this filter is what makes the default theme unreachable.**
+    ...themeIds()
+      .filter((id) => id !== DEFAULT_ROAD_THEME)
+      .map((id) => ({
+        id: themeItemId(id),
+        priceCoins: THEME_PRICES[id] ?? 0,
+        titleKey: `theme_${id}`,
+        icon: THEME_ICONS[id] ?? '\u{25C6}',
+        category: THEME_CATEGORY,
+        kind: 'unlock' as const,
+      })),
   ]
 }
 

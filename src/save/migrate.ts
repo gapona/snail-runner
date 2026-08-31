@@ -13,7 +13,22 @@ function count(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
 }
 
-function normalizeV10(raw: Record<string, unknown>): SaveState {
+/**
+ * The selected theme, with a stored `day` collapsed onto `auto`.
+ *
+ * They name the same palette — `auto` means "no override", which resolves to `DEFAULT_ROAD_THEME`,
+ * which is `day` — and `day` no longer has a row of its own in the shop (see `buildThemeCatalog`).
+ * A save still holding it would light no row at all, leaving the player unable to see what is
+ * selected. Collapsing here rather than in a migration step because it changes no outcome: both
+ * values already played on the same theme, so there is no version at which the meaning changed.
+ */
+function normalizeSelectedTheme(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) return DEFAULT_SAVE_STATE.selectedTheme
+
+  return value === DEFAULT_THEME_ID ? AUTO_THEME_ID : value
+}
+
+function normalizeV12(raw: Record<string, unknown>): SaveState {
   const settings = isRecord(raw.settings) ? raw.settings : {}
   const purchases = Array.isArray(raw.purchases) ? raw.purchases.filter((p): p is string => typeof p === 'string') : DEFAULT_SAVE_STATE.purchases
   const themeProgress: Record<string, number> = {}
@@ -31,12 +46,12 @@ function normalizeV10(raw: Record<string, unknown>): SaveState {
     : DEFAULT_SAVE_STATE.weaponLoadout
 
   return {
-    v: 10,
+    v: 12,
+    // Defaults to `false` — a save with no opinion on this is a save from before the tutorial
+    // existed *or* a brand new one, and only the migration can tell those apart. See `SaveStateV12`.
+    tutorialDone: raw.tutorialDone === true,
     bestScore: count(raw.bestScore, DEFAULT_SAVE_STATE.bestScore),
-    selectedTheme:
-      typeof raw.selectedTheme === 'string' && raw.selectedTheme.length > 0
-        ? raw.selectedTheme
-        : DEFAULT_SAVE_STATE.selectedTheme,
+    selectedTheme: normalizeSelectedTheme(raw.selectedTheme),
     selectedWeapon:
       typeof raw.selectedWeapon === 'string' && raw.selectedWeapon.length > 0
         ? raw.selectedWeapon
@@ -46,6 +61,10 @@ function normalizeV10(raw: Record<string, unknown>): SaveState {
       typeof raw.selectedShip === 'string' && raw.selectedShip.length > 0
         ? raw.selectedShip
         : DEFAULT_SAVE_STATE.selectedShip,
+    selectedSnail:
+      typeof raw.selectedSnail === 'string' && raw.selectedSnail.length > 0
+        ? raw.selectedSnail
+        : DEFAULT_SAVE_STATE.selectedSnail,
     bestWave: count(raw.bestWave, DEFAULT_SAVE_STATE.bestWave),
     themeProgress,
     coins: count(raw.coins, DEFAULT_SAVE_STATE.coins),
@@ -110,6 +129,35 @@ function upgradeV8ToV9(raw: Record<string, unknown>): Record<string, unknown> {
  */
 function upgradeV9ToV10(raw: Record<string, unknown>): Record<string, unknown> {
   return { ...raw, v: 10, selectedShip: DEFAULT_SAVE_STATE.selectedShip }
+}
+
+/**
+ * v10 -> v11: which recolour of the mascot the player wears.
+ *
+ * Written out for the reason `upgradeV9ToV10` is, and it grants nothing for the same reason: every
+ * earlier save has no `selectedSnail`, the normaliser already fills a missing one with the free
+ * skin, and inventing a purchase would make `purchases` a lie the first time anything reads it. A
+ * returning player comes back on the snail they have always had — which is the shipped render, bit
+ * for bit, because `DEFAULT_SNAIL_SKIN` names the render's own measured hues rather than moving
+ * them.
+ */
+function upgradeV10ToV11(raw: Record<string, unknown>): Record<string, unknown> {
+  return { ...raw, v: 11, selectedSnail: DEFAULT_SAVE_STATE.selectedSnail }
+}
+
+/**
+ * v11 -> v12: the tutorial flag, and it is written **true**.
+ *
+ * **⚠ The one step in this ladder that deliberately does not write what the normaliser would.**
+ * Every other upgrade fills a new field with its default, because a field nobody has had an opinion
+ * about should read as though they never did. This one is the opposite: `tutorialDone: false` means
+ * "has never played", and a save arriving at v12 is by definition from someone who has. Defaulting
+ * it would deal every existing player a beginner's road with cards on it on their next run.
+ *
+ * It grants nothing else, and the tutorial stays reachable from Settings.
+ */
+function upgradeV11ToV12(raw: Record<string, unknown>): Record<string, unknown> {
+  return { ...raw, v: 12, tutorialDone: true }
 }
 
 /** Every field of `levelProgress`, filtered entry by entry. */
@@ -304,7 +352,13 @@ export function migrate(raw: unknown): SaveState | null {
       payload = upgradeV9ToV10(payload)
     // eslint-disable-next-line no-fallthrough
     case 10:
-      return normalizeV10(payload)
+      payload = upgradeV10ToV11(payload)
+    // eslint-disable-next-line no-fallthrough
+    case 11:
+      payload = upgradeV11ToV12(payload)
+    // eslint-disable-next-line no-fallthrough
+    case 12:
+      return normalizeV12(payload)
 
     default:
       return null

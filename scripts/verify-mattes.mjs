@@ -41,7 +41,12 @@ const ALPHA_FLOOR = 0.06
  */
 const MIN_RING_RATIO = 0.1
 
-const ROOTS = ['public/assets/decor', 'public/assets/fx']
+// **⚠ `critter` was added when the two hazards became renders**, and the reason is that these are
+// the first binaries to arrive from `smooth_render` through `process()` rather than from the
+// generator's own matte. Both of this file's rules are properties of that pipeline, so a sprite it
+// produced is exactly what should be held to them. Obstacles and pickups predate the split and are
+// still outside; widening to them is a separate measurement, not a free line.
+const ROOTS = ['public/assets/decor', 'public/assets/fx', 'public/assets/critter']
 
 /** Decodes an 8-bit, non-interlaced, colour-type-6 PNG into `{ width, height, data }` (RGBA). */
 const lightness = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b

@@ -11,6 +11,7 @@ import {
   earnCoin,
   isRunOver,
   runSeconds,
+  speedAfter,
   stepRun,
   takeHit,
   type RunState,
@@ -25,10 +26,45 @@ import {
   type PlayerState,
 } from '../run/playerMotion'
 import { PlayerView } from '../run/PlayerView'
+import { resolveSelectedSnail } from '../run/snailSkins'
+import {
+  createPlayerDeath,
+  deathComplete,
+  deathFlash,
+  deathSpin,
+  hasDied,
+  hullBurstProgress,
+  hullFade,
+  hullSwell,
+  startPlayerDeath,
+  type PlayerDeath,
+} from '../run/playerDeath'
+import { THREAT_COLOR } from '../road/themes'
+import { getState, mutate } from '../save/store'
 import { createSquashState, squashAt, squashOnLanding, squashOnLaunch, type SquashState } from '../run/squash'
 import { addFreeze, isFrozen, type Freezable } from '../run/hitstop'
-import { hits, placeRunObstacles, type Obstacle } from '../run/obstacles'
+import { hits, placeRunObstacles, type Body, type Obstacle } from '../run/obstacles'
+import {
+  awaitingAcknowledgement,
+  createTutorialState,
+  insideTutorialBand,
+  stepTutorial,
+  tutorialLayout,
+  tutorialPaused,
+  tutorialRunning,
+  TUTORIAL_LENGTH_Z,
+  type TutorialState,
+} from '../run/tutorial'
+import { TutorialCard } from '../run/TutorialCard'
 import { ObstacleSprites } from '../run/ObstacleSprites'
+import { CritterSprites } from '../run/CritterSprites'
+import {
+  createCritterField,
+  resolveCritters,
+  stepCritters,
+  CRITTER_FIRST_Z,
+  type CritterField,
+} from '../run/critters'
 import { reaches, type Pickup } from '../run/pickups'
 import { ARC_RELAY_NEAR_Z, ARC_RELAY_Z, chainPoints, placeFormations } from '../run/formations'
 import {
@@ -37,6 +73,8 @@ import {
   RAMP_DEPTH,
   RAMP_LAUNCH_V,
   RAMP_SPINS,
+  rampIdStride,
+  spinAngle,
   ridesOver,
   type Ramp,
 } from '../run/ramp'
@@ -44,8 +82,6 @@ import { RampSprites } from '../run/RampSprites'
 import { Dust } from '../run/Dust'
 import { LapLayout, type LapContent } from '../run/lapLayout'
 import {
-  roadIsClear,
-  feverInvulnerable,
   feverMagnet,
   magnetPull,
   type FeverPhase,
@@ -61,7 +97,6 @@ import {
   FEVER_MAGNET_RATE,
   FEVER_MAGNET_Z,
   HIT_INVULNERABLE_Z,
-  NEAREST_OBSTACLE_SCAN,
   JUMP_LAUNCH_V,
   KEYBOARD_POINT_SPEED,
   LANDING_HITSTOP_MS,
@@ -71,7 +106,7 @@ import {
   SPEED_BASE,
 } from '../run/constants'
 import { SEGMENT_LENGTH } from '../road/constants'
-import { streakDetuneCents, STREAK_STEPS } from '../audio/sfx'
+import { PICKUP_DETUNE_CENTS, streakDetuneCents, STREAK_STEPS } from '../audio/sfx'
 import { wrapZ } from '../road/project'
 import { playSfx } from '../audio/audio'
 import { SFX } from '../audio/sfx'
@@ -94,6 +129,24 @@ import { SFX } from '../audio/sfx'
  * at two different transforms. `assertWorldIsSingleCamera` checks that in DEV, so the mistake is
  * reported rather than merely visible.
  */
+/**
+ * The wreck's loud half: how hard the frame shakes, how much dust the crash throws, and how strongly
+ * it flashes.
+ *
+ * **The flash is the reserved threat colour, and this is the one place in the runner that may use
+ * it.** `THREAT_COLOR` means "something out there has landed on you", which is precisely what has
+ * just happened — the same exemption the rail shooter's damage frame was granted. At 0.3 it tints
+ * the frame rather than whiting it out, because what the player is being shown is the crash and not
+ * the flash.
+ *
+ * The shake is the hardest in the game and three times a hit's: a hit is a cost, and this is the
+ * end of the run.
+ */
+const DEATH_SHAKE_MS = 520
+const DEATH_SHAKE = 0.022
+const DEATH_DUST = 26
+const DEATH_FLASH_ALPHA = 0.3
+
 export class RunScene extends Phaser.Scene {
   private world!: WorldView
   private uiCamera!: Phaser.Cameras.Scene2D.Camera
@@ -104,6 +157,17 @@ export class RunScene extends Phaser.Scene {
   private squash!: SquashState
   private obstacles!: Obstacle[]
   private obstacleSprites!: ObstacleSprites
+  /**
+   * The bugs, which are a population rather than a layout.
+   *
+   * Deliberately not in `LapLayout` beside the obstacles, the pickups and the ramps: those are
+   * filed under the segment they stand on and handed over behind the camera, and all three of those
+   * properties are false of something that walks. See `critters.ts`.
+   */
+  private critters!: CritterField
+  private critterSprites!: CritterSprites
+  /** The player's own position on the run's unwrapped odometer at the end of the last frame. */
+  private previousPlayerOdometer = 0
   /**
    * Everything standing on the ground, indexed by segment, and the cursor that rolls the next lap
    * into it **behind the camera** — see `lapLayout.ts` for the defect that shape exists to fix.
@@ -152,6 +216,38 @@ export class RunScene extends Phaser.Scene {
    * a boost, so after any hit the next rows passed straight through.
    */
   private invulnerableUntilDistance = 0
+  /**
+   * The tutorial, when this is a first run. `null` once the player has been taught.
+   *
+   * **Resolved once, at `create`, from the save** — like the snail's skin and for the same reason:
+   * `update` runs sixty times a second and the save is not a thing to consult at that rate.
+   */
+  private tutorial: TutorialState | null = null
+  private tutorialCard: TutorialCard | null = null
+  /** Total lateral travel, in road half-widths — the tutorial's own "have they steered yet". */
+  private steered = 0
+  /** How many times the player has left the ground this run. */
+  private jumps = 0
+  /**
+   * How many times the player has asked a tutorial card to go away.
+   *
+   * **All three of these are cumulative and none of them is ever reset here.** A card is answered
+   * by what has happened *since it came up*, and the baseline it measures against is taken by
+   * `stepTutorial` when the card arms — so the rule lives in one place instead of being half a
+   * counter here and half a comparison there. See `TutorialSignals`.
+   */
+  private acknowledgements = 0
+  /** The reused body handed to `hits` — see `spinningBody`. */
+  private readonly body: Body = { offsetX: 0, y: 0, spinDegrees: 0 }
+  /**
+   * The wreck between the last life going and the result screen arriving — see `playerDeath.ts`.
+   *
+   * A field on the scene rather than on `RunState` because nothing pure needs it: the run is over
+   * the moment `isRunOver` says so, and this is only about how long the frame takes to admit it.
+   */
+  private death: PlayerDeath = createPlayerDeath()
+  /** Full-frame flash on the killing hit. On `uiCamera`, so a camera shake cannot drag its edges in. */
+  private deathFlashRect!: Phaser.GameObjects.Rectangle
   /** One number a whole run is reproducible from: the scenery scatter and the obstacle layout. */
   private runSeed = 0
   /** DEV only: labels every dark patch on the ground with what drew it. */
@@ -194,9 +290,17 @@ export class RunScene extends Phaser.Scene {
     this.player = createPlayerState()
     this.squash = createSquashState()
     this.playerFreeze = { frozenUntil: 0 }
+    // **⚠ Before the world and before `LapLayout`, because that constructor builds lap 0 inside
+    // itself.** Created where the rest of the scene's views are — after the world, beside the HUD —
+    // this was still `null` when `buildLap(0)` ran, so a tutorial run was dealt the ordinary
+    // generated road and the cards explained a wall that was not there. Found by driving a real run
+    // and reading the lap back: a wall at 26m against a tutorial band whose first object is a rock
+    // at 260m. The *card* is built later, where a view belongs; only the state is hoisted.
+    if (!getState().tutorialDone) this.tutorial = createTutorialState()
     this.resolvedOnLap = new Map()
     this.slime = []
     this.invulnerableUntilDistance = 0
+    this.death = createPlayerDeath()
     this.hitCount = 0
     this.streak = 0
 
@@ -221,24 +325,58 @@ export class RunScene extends Phaser.Scene {
       build: (lapOffset) => this.buildLap(lapOffset),
     })
     this.previousPlayerZ = PLAYER_Z
+    this.previousPlayerOdometer = PLAYER_Z
+    // **A first run meets no bugs until it has been taught the road.** The tutorial owns the first
+    // `TUTORIAL_LENGTH_Z` and its cards stop the world one at a time; a creature walking into a
+    // frozen frame while a card explains something else is two things at once, which is the whole
+    // objection that made the cards stop the road in the first place. Its own seed, so moving a tree
+    // does not rearrange the bugs — the rule `waveSeed` and `pickupSeed` already state.
+    this.critters = createCritterField(
+      this.runSeed ^ 0x1b0d,
+      this.tutorial ? TUTORIAL_LENGTH_Z + CRITTER_FIRST_Z : CRITTER_FIRST_Z,
+    )
 
     // Built after the world, because they draw over it and the display list is the draw order.
     // The trail goes first of the three: it lies *on* the road, under everything standing on it.
     this.slimeTrail = new SlimeTrail(this)
     this.obstacleSprites = new ObstacleSprites(this)
+    this.critterSprites = new CritterSprites(this)
     this.pickupSprites = new PickupSprites(this)
     this.feverView = new FeverView(this)
     this.rampSprites = new RampSprites(this)
     this.dust = new Dust(this, this.runSeed)
-    this.playerView = new PlayerView(this)
+    // The skin is resolved once, here, rather than read per frame: `render` runs sixty times a
+    // second and the save is not a thing to consult at that rate. `resolveSelectedSnail` never
+    // trusts the stored id — a save can outlive a skin and can be edited by hand.
+    this.playerView = new PlayerView(this, {
+      skin: resolveSelectedSnail(getState().selectedSnail, getState().purchases),
+    })
     // Screen-space, so it goes on `uiCamera` and is hidden from the world camera.
     this.hud = new Hud(this)
+
+    // **The first run teaches itself, and it is the same run.** No second scene and no mode to
+    // leave: what a tutorial run has is a hand-placed opening stretch and a card, and when the last
+    // card clears it carries straight on into the ordinary placer. See `run/tutorial.ts`. The state
+    // was made at the top of `create` — the lap is built from it; this is only the card.
+    if (this.tutorial) this.tutorialCard = new TutorialCard(this)
+    // **The flash lives on `uiCamera` for the reason the rail shooter's damage frame did**: a
+    // full-bleed rectangle drawn on a camera that is shaking drags its own edges into view, showing
+    // black gaps at exactly the busiest moment. Sized in `renderWreck`; invisible until then.
+    this.deathFlashRect = this.add
+      .rectangle(0, 0, 1, 1, THREAT_COLOR)
+      .setAlpha(0)
+      .setDepth(HUD_DEPTH + 1)
 
     // World/UI split per CLAUDE.md "Responsive Layout". Nothing screen-space exists yet; the
     // snail is a *world* object and belongs on `cameras.main` with the road.
     this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height)
     this.uiCamera.ignore(this.worldObjects())
-    this.cameras.main.ignore([...this.hud.gameObjects, ...this.feverView.gameObjects])
+    this.cameras.main.ignore([
+      ...this.hud.gameObjects,
+      ...this.feverView.gameObjects,
+      ...(this.tutorialCard?.gameObjects ?? []),
+      this.deathFlashRect,
+    ])
 
     if (import.meta.env.DEV) {
       // A static import inside a DEV branch, not a gated call: gating the *call* leaves the module
@@ -276,10 +414,13 @@ export class RunScene extends Phaser.Scene {
       keyboardSpeed: KEYBOARD_POINT_SPEED,
     })
 
-    // **A tap anywhere jumps, and steering is a drag.** They share the pointer and do not
-    // conflict: `bindAction`'s `tap` mode fires only on a press-and-release that stayed inside
-    // `TAP_SLOP_PX`, which is exactly the gesture a steer is not. On a keyboard they are separate
-    // keys and the question does not arise.
+    // **A press anywhere jumps on a mouse; a tap anywhere jumps on a finger.** They share the
+    // pointer with steering and do not conflict, and the two devices resolve that differently:
+    // a mouse steers by hovering, so its button is free and the jump fires on the press like the
+    // space bar does; a finger steers by being held, so only a press-and-release inside
+    // `TAP_SLOP_PX` is a jump rather than a dodge. See `screenTap` for the latency that firing
+    // both on the release cost. On a keyboard they are separate keys and the question does not
+    // arise.
     bindAction(this, 'jump', { keys: ['SPACE', 'UP', 'W'], screenTap: true }, () => this.tryJump())
 
     bindAction(this, 'close', { keys: ['ESC'] }, () => {
@@ -292,6 +433,7 @@ export class RunScene extends Phaser.Scene {
       this.playerView.destroy()
       this.slimeTrail.destroy()
       this.obstacleSprites.destroy()
+      this.critterSprites.destroy()
       this.pickupSprites.destroy()
       this.feverView.destroy()
       this.rampSprites.destroy()
@@ -324,6 +466,14 @@ export class RunScene extends Phaser.Scene {
       screen: () => ({ x: this.playerView.screenX, y: this.playerView.screenY }),
       seconds: () => runSeconds(this.run),
       obstacles: () => this.lap.liveObstacles().length,
+      critters: () =>
+        this.critters.critters.map((critter) => ({
+          id: critter.id,
+          kind: critter.kind,
+          ahead: critter.z - (this.run.distance + PLAYER_Z),
+          offsetX: critter.offsetX,
+        })),
+      crittersDrawn: () => ({ used: this.critterSprites.usedLastFrame, wanted: this.critterSprites.wantedLastFrame }),
       slime: () => ({ points: this.slime.length, quads: this.slimeTrail.usedLastFrame }),
       drawn: () => ({ used: this.obstacleSprites.usedLastFrame, wanted: this.obstacleSprites.wantedLastFrame }),
       hits: () => this.hitCount,
@@ -391,7 +541,7 @@ export class RunScene extends Phaser.Scene {
         //
         // Being inside it at *any* point while passing is what the player sees, so that is what the
         // test is now.
-        if (!hits(this.player, obstacle)) continue
+        if (!hits(this.spinningBody(), obstacle)) continue
 
         this.resolvedOnLap.set(obstacle.id, lap)
         this.takeHit(now)
@@ -399,6 +549,32 @@ export class RunScene extends Phaser.Scene {
         return
       }
     }
+  }
+
+  /**
+   * Walks the bugs and settles any the player ran into.
+   *
+   * **The step runs whether or not the player can be hit; only the resolve is guarded.** Grace after
+   * a hit is a promise about damage, not about the world — a bug that stopped walking for a quarter
+   * of a second because the snail was blinking would be the one object in the frame that reacts to
+   * the player's invulnerability, which is a thing the player can see and cannot explain.
+   *
+   * A bug costs exactly what a rock costs. It is deliberately not worse: the punishment in this game
+   * is denominated in speed and lives, and a hazard with its own private penalty would be a second
+   * economy for the player to learn. What makes a critter different is that it comes to you.
+   */
+  private resolveCritterHits(playerOdometer: number, deltaMs: number, now: number): void {
+    if (this.isInvulnerable()) return
+
+    const struck = resolveCritters(
+      this.critters,
+      this.spinningBody(),
+      this.previousPlayerOdometer,
+      playerOdometer,
+      deltaMs,
+    )
+
+    if (struck) this.takeHit(now)
   }
 
   /**
@@ -411,6 +587,9 @@ export class RunScene extends Phaser.Scene {
    */
   private buildLap(lapOffset: number): LapContent {
     const obstacles = placeRunObstacles(this.runSeed, this.world.trackLength, lapOffset)
+
+    if (this.tutorial && lapOffset === 0) return this.buildTutorialLap(obstacles)
+
     // **Ramps before pickups, because a ramp is where an arc chain goes.** `formations.ts` will not
     // lay an `arc` anywhere else — an arc over flat road is a chain hanging in the air.
     const ramps = placeRamps(this.runSeed ^ 0x2a17, this.world.trackLength, lapOffset, obstacles)
@@ -424,6 +603,68 @@ export class RunScene extends Phaser.Scene {
       obstacles,
       launches: ramps.map((ramp) => ({ id: ramp.id, z: ramp.z, offsetX: ramp.offsetX, launchV: RAMP_LAUNCH_V })),
     })
+
+    return { obstacles, pickups, ramps }
+  }
+
+  /**
+   * The first lap of a first run: the tutorial's own opening stretch, then the ordinary road.
+   *
+   * **The generated layout is filtered rather than shortened**, because the placers reason about a
+   * lap as a unit — the row spacing, the passability proof and `sideAwayFrom` all do — and asking
+   * them for "a lap starting at 450 segments" would be asking for a different thing than the lap
+   * they were written to produce. Dropping what falls inside the band leaves the rest exactly as it
+   * would have been, which is what makes the handover seamless: the road past `TUTORIAL_LENGTH_Z`
+   * is the road this run was always going to have.
+   *
+   * Ids continue from the generated set rather than restarting, because `RunScene.resolvedOnLap` is
+   * keyed by id and two obstacles sharing one are one obstacle to the collision — the defect that
+   * once left two thirds of a lap unable to hit the player.
+   */
+  private buildTutorialLap(generated: readonly Obstacle[]): LapContent {
+    const past = <T extends { z: number }>(items: readonly T[]): T[] =>
+      items.filter((item) => !insideTutorialBand(item.z))
+    const arcsAndPast = (items: readonly Pickup[]): Pickup[] =>
+      items.filter((item) => item.arcOf !== undefined || !insideTutorialBand(item.z))
+
+    let nextId = generated.reduce((highest, obstacle) => Math.max(highest, obstacle.id), 0) + 1
+    let nextPickupId = 1
+    const taught = tutorialLayout(
+      () => nextId++,
+      () => nextPickupId++,
+      // The top of lap 0's ramp block, which the generator provably cannot reach — see
+      // `rampIdStride` for the cross-lap collision that rule exists to prevent.
+      rampIdStride(this.world.trackLength) - 1,
+    )
+
+    const obstacles = [...taught.obstacles, ...past(generated)]
+    const ramps = [...taught.ramps, ...past(placeRamps(this.runSeed ^ 0x2a17, this.world.trackLength, 0, obstacles))]
+    const pickups = [
+      ...taught.pickups,
+      // **⚠ An arc is filtered by its LAUNCH, never by the band, and filtering it by the band left
+      // the tutorial's own ramp with no coins on it.** `past` drops what the generator laid inside
+      // the tutorial's stretch — which is right for a chain, because a chain belongs to a piece of
+      // road, and wrong for an arc, because an arc belongs to a *ramp*. The tutorial's ramp sits at
+      // 810m inside a 900m band, so its whole chain was dropped and the card promising "the coins
+      // are laid along the flight you are about to take" pointed at an empty sky. Every launch in
+      // the list is either the tutorial's own or already past the band, so keeping all the arcs
+      // cannot keep one that should have gone.
+      ...arcsAndPast(
+        placeFormations({
+          rng: createRng(this.runSeed ^ 0x5eed),
+          fromZ: TUTORIAL_LENGTH_Z,
+          toZ: this.world.trackLength,
+          trackLength: this.world.trackLength,
+          obstacles,
+          launches: ramps.map((ramp) => ({
+            id: ramp.id,
+            z: ramp.z,
+            offsetX: ramp.offsetX,
+            launchV: RAMP_LAUNCH_V,
+          })),
+        }),
+      ),
+    ]
 
     return { obstacles, pickups, ramps }
   }
@@ -480,37 +721,6 @@ export class RunScene extends Phaser.Scene {
       return
     }
 
-  }
-
-  /**
-   * How far ahead the nearest obstacle is, in world units. `Infinity` for an empty road.
-   *
-   * Walks forward from the snail by segment, the same index everything else uses, and stops at the
-   * first one it finds — so the cost is how far the gap is rather than how long the track is.
-   * Bounded at `NEAREST_OBSTACLE_SCAN` segments because nothing needs a bigger answer than "further
-   * than the reaction distance".
-   */
-  private nearestObstacleAhead(playerZ: number): number {
-    const segmentCount = this.world.track.length
-    const first = Math.floor(playerZ / SEGMENT_LENGTH)
-
-    for (let step = 0; step < NEAREST_OBSTACLE_SCAN; step++) {
-      const here = this.lap.obstacles.get((((first + step) % segmentCount) + segmentCount) % segmentCount)
-
-      if (!here) continue
-
-      let nearest = Infinity
-
-      for (const obstacle of here) {
-        const ahead = wrapZ(obstacle.z - playerZ, this.world.trackLength)
-
-        if (ahead >= 0) nearest = Math.min(nearest, ahead)
-      }
-
-      if (Number.isFinite(nearest)) return nearest
-    }
-
-    return Infinity
   }
 
   /**
@@ -603,7 +813,20 @@ export class RunScene extends Phaser.Scene {
       // `layArc`.
       if (ahead > ARC_RELAY_Z || ahead < ARC_RELAY_NEAR_Z) continue
 
-      this.layArc(ramp, this.run.speed)
+      // **⚠ And once, which is what `arcRelaid` is for — it was declared, documented and never
+      // read.** Without it this ran every frame for the whole 50-segment band, and the run is
+      // accelerating the entire time it is in there, so the chain slid continuously under a player
+      // who was watching it. The band is 40 to 90 segments out against a road drawn 300 ahead: all
+      // of it is in view, so "far enough away that nothing is seen moving" was never true of the
+      // band, only of its far edge. Reported as coins changing position with the speed.
+      if (this.arcRelaid.has(ramp)) continue
+
+      this.arcRelaid.add(ramp)
+      // **And laid for the speed the ramp will be reached at, not the speed here.** The run
+      // accelerates over the 90 segments in between, so the current speed builds a chain that is
+      // already short by the time the player launches off it — 4.8 segments of tail at the speed a
+      // run starts at, corrected at the launch, in view. See `speedAfter`.
+      this.layArc(ramp, speedAfter(this.run.speed, ahead))
     }
   }
 
@@ -623,6 +846,11 @@ export class RunScene extends Phaser.Scene {
    * belongs to the flight it is collected in, and that is the only instant that flight is a fact.
    */
   private layArc(ramp: Ramp, speed: number): void {
+    // **`arcOf` is a ramp id, and it has to be unique across LAPS rather than within one.** The
+    // handover keeps two laps' contents on the ground at all times, so this filter sees both — and
+    // while ramp ids restarted at zero every lap it matched the next lap's ramp of the same id as
+    // well. Every one of a lap's six ramps collided, turning a 5-coin chain into a 10-coin one and
+    // teleporting five coins in from elsewhere on the track. See `rampIdStride`.
     const mine = this.lap.livePickups().filter((pickup) => pickup.arcOf === ramp.id)
 
     if (mine.length === 0) return
@@ -685,7 +913,10 @@ export class RunScene extends Phaser.Scene {
     if (kind !== 'coin') {
       this.streak = 0
 
-      return 0
+      // **A fruit and a shield are different pickups and now sound like it.** They were both a flat
+      // zero, under a comment claiming they were "the same sample at three pitches" — see
+      // `PICKUP_DETUNE_CENTS`, which is where the interval and its reasoning live.
+      return PICKUP_DETUNE_CENTS[kind] ?? 0
     }
 
     const step = Math.min(this.streak, STREAK_STEPS - 1)
@@ -707,26 +938,115 @@ export class RunScene extends Phaser.Scene {
     this.streak = 0
     this.invulnerableUntilDistance = this.run.distance + HIT_INVULNERABLE_Z
     addFreeze(this.playerFreeze, now, HITSTOP_MS)
+    // **Asked before the hit is applied, because the hit is what spends it.** `takeHit` returns a
+    // new state with the shield already gone, so a shield that absorbed something is only knowable
+    // from the state that went in.
+    const absorbed = this.run.shields > 0
+
     // The whole penalty is one call into the pure module — speed, shields and lives together, so
     // there is no half-applied state a scene could leave behind.
     this.run = takeHit(this.run)
-    this.cameras.main.shake(180, 0.008)
-    playSfx(SFX.HIT)
 
-    if (isRunOver(this.run)) this.endRun()
+    // **⚠ An absorbed hit used to look and sound exactly like an expensive one**: the same shake,
+    // the same impact, the same blink. A shield's entire product is that the next mistake is free,
+    // and a free mistake that is presented as a costly one has not been made free anywhere the
+    // player can check. So the two branch — see `shield.ts` for the three cues and why they are
+    // three. The speed still goes either way, which is the rule `takeHit` states: a shield is spent
+    // instead of a *life*, never instead of the speed.
+    if (absorbed) {
+      this.playerView.popShield(now)
+      this.cameras.main.shake(120, 0.004)
+      playSfx(SFX.SHIELD_BREAK)
+    } else {
+      this.cameras.main.shake(180, 0.008)
+      playSfx(SFX.HIT)
+    }
+
+    if (isRunOver(this.run)) this.crash(now)
+  }
+
+  /**
+   * The last hit: the run stops, the snail comes apart, and only then does the panel arrive.
+   *
+   * **⚠ This used to be `endRun()` on the same frame** — `scene.pause()` and the result panel over a
+   * snail mid-stride on a road still scrolling. Every other death in this game is drawn; the one the
+   * player cares about was the only one that was not, which is exactly the defect `playerDeath.ts`
+   * was written for in the rail shooter and then inherited unused.
+   *
+   * **The sound moved here from `RunOver.create`.** It belongs to the crash, not to the screen that
+   * turns up a second later reporting it.
+   */
+  private crash(now: number): void {
+    if (!startPlayerDeath(this.death, now)) return
+
+    // A crash stops you. The world freezes because `update` stops stepping the run at all while the
+    // wreck plays — see its guards — and this is what the frozen frame shows.
+    this.cameras.main.shake(DEATH_SHAKE_MS, DEATH_SHAKE)
+    // Twice a landing's puff, thrown from the snail's own feet — the point the road's projection
+    // already put there this frame, so it cannot disagree with the shadow about where the ground is.
+    this.dust.burst(this.playerView.groundX, this.playerView.groundY, now, this.scale.width, DEATH_DUST)
+    this.dust.burst(this.playerView.groundX, this.playerView.groundY, now + 1, this.scale.width, DEATH_DUST)
+    playSfx(SFX.RUN_OVER)
+  }
+
+  /**
+   * Draws the wreck, and ends the run when it has finished.
+   *
+   * Applied *after* `PlayerView.render`, which sets the sprite's alpha and angle from the blink and
+   * the spin every frame — so the wreck has to be the last word on both or it would be overwritten
+   * on the next one.
+   */
+  private renderWreck(now: number, width: number, height: number): void {
+    const progress = hullBurstProgress(this.death, now)
+
+    this.playerView.sprite.setAlpha(hullFade(progress))
+    this.playerView.sprite.setScale(
+      this.playerView.sprite.scaleX * hullSwell(progress),
+      this.playerView.sprite.scaleY * hullSwell(progress),
+    )
+    this.playerView.sprite.setAngle(deathSpin(progress))
+    // The mark on the ground goes with the thing that was standing on it.
+    this.playerView.shadow.setVisible(false)
+
+    this.deathFlashRect
+      .setPosition(width / 2, height / 2)
+      .setSize(width, height)
+      .setAlpha(deathFlash(this.death, now) * DEATH_FLASH_ALPHA)
+
+    if (deathComplete(this.death, now)) this.endRun()
+  }
+
+  /**
+   * The snail as the collision model wants it: its lane, its height, and **how far it is turned**.
+   *
+   * A reused object rather than a spread, because this is asked once per obstacle per frame and the
+   * frame it matters on is the one with a wall on it. `spinAngle` is 0 for an ordinary jump, so
+   * outside a ramp flight this is the state it always was — see `bodyBand`.
+   */
+  private spinningBody(): Body {
+    this.body.offsetX = this.player.offsetX
+    this.body.y = this.player.y
+    this.body.spinDegrees = spinAngle(this.player)
+
+    return this.body
   }
 
   /**
    * Whether the snail can be hit at all.
    *
-   * Two sources, and they are deliberately different shapes: the grace after a hit is a
-   * **distance** (see `HIT_INVULNERABLE_Z` — a duration covered a different number of rows at
-   * every speed), and Fever's guard is a **phase**, because what it has to outlive is the landing
-   * rather than a stretch of road. Both are read here so nothing downstream has to know there are
-   * two.
+   * **One source, and it is the grace after a hit** — a **distance** rather than a duration, see
+   * `HIT_INVULNERABLE_Z`: what it exists for is the rest of the row you just hit, because a wall is
+   * eight rocks and being charged eight times for one mistake is not a difficulty setting.
+   *
+   * **⚠ There were two, and Fever's was reported as a bug twice.** A Fever switched the hitbox off
+   * for six seconds plus its landing, so a large share of every lap's obstacles passed through the
+   * snail doing nothing — which is exactly how it was described. It is gone; see `fever.ts` for why
+   * being hittable at Fever speed is safe by construction rather than by luck.
    */
   private isInvulnerable(): boolean {
-    return this.run.distance < this.invulnerableUntilDistance || feverInvulnerable(this.run.fever)
+    // A wrecked snail cannot be hit again — and saying so here rather than in a second place is what
+    // stops a rock arriving during the wreck from taking a life the run no longer has.
+    return hasDied(this.death) || this.run.distance < this.invulnerableUntilDistance
   }
 
   /**
@@ -799,11 +1119,54 @@ export class RunScene extends Phaser.Scene {
    * future launch the game itself causes (a bounce, a ramp), which wants a different sound.
    */
   private tryJump(): void {
+    // **⚠ The same press is "continue" and "jump", and only this scene can tell them apart.** A
+    // `read` card is answered by acknowledging it, and the natural thing to press is the one that
+    // is already bound to the only other verb in the game — so while one is up the press is spent
+    // on the card and the snail does not hop. On the `jump` card it is the opposite: the jump *is*
+    // the answer, so this branch does not fire and the ordinary path below satisfies it.
+    if (this.tutorial && awaitingAcknowledgement(this.tutorial, this.run.distance)) {
+      this.acknowledgements += 1
+
+      return
+    }
+
     if (!this.player.grounded) return
 
     this.player = jump(this.player)
+    this.jumps += 1
     squashOnLaunch(this.squash, this.time.now)
     playSfx(SFX.JUMP)
+  }
+
+  /**
+   * Advances the tutorial and redraws its card.
+   *
+   * **The flag is written the moment the last card clears, not at the end of the run.** A player who
+   * has been taught has been taught, and a run that ends in a crash before the results screen is
+   * still a run they learned from — banking it at `endRun` would teach the same lesson twice to
+   * anyone whose first attempt was a short one.
+   */
+  private updateTutorial(now: number): void {
+    if (!this.tutorial || !this.tutorialCard) return
+
+    this.tutorial = stepTutorial(this.tutorial, {
+      distance: this.run.distance,
+      steered: this.steered,
+      jumps: this.jumps,
+      acknowledgements: this.acknowledgements,
+      now,
+    })
+    // The card asks the HUD where the readout it names actually is — see `Hud.highlightRect`.
+    this.tutorialCard.update(this.tutorial, this.run.distance, now, (target) => this.hud.highlightRect(target))
+
+    if (tutorialRunning(this.tutorial)) return
+
+    this.tutorial = null
+    this.tutorialCard.destroy()
+    this.tutorialCard = null
+    mutate((state) => {
+      state.tutorialDone = true
+    })
   }
 
   /** Everything that belongs to `cameras.main` and must be hidden from `uiCamera`. */
@@ -812,6 +1175,7 @@ export class RunScene extends Phaser.Scene {
       ...this.world.gameObjects,
       this.slimeTrail.gameObject,
       ...this.obstacleSprites.gameObjects,
+      ...this.critterSprites.gameObjects,
       ...this.pickupSprites.gameObjects,
       ...this.rampSprites.gameObjects,
       ...this.dust.gameObjects,
@@ -825,6 +1189,7 @@ export class RunScene extends Phaser.Scene {
     this.uiCamera.setViewport(0, 0, width, height)
     this.world.layout(width, height)
     this.hud.layout(width, height)
+    this.tutorialCard?.layout(width, height)
   }
 
   update(time: number, delta: number): void {
@@ -834,6 +1199,17 @@ export class RunScene extends Phaser.Scene {
     // **The snail is stepped before the run, and the run reads the result.** Leaving the road
     // costs speed, so the drag this frame has to be about where the snail is *now* — stepping the
     // run first would charge the verge a frame late, which at top speed is a whole segment.
+    // **Everything that advances the run is skipped while the wreck plays.** The road stops, the
+    // snail stops steering, nothing new can be collected or hit, and the frame keeps drawing — which
+    // is the whole effect: a crash that stops you, held long enough to read, before the panel.
+    const dying = hasDied(this.death)
+    // **A tutorial card stops the road and leaves the snail alone.** Everything that advances the
+    // *run* is skipped while one is up and unanswered — the same set of skips the wreck uses, and
+    // for a related reason: the player is being asked to take in one thing, and a road arriving
+    // underneath it is the other thing. `stepPlayer` deliberately keeps running, because performing
+    // the control is how the two `act` cards are answered. See `tutorialPaused`.
+    const taught = this.tutorial !== null && tutorialPaused(this.tutorial, this.run.distance)
+    const frozen = dying || taught
     const steer = this.steering.read(delta)
     const wasAirborne = !this.player.grounded
 
@@ -841,8 +1217,14 @@ export class RunScene extends Phaser.Scene {
     // nothing else, so the road keeps scrolling underneath it — which is what reads as weight
     // rather than as a stutter. `stepPlayer` is simply not called, so its accumulator does not
     // advance either and the frame it thaws on is a clean one.
-    if (!isFrozen(this.playerFreeze, time)) {
+    if (!dying && !isFrozen(this.playerFreeze, time)) {
+      const wasAt = this.player.offsetX
+
       this.player = stepPlayer(this.player, { targetFraction: steer.targetFraction, active: steer.active }, delta)
+      // **Total travel, not a position reached** — a player who has pushed the snail across the road
+      // and back has learned the control, and one whose finger started at the edge has not. The
+      // tutorial's first card is the only thing that reads it. See `TUTORIAL_STEER_UNITS`.
+      this.steered += Math.abs(this.player.offsetX - wasAt)
     }
 
     // **Collisions before the draw and after the step**, so a hit is resolved against the frame
@@ -855,7 +1237,9 @@ export class RunScene extends Phaser.Scene {
     // fifth of what the player was looking at. See `lapLayout.ts`.
     this.lap.advance(this.run.distance)
 
-    if (playerZ >= this.previousPlayerZ) {
+    if (frozen) {
+      // Nothing to resolve and nothing to hand over: the run is not moving.
+    } else if (playerZ >= this.previousPlayerZ) {
       this.resolveRamps(this.previousPlayerZ, playerZ)
       this.collectPickups(this.previousPlayerZ, playerZ)
       this.resolveObstacles(this.previousPlayerZ, playerZ, lap, time)
@@ -882,15 +1266,24 @@ export class RunScene extends Phaser.Scene {
     }
     const feverWas = this.run.fever.phase
 
-    this.run = stepRun(this.run, delta, {
-      trackLength: this.world.trackLength,
-      drag: isOffRoad(this.player.offsetX) ? OFFROAD_DRAG : 0,
-      // **The Fever guard waits on the road rather than on a clock.** Cheap to ask every frame —
-      // it walks forward only as far as the reaction distance and stops at the first thing it
-      // finds — and it is only read at all while the run is in the `holding` phase.
-      roadClear: roadIsClear(this.nearestObstacleAhead(playerZ), this.run.speed),
-    })
+    if (!frozen) {
+      this.run = stepRun(this.run, delta, {
+        trackLength: this.world.trackLength,
+        drag: isOffRoad(this.player.offsetX) ? OFFROAD_DRAG : 0,
+      })
+    }
     this.onFeverPhase(feverWas, this.run.fever.phase)
+    // **The bugs walk after the run has, and against the position it just reached.** They are the one
+    // thing in the frame moving under their own power, so their step and the collision that follows
+    // it are a self-contained pair over the interval the player actually covered this frame — see
+    // `critters.ts` for why that interval is measured on the odometer rather than in track space.
+    if (!frozen) {
+      const playerOdometer = this.run.distance + PLAYER_Z
+
+      stepCritters(this.critters, playerOdometer, delta)
+      this.resolveCritterHits(playerOdometer, delta, time)
+      this.previousPlayerOdometer = playerOdometer
+    }
     // **The magnet runs after the step and before the draw**, so a pickup is pulled and then drawn
     // where it was pulled to. Doing it after the draw would put the sprite one frame behind the
     // position the collection test is using, which at Fever speed is a whole blob's width.
@@ -905,7 +1298,9 @@ export class RunScene extends Phaser.Scene {
     // **Laid before the world is drawn and from the snail's *current* line**, so the newest blob
     // is under the snail this frame rather than one frame behind it — at top speed a frame is 60
     // world units, which is a whole blob's spacing.
-    stepSlime(this.slime, this.run.distance, this.run.z, this.player.offsetX, this.run.speed, this.world.trackLength)
+    if (!frozen) {
+      stepSlime(this.slime, this.run.distance, this.run.z, this.player.offsetX, this.run.speed, this.world.trackLength)
+    }
 
     this.world.setSpeed(0)
     this.world.cameraZ = this.run.z
@@ -935,6 +1330,18 @@ export class RunScene extends Phaser.Scene {
       width,
       height,
     )
+    // `run.z` is exactly `wrapZ(run.distance)` — `stepRun` derives one from the other — so the two
+    // camera positions handed over here cannot disagree about where the camera is.
+    this.critterSprites.render(
+      this.critters.critters,
+      this.run.distance,
+      this.run.z,
+      this.world.track,
+      this.world.baseIndex,
+      this.world.clipY,
+      width,
+      height,
+    )
     this.pickupSprites.render(
       this.lap.pickups,
       this.world.track,
@@ -947,6 +1354,7 @@ export class RunScene extends Phaser.Scene {
     if (import.meta.env.DEV && this.reactionSeen) this.recordReaction(time)
 
     this.hud.update(this.run, width)
+    this.updateTutorial(time)
     this.feverView.update(this.run.fever, delta, width, height)
     this.dust.update(time, delta, height)
 
@@ -984,8 +1392,15 @@ export class RunScene extends Phaser.Scene {
       height,
       squashAt(this.squash, time, this.player.vy / JUMP_LAUNCH_V),
       this.run.distance,
-      { invulnerable: this.isInvulnerable(), now: time },
+      { invulnerable: this.isInvulnerable(), now: time, shields: this.run.shields },
     )
+    // **Asked again here rather than reusing `dying` from the top of the frame.** The killing hit
+    // happens *inside* this update, in `resolveObstacles`, so the flag captured before it is false
+    // on the very frame the snail crashes — which left the first frame of the wreck showing the
+    // invulnerability blink instead of a solid snail, and the flash at zero on the one frame it
+    // exists to be loudest. The guards above still use the captured value, because what they skip
+    // has already run by then.
+    if (hasDied(this.death)) this.renderWreck(time, width, height)
   }
 }
 

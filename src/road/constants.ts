@@ -692,10 +692,45 @@ export const SUN_EDGE_MARGIN = 0.02
  * against the raw fraction, which is the number that is wrong.
  */
 export function sunCenterX(width: number, height: number): number {
-  const halfDrawn = (height * SUN.size) / 2
+  const halfDrawn = sunSize(width, height) / 2
   const margin = width * SUN_EDGE_MARGIN
 
   return Math.min(Math.max(width * SUN.x, halfDrawn + margin), width - halfDrawn - margin)
+}
+
+/**
+ * The largest the sun may be drawn, as a fraction of the frame's **width**.
+ *
+ * **⚠ `SUN.size` is a share of the HEIGHT, and on a portrait phone that is half the frame's width.**
+ * At 375x667 — an iPhone SE, the narrowest thing this game supports — `0.3` of the height is 200px
+ * against a 375px frame: **53% of the width**, where the same constant is 15% of a 1568px desktop.
+ * The asymmetry is a property of the projection, not of the constant: everything sized off one axis
+ * and read against the other diverges as the aspect does, which is the same arithmetic that made the
+ * mascot too small on a phone, arrived at from the other end.
+ *
+ * What it cost was reported directly: the sun sat behind the wordmark on the front screen, and in a
+ * run it sits behind the leaf gauge. **Sizing off the height is still the right rule** — measured off
+ * the width the sun would be a pinhead on an ultrawide frame — so this is a ceiling on it rather
+ * than a replacement, exactly as `sunCenterX` is a clamp rather than a smaller `SUN.x`.
+ *
+ * **0.24 is derived rather than chosen, and the derivation is a check rather than arithmetic here.**
+ * What has to be true is that the front screen's wordmark fits between the sun's bottom edge and the
+ * bottom of its own band — the band is what keeps the title off the vanishing point and out of the
+ * HUD's rows, so it is not somewhere the title may be pushed out of. Three portrait frames
+ * independently want a ceiling near 0.245; `verify:menu` measures the clearance at every supported
+ * aspect and carries the unbounded sun as its control. It does not bind on any landscape frame at
+ * all — a desktop sun is unchanged to the pixel.
+ */
+export const SUN_MAX_WIDTH_FRACTION = 0.24
+
+/**
+ * How big the sun is actually drawn, in pixels.
+ *
+ * Pure and exported so both the backdrop and the front screen's own layout read one answer — a
+ * second expression of this is a second thing that can disagree about where the sun ends.
+ */
+export function sunSize(width: number, height: number): number {
+  return Math.min(height * SUN.size, width * SUN_MAX_WIDTH_FRACTION)
 }
 
 /** Diameter of the generated sun texture, in pixels. */

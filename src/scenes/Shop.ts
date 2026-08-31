@@ -297,9 +297,17 @@ export class Shop extends Phaser.Scene {
     )
 
     this.topupButton.setFontSize(TOPUP_FONT_SIZE * scale)
+    // The rewarded offer spans the row list it sits over, so the panel reads as one column rather
+    // than as a centred chip above a stack of full-width rows.
+    this.topupButton.setMinWidth(ROW_WIDTH * scale)
     this.topupButton.container.setPosition(cx, panelTop + (TOP_PAD + HEADER_HEIGHT) * scale + (TOPUP_HEIGHT * scale) / 2)
 
-    this.layoutTabs(cx, panelTop + (TOP_PAD + HEADER_HEIGHT + TOPUP_HEIGHT) * scale + (tabsHeight * scale) / 2, scale)
+    this.layoutTabs(
+      cx,
+      panelTop + (TOP_PAD + HEADER_HEIGHT + TOPUP_HEIGHT) * scale + (tabsHeight * scale) / 2,
+      scale,
+      ROW_WIDTH * scale,
+    )
 
     // The scrolling window: everything between the tab strip and the footer.
     const windowTop = panelTop + (TOP_PAD + HEADER_HEIGHT + TOPUP_HEIGHT + tabsHeight) * scale
@@ -333,6 +341,7 @@ export class Shop extends Phaser.Scene {
     }
 
     this.closeButton.setFontSize(CLOSE_FONT_SIZE * scale)
+    this.closeButton.setMinWidth(ROW_WIDTH * scale)
     this.closeButton.container.setPosition(cx, panelTop + panelHeight - BOTTOM_PAD * scale - (FOOTER_HEIGHT * scale) / 2)
   }
 
@@ -394,18 +403,27 @@ export class Shop extends Phaser.Scene {
   }
 
   /** The strip itself, centred on the panel and measured from the buttons' own widths. */
-  private layoutTabs(cx: number, cy: number, scale: number): void {
+  /**
+   * The tab strip, spanning the row column in equal shares.
+   *
+   * **They used to be auto-sized to their own labels and centred**, which made the one element on
+   * the screen that did not line up with anything else: a short "Snails" beside a longer "Themes",
+   * floating in the middle of a panel whose top-up button, rows and footer are all one column. Equal
+   * shares also stop the strip's shape from depending on how long a translation is — the widths are
+   * the panel's, not the words'.
+   */
+  private layoutTabs(cx: number, cy: number, scale: number, width: number): void {
     if (this.tabs.length < 2) return
 
-    for (const tab of this.tabs) tab.button.setFontSize(TAB_FONT_SIZE * scale)
-
     const gap = TAB_GAP * scale
-    const total = this.tabs.reduce((sum, tab) => sum + tab.button.width, 0) + gap * (this.tabs.length - 1)
-    let cursorX = cx - total / 2
+    const each = (width - gap * (this.tabs.length - 1)) / this.tabs.length
+    let cursorX = cx - width / 2
 
     for (const tab of this.tabs) {
-      tab.button.container.setPosition(cursorX + tab.button.width / 2, cy)
-      cursorX += tab.button.width + gap
+      tab.button.setFontSize(TAB_FONT_SIZE * scale)
+      tab.button.setMinWidth(each)
+      tab.button.container.setPosition(cursorX + each / 2, cy)
+      cursorX += each + gap
     }
   }
 

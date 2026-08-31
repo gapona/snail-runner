@@ -27,6 +27,7 @@
  */
 import * as Phaser from 'phaser'
 import { INK, SNAIL_BODY as BODY, SNAIL_SHELL as SHELL } from './artPalette'
+import { DEFAULT_SNAIL_SKIN, recolour, snailSkin } from './snailSkins'
 
 /** How many frames the glide cycle has. */
 export const SNAIL_FRAMES = 6
@@ -34,6 +35,20 @@ export const SNAIL_FRAMES = 6
 /** Texture key for frame `index`, wrapping in both directions. */
 export function snailFrameKey(index: number): string {
   return `snail-${((index % SNAIL_FRAMES) + SNAIL_FRAMES) % SNAIL_FRAMES}`
+}
+
+/**
+ * Texture key for frame `index` **in a skin**.
+ *
+ * The default skin returns the base key unchanged, and that is load-bearing rather than tidy: the
+ * base keys are what `Preloader` loads from disk and what the procedural fallback draws into, so a
+ * player who has bought nothing costs exactly what they cost before skins existed — no canvas, no
+ * pixel pass, no second copy of six textures in the atlas.
+ */
+export function snailSkinFrameKey(index: number, skinId: string): string {
+  const base = snailFrameKey(index)
+
+  return skinId === DEFAULT_SNAIL_SKIN ? base : `${base}-${skinId}`
 }
 
 /** The first frame, for anything needing a key before it has a distance to derive one from. */
@@ -70,13 +85,82 @@ const INK_WEIGHT = 0.016
  * Origin is the bottom centre, matching every other billboard in the game: a billboard is
  * positioned by the point where it meets the ground, which is what the projection gives us.
  */
-export function createSnailTexture(scene: Phaser.Scene): void {
+export function createSnailTexture(scene: Phaser.Scene, skinId: string = DEFAULT_SNAIL_SKIN): void {
   for (let frame = 0; frame < SNAIL_FRAMES; frame++) {
     const key = snailFrameKey(frame)
 
     if (scene.textures.exists(key)) continue
 
     drawSnail(scene, key, frame / SNAIL_FRAMES)
+  }
+
+  createSkinTextures(scene, skinId)
+}
+
+/**
+ * Builds a skin's six frames out of the six base ones, if they are not already there.
+ *
+ * **Derived from whatever the base keys hold, which is the point.** They hold the shipped PNGs in
+ * the real game and the procedural drawing above when a load has failed, and this reads the texture
+ * manager rather than the file system — so a skin works over either, and neither path needs to know
+ * skins exist. Same "if the key already exists, nothing is drawn" rule as every other generated
+ * texture here, so this runs once per skin per session however many scenes ask for it.
+ *
+ * **⚠ It must run after the loader has finished**, for the reason CLAUDE.md records under "Starting
+ * `RunScene` before the loader finishes silently replaces every PNG with a placeholder": a base key
+ * that does not exist yet is drawn procedurally, and the arriving image is then skipped. Every
+ * caller is a scene's `create()`, which is after `Preloader` has handed over.
+ */
+function createSkinTextures(scene: Phaser.Scene, skinId: string): void {
+  const skin = snailSkin(skinId)
+
+  if (!skin || skinId === DEFAULT_SNAIL_SKIN) return
+
+  // One cache for all six frames. The sprites are quantised to 64 colours by `build-sprites.py`, so
+  // this turns 187k OKLab round trips into about 64 — which is the difference between a pixel pass
+  // worth doing at scene start and one worth precomputing into files.
+  const cache = new Map<number, number>()
+
+  for (let frame = 0; frame < SNAIL_FRAMES; frame++) {
+    const key = snailSkinFrameKey(frame, skinId)
+
+    if (scene.textures.exists(key)) continue
+
+    const source = scene.textures.get(snailFrameKey(frame)).getSourceImage()
+
+    if (!(source instanceof HTMLImageElement) && !(source instanceof HTMLCanvasElement)) continue
+
+    const canvas = scene.textures.createCanvas(key, source.width, source.height)
+
+    if (!canvas) continue
+
+    canvas.draw(0, 0, source)
+
+    const image = canvas.getData(0, 0, source.width, source.height)
+    const pixels = image.data
+
+    for (let i = 0; i < pixels.length; i += 4) {
+      // Fully transparent pixels are skipped rather than recoloured: `build-sprites.py` floods
+      // colour under the transparency on purpose (so no downscale mixes black into the silhouette),
+      // and rotating that flood would cost the pass a third of its work to change nothing visible.
+      if (pixels[i + 3] === 0) continue
+
+      const packed = (pixels[i] << 16) | (pixels[i + 1] << 8) | pixels[i + 2]
+      let turned = cache.get(packed)
+
+      if (turned === undefined) {
+        turned = recolour(packed, skin)
+        cache.set(packed, turned)
+      }
+
+      pixels[i] = (turned >> 16) & 0xff
+      pixels[i + 1] = (turned >> 8) & 0xff
+      pixels[i + 2] = turned & 0xff
+      // Alpha is untouched, so a skin cannot change the silhouette `verify:mattes` measures.
+    }
+
+    canvas.putData(image, 0, 0)
+    canvas.refresh()
   }
 }
 

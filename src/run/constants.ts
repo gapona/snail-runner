@@ -22,48 +22,6 @@ import { CAMERA_DEPTH, CAMERA_HEIGHT, HORIZON_Y, MAX_SPEED, ROAD_WIDTH, SEGMENT_
  * ------------------------------------------------------------------ */
 
 /**
- * Where the player is drawn down the frame, as a fraction of viewport height.
- *
- * Inherited unchanged from the rail shooter's `SHIP_REST_Y_FRACTION` — the centre of the bottom
- * third — because it is a good row for the same reason there and here: far enough up that the
- * ground under it still reads as ground, far enough down that the whole approach is visible
- * above it. **It is an input to `PLAYER_Z`, not a drawing constant.** Nothing positions the
- * player from it; the projection does that, from the world row it implies.
- */
-export const PLAYER_REST_Y_FRACTION = 5 / 6
-
-/**
- * The player's fixed distance ahead of the camera, in world units — the row the runner lives on.
- *
- * **Derived by solving `projectInto` for the ground row at `PLAYER_REST_Y_FRACTION`**, exactly as
- * the rail shooter's `SHIP_LANE_Z` was, and it comes out at 1966 units ≈ 9.8 segments ahead of
- * the camera. Two things follow, and both are the point of the fork:
- *
- * - The player is drawn by `billboardRectInto` on the segment nearest this `z`, like any piece of
- *   scenery. Visual and logic cannot drift apart, because they are the same numbers.
- * - The camera travels; the player does not, relative to it. `RunState.z` is the *camera's*
- *   distance, and the player is always `PLAYER_Z` ahead of it. An obstacle is met when the
- *   camera's `z` plus this constant crosses the obstacle's own `z`.
- */
-export const PLAYER_Z = CAMERA_DEPTH / ((2 * (PLAYER_REST_Y_FRACTION - HORIZON_Y)) / CAMERA_HEIGHT)
-
-/**
- * A screen fraction, read as road half-widths on the player's own row.
- *
- * Lifted verbatim from the rail shooter's `halfWidthsAtLane`, and it does more work here: there
- * it was a measurement aid that nothing drew with, here it is the **input conversion**. A finger
- * at 30% across the frame is a request to stand at `halfWidthsAtLane(0.3)` on the road, and
- * because the player's row is fixed this conversion is exact rather than approximate.
- *
- * Exact only at `PLAYER_Z` — which is the only row anything ever asks about.
- */
-export function halfWidthsAtLane(screenFraction: number): number {
-  const scale = CAMERA_DEPTH / PLAYER_Z
-
-  return ((screenFraction - 0.5) * 2) / (scale * ROAD_WIDTH)
-}
-
-/**
  * The mascot's own proportion, measured off the shipped render.
  *
  * `snail-0.png` is 224x139. **This is an external fact, not a choice**, and it is what the drawn box
@@ -77,19 +35,51 @@ export const MASCOT_ASPECT = 224 / 139
  * How tall the snail's body is, in world units — the band `[y, y + PLAYER_BODY_H]` that `hits`
  * tests against, and the drawn height `PlayerView` uses.
  *
- * **⚠ Raised from 180 with `PLAYER_HALF_WIDTHS`, and the round that raised only the width was
- * wrong.** Widening the box without the height left a drawn footprint of 420x180 — **2.33:1 against
- * the art's 1.61:1, a 45% horizontal stretch** — and it was reported immediately as the snail
- * looking flat. The drawn box IS the collision box here, so the two axes are not independent: the
- * mascot can only get bigger by getting bigger in both, which means moving the band a grounded
- * snail has to pass under.
+ * **⚠ The two axes are not independent, because the drawn box IS the collision box.** Widening one
+ * without the other left a footprint of 420x180 — 2.33:1 against the art's 1.61:1 — and was
+ * reported at once as the snail looking flat. So this is the ONLY size decision the mascot has:
+ * `PLAYER_WIDTH` and `PLAYER_HALF_WIDTHS` are both solved from it, and a stretched sprite is not a
+ * thing that can be typed here any more.
  *
- * 261 is `PLAYER_WIDTH / 1.61`, i.e. the art's own proportion. `OBSTACLE_BANDS.overhead.yLow` moved
- * with it to keep the same 39% of a body height of daylight underneath, and `verify:jump` holds the
- * three-class inequalities that fall out — a grounded snail clears an overhead, an airborne one
- * does not, and neither of those is a flag anywhere.
+ * **⚠ 340, raised from 261, and it is the only lever there is.** Reported on a 375px phone as the
+ * mascot being too small. Everything on this road is scaled by the frame's WIDTH — which is what
+ * keeps an object the same size relative to the road at every aspect — so a phone is a fifth of a
+ * desktop and there is no way to grow the snail *only* there:
+ *
+ * - a camera zoom cannot: the player's own lane already fills 78% of the frame at every aspect, so
+ *   anything past about 1.25x pushes the snail off the edge at full lock;
+ * - a viewport-dependent field of view cannot: `PLAYER_Z` is *solved* from `CAMERA_DEPTH`, so the
+ *   snail's world position — and with it every collision time, the arc geometry and the slime
+ *   trail — would depend on the device;
+ * - a viewport-dependent *collision* width cannot: `ROAD_EDGE` would move on a rotation and a lap
+ *   would have been proved passable against a half-width the run is no longer using;
+ * - and drawing it bigger than its box is the pancake bug in the other direction — the player
+ *   clips a rock and takes nothing, which reads as a dropped hit.
+ *
+ * So the mascot is bigger everywhere — and **this is only half of the size it gained.** The other
+ * half is `PLAYER_REST_Y_FRACTION`, which stands the snail nearer the camera and costs nothing at
+ * all; between them the mascot went from **34px to 54px** on a 375px frame.
+ *
+ * **What THIS half costs is lane width, and that is the number to watch rather than the size.**
+ * `hits` adds the half-width to the obstacle's own and `ROAD_EDGE` shrinks with it, so a wider snail
+ * threads a tighter gap. Measured over 2681 generated rows as the widest gap a row leaves, in units
+ * of the snail's own width:
+ *
+ * ```
+ * PLAYER_BODY_H   mean lane gap
+ *           261     2.40 snail widths
+ *           340     1.65   <- shipped
+ *           380     1.39
+ *           460     1.01   <- a row leaves exactly one snail of room
+ * ```
+ *
+ * The *difficulty table* — density, the unjumpable share, rows per 90k, the reaction budget — does
+ * not move at any of them, because the placer re-proves every row against whatever these numbers
+ * are and pays a wider hitbox in rows redrawn rather than in rows nobody can pass. What moves is
+ * the precision a dodge needs, which is why the gap is measured rather than the table trusted — and
+ * why the size gained since is taken from the row rather than from here.
  */
-export const PLAYER_BODY_H = 261
+export const PLAYER_BODY_H = 310
 
 /**
  * The snail's drawn footprint in world units, **solved from the height and the art's proportion.**
@@ -111,8 +101,9 @@ export const PLAYER_WIDTH = PLAYER_BODY_H * MASCOT_ASPECT
  * visibly cleared. The second version typed the half-width and left the height, which stretched the
  * sprite the other way. Solving both from one height and one measured aspect ends the argument.
  *
- * At 0.075 the snail is about a thirteenth of the road, so a row of three obstacles still leaves
- * lanes, which is what keeps an obstacle a choice rather than a reflex test.
+ * At 0.136 the snail is about a seventh of the road's full width, so a row of three obstacles
+ * still leaves lanes, which is what keeps an obstacle a choice rather than a reflex test — and
+ * `provePassable` proves that per row rather than trusting this sentence.
  */
 export const PLAYER_HALF_WIDTHS = PLAYER_WIDTH / (2 * ROAD_WIDTH)
 
@@ -133,6 +124,176 @@ export const ROAD_EDGE = 1 - PLAYER_HALF_WIDTHS
 export const OFFROAD_LIMIT = 1 + PLAYER_HALF_WIDTHS
 
 /**
+ * How much further than the road's edge a finger at the edge of the screen must be able to ask for.
+ *
+ * One of the two bounds on how big the mascot can be drawn — see `PLAYER_REST_Y_FRACTION`.
+ */
+export const STEER_REACH_MARGIN = 1.1
+
+/**
+ * How far the ground at the player's own row falls below its flat position on the steepest descent
+ * the run's circuit contains, as a fraction of frame height.
+ *
+ * **Measured off `buildRunCircuit`, an external fact rather than a choice** — the same standing as
+ * `MASCOT_ASPECT`, and `verify:player` re-measures it against the real track so a re-composed
+ * circuit moves it rather than silently invalidating the row solved from it.
+ *
+ * **It does not depend on `PLAYER_Z`, which is what makes it a usable bound.** The drop is
+ * `scale * gradient * PLAYER_Z * height / 2` and `scale` is `CAMERA_DEPTH / PLAYER_Z`, so the
+ * distance cancels and what is left is `CAMERA_DEPTH * gradient / 2` — a property of the steepest
+ * hill and the field of view, identical wherever the player stands. Standing the snail nearer the
+ * camera therefore buys size without changing how far the road drops out from under it, and the
+ * only thing that reduces this number is a gentler circuit.
+ *
+ * The steepest gradient on the shipped lap is **0.209**. It was **0.419** — `ROAD_HILL.MEDIUM` over
+ * an `S_ARM`, `addLowRollingHills`'s own crests, and `build()`'s closing section, all reaching the
+ * same slope — and at that figure the mascot went out of sight on the steepest crest, which a
+ * player reported with a screenshot. `buildRunCircuit` was re-composed for this constant rather
+ * than the constant being written down around the circuit; see its docstring.
+ *
+ * **The bound it feeds is strict: the snail's feet never leave the frame.** A softer rule was tried
+ * first — feet allowed a little past the bottom edge, since the mascot is drawn *upward* from them
+ * and half a snail is still a snail — and the frame it produced was a sliver of shell along the
+ * bottom of the screen, which is the report again in a smaller size. What the player has to be able
+ * to do is see the thing they are steering, and there is no fraction of that worth trading.
+ */
+export const MAX_DESCENT_DROP = 0.088
+
+/**
+ * Where the player is drawn down the frame, as a fraction of viewport height.
+ *
+ * **⚠ Solved from the steering reach, not inherited any more.** It was `5 / 6`, taken unchanged
+ * from the rail shooter's `SHIP_REST_Y_FRACTION` — a good row there for reasons about a *ship in a
+ * combat frame*, and this file said so while keeping the number. What it is here is the one lever
+ * that makes the mascot bigger for free, and the only thing bounding it is a rule nobody had
+ * written down:
+ *
+ * **a finger at the edge of the screen must still be able to ask for the edge of the road.**
+ *
+ * Everything on this road is scaled by the frame's width, so a snail cannot be grown on a phone
+ * alone (see `PLAYER_BODY_H`) — but it *can* be grown by standing it nearer the camera, which is
+ * exactly what lowering this row does: `PLAYER_Z` is solved from it, the drawn size goes as
+ * `1 / PLAYER_Z`, and **the collision box does not move at all.** No hitbox, no passability, no
+ * difficulty: the mascot is simply closer.
+ *
+ * What stops it is the same arithmetic from the other end. `halfWidthsAtLane` maps the screen to
+ * the road at this row, and the nearer the player stands the more of the frame the road fills — so
+ * past a point the screen's own edge maps to an `offsetX` **inside** the asphalt and the player can
+ * no longer steer to the verge at all. Measured across the range:
+ *
+ * ```
+ * rest    PLAYER_Z   snail at 375px   screen edge maps to offsetX
+ * 0.833      1967          44px            1.17
+ * 0.883      1554          55px            0.95     <- shipped
+ * 0.900      1498          58px            0.89
+ * 0.920      1398          62px            0.83     <- inside ROAD_EDGE: the asphalt's own edge
+ *                                                      is unreachable by dragging
+ * ```
+ *
+ * **⚠ And a second bound, which the first version missed and a player found in one screenshot: the
+ * road falls away on a descent.** The mascot stands `PLAYER_Z` ahead of the camera, so on a
+ * downhill the ground it is standing on is *below* the camera's eye line and it is drawn lower —
+ * and past a point, off the bottom of the frame. Reported as the snail being almost invisible going
+ * down a hill, and it is the row that causes it:
+ *
+ * ```
+ * hills   rest    snail at 375px   worst feet row   fully hidden on
+ * old     0.833            44px           100.9%             0.0% of the lap
+ * old     0.883            54px           105.9%             3.1%            <- the report
+ * new     0.883            54px            93.3%             0.0%            <- shipped
+ * ```
+ *
+ * So the row is the **lower** of the two bounds. What made 0.883 shippable is not a smaller row but
+ * a gentler circuit: halving the run's hills took the drop from 17.6% of the frame to 8.8%, which
+ * moved the descent bound from 0.824 to 0.912 and handed the binding role back to the steering
+ * rule. Both are stated, `verify:player` asserts each against the thing it is about — the projection
+ * for one, the real circuit for the other — and each is shown to reject the row past it.
+ *
+ * **What it costs, stated rather than hidden.** A finger at the screen edge used to be able to ask
+ * for `OFFROAD_LIMIT` itself; it now asks for about 10% into the verge instead of all of it. The
+ * outermost sliver is still *reached*, by the spring's own overshoot — and it is never *needed*,
+ * because `passableLine` only ever scans within `±ROAD_EDGE`, so no layout the placer ships
+ * requires leaving the asphalt.
+ *
+ * **It is an input to `PLAYER_Z`, not a drawing constant.** Nothing positions the player from it;
+ * the projection does that, from the world row it implies.
+ */
+const REST_Y_BOUND = Math.min(
+  HORIZON_Y + CAMERA_HEIGHT / (2 * ROAD_WIDTH * ROAD_EDGE * STEER_REACH_MARGIN),
+  1 - MAX_DESCENT_DROP,
+)
+
+/**
+ * How far into its own segment the player must stand, as a fraction of one.
+ *
+ * **⚠ A third rule, and the only one of the three that is about the painter's order rather than
+ * about the picture.** There is no depth buffer here: everything in the world sorts on
+ * `worldDepth(distanceIndex, layer)`, where the layer is a sub-segment tiebreak. So an obstacle on
+ * the snail's *own* segment — whose near edge is behind the snail, and which therefore has to paint
+ * over it — only wins if the snail is further into that segment than the layers are apart:
+ * `WORLD_LAYER.player - WORLD_LAYER.obstacle` = 0.1. The mirror bound is a pickup one segment ahead,
+ * which must not paint over the snail: that needs `1 - frac > WORLD_LAYER.pickup -
+ * WORLD_LAYER.player` = 0.1. So the legal window is `(0.1, 0.9)` and 0.25 sits inside it with room.
+ *
+ * **It has always been a constraint and was never written down.** At the rail shooter's inherited
+ * row the snail stood 9.83 segments out — a fraction of 0.83, inside the window by luck and one
+ * tenth from its top edge. Solving the row from the steering and descent rules landed it at
+ * **8.077**, i.e. 0.077 into its segment and *outside* the window, and `verify:obstacles` caught it
+ * as "an obstacle the snail has passed draws behind it" — which is exactly what it would have been.
+ */
+const PLAYER_SEGMENT_PHASE = 0.25
+
+/**
+ * Where the player is drawn down the frame, as a fraction of viewport height — solved backwards
+ * from `PLAYER_Z`, which is the number the three rules actually constrain.
+ *
+ * See `REST_Y_BOUND` above for the two rules that bound it and `PLAYER_SEGMENT_PHASE` for the one
+ * that snaps it. The snap only ever moves the player *further* from the camera, so it cannot break
+ * either bound — it spends a little of the size the bounds allow on the depth order being right.
+ */
+export const PLAYER_REST_Y_FRACTION = HORIZON_Y + (CAMERA_DEPTH * CAMERA_HEIGHT) / (2 * PLAYER_Z_SOLVED())
+
+function PLAYER_Z_SOLVED(): number {
+  const bound = CAMERA_DEPTH / ((2 * (REST_Y_BOUND - HORIZON_Y)) / CAMERA_HEIGHT)
+
+  return (
+    (Math.ceil(bound / SEGMENT_LENGTH - PLAYER_SEGMENT_PHASE) + PLAYER_SEGMENT_PHASE) * SEGMENT_LENGTH
+  )
+}
+
+/**
+ * The player's fixed distance ahead of the camera, in world units — the row the runner lives on.
+ *
+ * **Derived by solving `projectInto` for the ground row at `PLAYER_REST_Y_FRACTION`**, exactly as
+ * the rail shooter's `SHIP_LANE_Z` was, and it comes out at 1966 units ≈ 9.8 segments ahead of
+ * the camera. Two things follow, and both are the point of the fork:
+ *
+ * - The player is drawn by `billboardRectInto` on the segment nearest this `z`, like any piece of
+ *   scenery. Visual and logic cannot drift apart, because they are the same numbers.
+ * - The camera travels; the player does not, relative to it. `RunState.z` is the *camera's*
+ *   distance, and the player is always `PLAYER_Z` ahead of it. An obstacle is met when the
+ *   camera's `z` plus this constant crosses the obstacle's own `z`.
+ */
+export const PLAYER_Z = PLAYER_Z_SOLVED()
+
+/**
+ * A screen fraction, read as road half-widths on the player's own row.
+ *
+ * Lifted verbatim from the rail shooter's `halfWidthsAtLane`, and it does more work here: there
+ * it was a measurement aid that nothing drew with, here it is the **input conversion**. A finger
+ * at 30% across the frame is a request to stand at `halfWidthsAtLane(0.3)` on the road, and
+ * because the player's row is fixed this conversion is exact rather than approximate.
+ *
+ * Exact only at `PLAYER_Z` — which is the only row anything ever asks about.
+ */
+export function halfWidthsAtLane(screenFraction: number): number {
+  const scale = CAMERA_DEPTH / PLAYER_Z
+
+  return ((screenFraction - 0.5) * 2) / (scale * ROAD_WIDTH)
+}
+
+
+/**
  * Fraction of current speed shed per second while any part of the snail is off the asphalt.
  *
  * Sized against the acceleration curve rather than picked: the run gains speed as
@@ -148,13 +309,24 @@ export const OFFROAD_DRAG = 0.55
  * ------------------------------------------------------------------ */
 
 /**
- * Starting speed, in world units per second — 7.2 segments a second.
+ * Starting speed, in world units per second — 8.3 segments a second.
  *
- * **A snail is slow, and that is the whole contrast the game is built on.** 12% of the road
- * renderer's `MAX_SPEED` is the low end of what still reads as motion at this field of view;
- * below it the ground stops selling speed at all and the game reads as a scrolling background.
+ * **A snail is slow, and that is the whole contrast the game is built on.** The low end of what
+ * still reads as motion at this field of view; below it the ground stops selling speed at all and
+ * the game reads as a scrolling background.
+ *
+ * **⚠ It was 12% of `MAX_SPEED` and the first seconds of a run read as sluggish rather than as
+ * slow**, which is a different thing and not the one the contrast is built on. 13.8% is that 15%
+ * faster. What it costs is the *range*: the run climbs 2.17x to `SPEED_CAP` instead of 2.5x, so the
+ * ramp is shallower — which is the trade, since the ceiling may not move with it. `SPEED_CAP` is
+ * set by the reaction budget and `MAX_ATTAINABLE_SPEED` is what every row of obstacles in the game
+ * is spaced against, so raising this end is a feel change and raising that one would be a
+ * difficulty change wearing the same clothes.
+ *
+ * The HUD reads `speed / SPEED_BASE`, so a run still starts at `1.0x` by construction — the number
+ * on screen is unchanged and what it counts from is faster.
  */
-export const SPEED_BASE = MAX_SPEED * 0.12
+export const SPEED_BASE = MAX_SPEED * 0.138
 
 /**
  * Speed ceiling, in world units per second — 18 segments a second.
@@ -191,61 +363,34 @@ export const SPEED_ACCEL = 0.17
  * feature's clothes; if it is ever raised, `verify:obstacles` is what has to be re-run, not this
  * comment.
  *
- * **`FEVER_EASE_MS` is a full second, and it is a safety device rather than a flourish.** The guard
- * stays up through it (`feverInvulnerable`), so this is the time the run has to shed 60% of its
- * speed *before* the player can be hit again. Shortening it shortens exactly that.
+ * **`FEVER_EASE_MS` is a full second because sixty percent of the run's speed cannot come off in a
+ * frame.** It used to be described as a safety device — the window in which the run shed its speed
+ * *before* the player could be hit again — and there is no guard to shed it behind any more (see
+ * `fever.ts`). What it is now is the plain fact that the ceiling has to come down smoothly, or the
+ * frame reads as the run hitting a wall.
  */
 export const FEVER_SPEED_FACTOR = 1.6
 export const FEVER_MS = 6000
 export const FEVER_EASE_MS = 1000
 
 /**
- * How much of the landing is spent at the ordinary ceiling before the guard comes off.
+ * How much of the landing is spent at the ordinary ceiling, at the end of the ease.
  *
  * **⚠ Not padding — a first-order lag arrives at the end of a ramp still above it, and the amount
  * is arithmetic rather than a rounding error.** The speed follows the ceiling with a time constant
  * of `1 / FEVER_SPEED_ACCEL`, so tracking a ramp that sheds 2160 u/s over a second leaves a steady
- * error of `tau * slope` = 360 u/s. Measured: with the ramp running the whole ease, the guard came
- * off at **3958 u/s against a 3600 u/s ceiling** — 10% over, which is the exact defect the ordering
- * exists to prevent, arriving through the back door.
+ * error of `tau * slope` = 360 u/s. Measured: with the ramp running the whole ease, the run left
+ * Fever at **3958 u/s against a 3600 u/s ceiling** — 10% over.
  *
- * So the ramp finishes early and the rest of the landing is spent at factor 1, with the guard still
- * up, letting the lag decay. 400ms is 2.4 time constants, which takes the residual to under 1%.
- * `verify:fever` asserts the number that matters — the speed at the drop — rather than this one, so
- * re-tuning `FEVER_SPEED_ACCEL` cannot silently reintroduce it.
+ * So the ramp finishes early and the rest of the landing is spent at factor 1, letting the lag
+ * decay. 400ms is 2.4 time constants, which takes the residual to under 1%.
+ *
+ * **What that overshoot costs is now sharper than it was, not softer.** It used to end an
+ * invulnerability a tenth above the ceiling; with no guard left it hands the player rows that were
+ * spaced for a speed they are no longer travelling at. `verify:fever` asserts the speed the run
+ * actually leaves at, so re-tuning `FEVER_SPEED_ACCEL` cannot quietly reintroduce it.
  */
 export const FEVER_SETTLE_MS = 400
-
-/**
- * The longest the guard may wait for the road to open after the ease, in milliseconds.
- *
- * **A ceiling, not a duration.** The hold ends the moment the nearest obstacle is more than
- * `REACTION_MS` away, which on the placer's own row spacing is almost always immediate — the floor
- * it lays rows against *is* `REACTION_MS`. This exists so that a stretch that somehow never offers a
- * gap cannot keep the player invulnerable, and it is longer than the tightest row spacing the
- * difficulty curve can produce so it is the road that ends the Fever rather than the clock.
- */
-export const FEVER_HOLD_MAX_MS = 1400
-
-/**
- * How much more than `REACTION_MS` of road the Fever guard waits for before dropping.
- *
- * **⚠ At exactly 1 the shipped arrangement measured 455ms against a 450ms floor** — one percent of
- * margin, which a single tick of granularity can eat: the guard drops on the tick the gap first
- * clears, and the run travels a little further before the next obstacle is measured. A floor that a
- * rounding can dip below is not a floor, which is the same lesson the row placer's own jitter
- * taught. 1.15 costs a fraction of a second of Fever and buys back the margin.
- */
-export const FEVER_CLEAR_MARGIN = 1.15
-
-/**
- * How many segments ahead the Fever hold looks for the nearest obstacle.
- *
- * The reaction distance at the ordinary ceiling is 8 segments; 40 is five times that, so the scan
- * is never the thing that decides the road is clear. It stops at the first obstacle it finds, so on
- * a busy stretch it costs one segment and on an empty one it costs forty.
- */
-export const NEAREST_OBSTACLE_SCAN = 40
 
 /**
  * How much bigger a small readable object is drawn on a narrow frame, given the frame's width.
@@ -353,7 +498,7 @@ export const MAX_ATTAINABLE_SPEED = SPEED_CAP * FEVER_SPEED_FACTOR
  * How long the snail is off the ground, in milliseconds. **Assigned first; everything else about
  * the jump is solved from it.**
  *
- * 700ms covers 5.1 segments at `SPEED_BASE` and 12.3 at `SPEED_CAP`. That asymmetry is deliberate
+ * 700ms covers 5.8 segments at `SPEED_BASE` and 12.3 at `SPEED_CAP`. That asymmetry is deliberate
  * and is the difficulty curve: the *window* in which a jump saves you is roughly the whole
  * flight, so the thing that gets hard at speed is not the jump, it is reading the obstacle in
  * time to start it. See `REACTION_MS`.
@@ -373,13 +518,11 @@ export const JUMP_AIR_MS = 700
 /**
  * Apex height above the road, in world units.
  *
- * **⚠ THIS NUMBER CANNOT MOVE ON ITS OWN.** The whole three-class obstacle model is an assertion
+ * **⚠ THIS NUMBER CANNOT MOVE ON ITS OWN.** The whole obstacle model is an assertion
  * about where the apex sits relative to `OBSTACLE_BANDS`, and `verify:obstacles` states it as a
- * table: `low` is cleared at the apex, `blocking` is not, `overhead` is hit only at the apex. In
- * inequalities, with `A` the apex:
+ * table: `low` is cleared at the apex and `blocking` is not. In inequalities, with `A` the apex:
  *
- *     low.yHigh  <  A  <  blocking.yHigh          and    overhead.yLow  >  PLAYER_BODY_H
- *     A + PLAYER_BODY_H  >  overhead.yLow          and    A  <  overhead.yHigh
+ *     low.yHigh  <  A  <  blocking.yHigh
  *
  * Raised from 320 to 430 because a snail that barely clears a barrel does not read as jumping.
  * Every band moved with it — see `OBSTACLE_BANDS` — so the inequalities hold with the same margins
@@ -422,51 +565,43 @@ export const OBSTACLE_DEPTH = SEGMENT_LENGTH
 /**
  * The three height bands an obstacle can occupy, in world units.
  *
- * **One rule instead of three flags.** Nothing anywhere asks "is this jumpable?" — a hit is the
- * player's `[y, y + PLAYER_BODY_H]` overlapping the obstacle's `[yLow, yHigh]`, and the three
- * rows below simply fall out of that arithmetic against `JUMP_APEX = 320`:
+ * **One rule instead of a flag.** Nothing anywhere asks "is this jumpable?" — a hit is the
+ * player's `[y, y + PLAYER_BODY_H]` overlapping the obstacle's `[yLow, yHigh]`, and the two rows
+ * below simply fall out of that arithmetic against `JUMP_APEX`:
  *
  * | band       | range        | outcome                                             |
  * |------------|--------------|-----------------------------------------------------|
- * | `low`      | `[0, 150]`   | cleared by a jump — the apex puts the foot at 320    |
- * | `blocking` | `[0, 430]`   | **cannot** be jumped; must be gone around           |
- * | `overhead` | `[250, 620]` | run under on the ground; **jumping into it hits**   |
+ * | `low`      | `[0, 230]`   | cleared by a jump — the apex puts the foot at 430    |
+ * | `blocking` | `[0, 620]`   | **cannot** be jumped; must be gone around           |
  *
- * The third row is not decoration and must never be dropped for being fiddly: without something
- * that punishes being airborne, the optimal play is to hold jump forever and the whole mechanic
- * evaporates. It is also free — the same overlap test produces it.
+ * **⚠ THERE WAS A THIRD CLASS AND IT WAS REMOVED, AND THIS NOTE IS THE ARGUMENT IT LOST.**
+ * `overhead` was `[362, 560]`: run under on the ground, hit by jumping into it. The docstring here
+ * used to say it "must never be dropped for being fiddly", because without something that punishes
+ * being airborne the optimal play is to jump at everything. That reasoning stands and is what this
+ * change costs.
  *
- * **The heights were cut once, by looking at them.** The first set (`blocking` to 520, `overhead`
- * to 1200) satisfied every constraint above and drew a road lined with grey slabs three to six
- * times the snail's own height — the frame read as an industrial estate rather than as something
- * a snail is running through. What actually binds is only this: `blocking` must reach above 320
- * (the apex) and `overhead` must start above 180 (the snail's back) and reach above 500 (the apex
- * plus the body). Everything past those is bulk, and bulk was costing the read.
+ * What it lost on is that the class **cannot be drawn**. The sprite's canvas IS the collision band,
+ * so an obstacle starting 362 units up is drawn 362 units up — floating, necessarily, with nothing
+ * under it. Legs are not available: the player passes beneath at *every* `offsetX`, so a drawn post
+ * is one the snail drives through, which is the "sprite claims ground the model does not" failure
+ * that `PLAYER_WIDTH` documents. It was drawn as a fallen log, then as a banded arm, then as a
+ * hazard board hung from a rail, and reported as a thing hanging in the air all three times.
+ *
+ * **What is left of the cost, measured rather than waved away**: jumping is not free, because
+ * `blocking` reaches 620 and an airborne body is `[430, 691]` — you cannot jump a boulder, and
+ * `provePassable` still has to prove a jump-only row's whole flight is survivable. What is gone is
+ * anything that hits *only* an airborne snail, so a jump taken when none was needed now costs
+ * nothing.
+ *
+ * **The heights were cut once, by looking at them.** The first set (`blocking` to 520) satisfied
+ * every constraint above and drew a road lined with grey slabs three to six times the snail's own
+ * height — the frame read as an industrial estate rather than as something a snail is running
+ * through. What actually binds is only this: `blocking` must reach above the apex. Everything past
+ * that is bulk, and bulk was costing the read.
  */
 export const OBSTACLE_BANDS = {
   low: { yLow: 0, yHigh: 230 },
   blocking: { yLow: 0, yHigh: 620 },
-  // **⚠ [250, 560], down from [330, 900], because it read as a FLYING OBJECT rather than as a
-  // barrier to duck under.** Two things were wrong at once and both are about size rather than
-  // about the class:
-  //
-  //   the band was 570 UNITS TALL   and the sprite is scaled to fill it, so a log was drawn taller
-  //                                 than the tallest obstacle in the game and twice the snail's
-  //                                 body. At that size nothing reads as a log; it reads as a wall
-  //                                 hanging in the sky.
-  //   `yLow` was 330                which is 150 units of daylight under it — 83% of the snail's
-  //                                 own height. Clear, and so clear that the thing had no visible
-  //                                 relationship to the road at all.
-  //
-  // 250 leaves 70 units of headroom, 39% of the snail — comfortably past the 30% floor
-  // `verify:jump` holds, and low enough that the gap reads as a gap to go through. The arithmetic
-  // the three classes rest on is untouched: a grounded snail is [0, 180] and still clears it, an
-  // airborne one is [430, 610] and still meets it.
-  // **⚠ 362, up from 250 with `PLAYER_BODY_H`.** The number that matters is not this one but the
-  // gap under it: a grounded snail is `[0, PLAYER_BODY_H]` and has to pass beneath, and what reads
-  // as a gap is that clearance measured against the snail's own height. It was 70 units under a
-  // 180-tall body (39%); it is 101 under a 261-tall one, which is the same 39%.
-  overhead: { yLow: 362, yHigh: 560 },
 } as const
 
 export type ObstacleKind = keyof typeof OBSTACLE_BANDS
@@ -477,8 +612,8 @@ export type ObstacleKind = keyof typeof OBSTACLE_BANDS
  *
  * **This is the real difficulty gate, and it is a floor rather than a target.** The flight arc
  * is wide enough that clearing an obstacle is never the hard part; noticing it is. Every
- * difficulty knob in `difficulty.ts` — density, the share of unjumpable obstacles, the share of
- * overheads — is allowed to move only while every generated layout still leaves this much
+ * difficulty knob in `difficulty.ts` — density, the share of unjumpable obstacles, how often a row
+ * is a wall — is allowed to move only while every generated layout still leaves this much
  * warning at the speed it will be met at. A curve that cannot hold it is a broken curve; the
  * floor is not the thing to lower.
  *

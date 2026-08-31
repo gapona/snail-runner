@@ -47,8 +47,23 @@
 import { SEGMENT_LENGTH } from '../road/constants'
 import { wrapZ } from '../road/project'
 import { MAX_ATTAINABLE_SPEED, PLAYER_HALF_WIDTHS, SPEED_CAP } from './constants'
+import { RAMP_DEPTH } from './ramp'
 import type { Obstacle } from './obstacles'
 import { flightDuration, flightHeight } from './playerMotion'
+
+/**
+ * One place a chain may arc off — a ramp, and everything about it a chain needs.
+ *
+ * Named rather than written inline on `FormationOptions`, because `flightSpans` answers a question
+ * about the same list and two structural types describing one thing drift apart the first time one
+ * of them gains a field.
+ */
+export interface Launch {
+  id: number
+  z: number
+  offsetX: number
+  launchV: number
+}
 import {
   PICKUP_HALF_WIDTHS,
   PICKUP_HEIGHT,
@@ -272,7 +287,7 @@ export interface FormationOptions {
    * chunk that adds the trampoline supplies the list. An arc laid anywhere else is a chain in the
    * air over flat road, which is the exact failure this module's header is about.
    */
-  launches?: readonly { id: number; z: number; offsetX: number; launchV: number }[]
+  launches?: readonly Launch[]
 }
 
 /**
@@ -290,6 +305,10 @@ export function placeFormations(options: FormationOptions): Pickup[] {
   let id = 0
   let seededSide = rng() < 0.5 ? -1 : 1
 
+  // **⚠ What the walk below must not lay into.** An arc is laid outside the walk, so the walk has
+  // never known those stretches were taken — see `flightSpans`.
+  const flights: { fromZ: number; toZ: number }[] = []
+
   for (const launch of launches) {
     // An arc belongs to its launch and is not subject to the spacing walk below — it is where the
     // trampoline is, or it is nowhere.
@@ -305,7 +324,9 @@ export function placeFormations(options: FormationOptions): Pickup[] {
       speed: ARC_REFERENCE_SPEED,
     }
 
-    for (const point of chainPoints(spec)) {
+    const arc = chainPoints(spec)
+
+    for (const point of arc) {
       pickups.push({
         id: id++,
         z: wrapZ(point.z, trackLength),
@@ -316,6 +337,10 @@ export function placeFormations(options: FormationOptions): Pickup[] {
         taken: false,
       })
     }
+
+    // The wedge itself is reserved along with the flight: a coin standing on a ramp is a coin the
+    // player is driving *up*, and the launch takes them off it before they reach it.
+    flights.push({ fromZ: launch.z - RAMP_DEPTH, toZ: arc[arc.length - 1].z })
   }
 
   // **⚠ The walk advances from the END of the chain just laid, not from its start.** A coin chain
@@ -325,6 +350,25 @@ export function placeFormations(options: FormationOptions): Pickup[] {
   let z = fromZ
 
   while (z < toZ) {
+    // **⚠ Nothing is laid under a flight, and this is the third time the walk has overlapped
+    // something it did not know about.** It already advances from the END of the chain just laid
+    // rather than from its start, because advancing by the gap alone put two chains on one stretch;
+    // the arc is the same bug from outside, because an arc is laid *before* the walk starts and the
+    // walk was never told. Reported from the frame it produces: a ramp with a chain along the
+    // flight and another chain on the ground beneath it, and the player able to take only one —
+    // two rewards in one place, of which one is provably unreachable.
+    //
+    // Skipping past the flight rather than dropping the chain is what makes the answer "both": the
+    // chain that would have gone under the arc is laid after the landing instead, so a player rides
+    // up taking the ground line, takes the arc in the air, and lands on the next ground line. The
+    // count of chains on the lap is unchanged; only the one place they could not all be had is.
+    const flight = flights.find((span) => z >= span.fromZ && z <= span.toZ)
+
+    if (flight) {
+      z = flight.toZ + CHAIN_SPACING_Z * (0.8 + rng() * 0.6)
+      continue
+    }
+
     const pickup = chooseChainKind(rng)
     const shape: FormationKind = pickup === 'shield' || rng() < 0.45 ? 'line' : 'wave'
     const count = CHAIN[pickup].min + Math.floor(rng() * (CHAIN[pickup].max - CHAIN[pickup].min + 1))
@@ -355,7 +399,20 @@ export function placeFormations(options: FormationOptions): Pickup[] {
       // the homogeneity check reported before this existed. Same rule the obstacle placer follows
       // for the same reason: a layout longer than the lap puts two things on one piece of road.
       if (points[points.length - 1].z >= toZ) break
-      if (points.every((point) => clearOfObstacles(point, obstacles, trackLength))) placed = points
+
+      // **A chain that starts clear can still run its tail into the flight ahead of it**, which is
+      // the same overlap seen from the other end — and the answer is to CUT it there rather than to
+      // give up on the stretch. Measured over 40 seeds, refusing the whole chain cost **12% of a
+      // lap's ground pickups for 4.6% of the lap reserved**: the flight itself is small and what
+      // was expensive was the chain-length of road in front of it that nothing would fit into.
+      // Trimming spends only the ground the flight actually covers.
+      const ahead = flights.find((span) => points[points.length - 1].z >= span.fromZ && z <= span.toZ)
+      const fitted = ahead ? points.filter((point) => point.z < ahead.fromZ) : points
+
+      // Below the kind's own minimum it stops being a chain and becomes a couple of strays, which
+      // is the thing `CHAIN` states a minimum to prevent. Better nothing there than that.
+      if (fitted.length < CHAIN[pickup].min) break
+      if (fitted.every((point) => clearOfObstacles(point, obstacles, trackLength))) placed = fitted
     }
 
     if (!placed) {
@@ -378,6 +435,32 @@ export function placeFormations(options: FormationOptions): Pickup[] {
   }
 
   return pickups
+}
+
+/**
+ * The stretches a ramp's flight owns, in world units — the wedge and the arc it throws.
+ *
+ * Exported so `verify:formations` can measure the overlap this reserves against rather than
+ * recomputing it: a second expression of the span is a second thing that can disagree about where
+ * the flight ends.
+ */
+export function flightSpans(
+  launches: readonly Launch[],
+  speed = ARC_REFERENCE_SPEED,
+): { fromZ: number; toZ: number }[] {
+  return launches.map((launch) => {
+    const arc = chainPoints({
+      kind: 'arc',
+      pickup: 'coin',
+      count: ARC_COUNT,
+      fromZ: launch.z,
+      offsetX: launch.offsetX,
+      launchV: launch.launchV,
+      speed,
+    })
+
+    return { fromZ: launch.z - RAMP_DEPTH, toZ: arc[arc.length - 1].z }
+  })
 }
 
 /**

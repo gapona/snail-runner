@@ -44,6 +44,20 @@ export const WORLD_LAYER = {
    */
   shadow: 0.15,
   obstacle: 0.3,
+  /**
+   * A bug, above the barriers and below the snail.
+   *
+   * **It needs a slot of its own rather than sharing `obstacle`'s, and the reason is that it
+   * moves.** Two things at the same depth fall back to display-list order, which is pool-slot
+   * order — stable for two rocks, and not stable at all for a rock and a creature walking past it,
+   * because the creature changes segments while the rock does not. A slot of its own makes the
+   * answer a fact about the two objects instead of a fact about which pool filled first.
+   *
+   * Above `obstacle` because a bug runs *in front of* the barriers standing on its segment rather
+   * than behind them; below `player`, because the snail is the object the player is tracking and
+   * nothing may draw over it on its own row.
+   */
+  critter: 0.35,
   player: 0.4,
   pickup: 0.5,
 } as const

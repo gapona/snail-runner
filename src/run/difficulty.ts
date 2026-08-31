@@ -36,8 +36,6 @@ export interface Difficulty {
   density: number
   /** Share of obstacles that cannot be jumped and must be gone around. */
   blockingShare: number
-  /** Share that are overhead — run under, and fatal to jump into. */
-  overheadShare: number
   /**
    * How often a row is a **wall**: low obstacles across the whole road, passable only by jumping.
    *
@@ -55,7 +53,6 @@ export interface Difficulty {
 const CURVE = {
   density: { from: 0.28, to: 0.92 },
   blockingShare: { from: 0.12, to: 0.34 },
-  overheadShare: { from: 0.06, to: 0.24 },
   // Starts high enough that the very first stretch teaches the jump, and rises far less than the
   // others: a road that is mostly walls is a road with one answer, which is the same failure as a
   // road with none.
@@ -84,7 +81,6 @@ export function difficultyAt(distance: number): Difficulty {
   return {
     density: lerp(CURVE.density),
     blockingShare: lerp(CURVE.blockingShare),
-    overheadShare: lerp(CURVE.overheadShare),
     wallShare: lerp(CURVE.wallShare),
   }
 }

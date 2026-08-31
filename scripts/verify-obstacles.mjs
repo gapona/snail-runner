@@ -16,6 +16,7 @@
 //    the floor -- see `REACTION_MS`'s own docstring.
 import assert from 'node:assert/strict'
 import {
+  OBSTACLE_POOL_SIZE,
   createObstacle,
   hits,
   MAX_ATTAINABLE_SPEED,
@@ -50,7 +51,7 @@ import {
   ROAD_EDGE,
   SPEED_CAP,
 } from '../src/run/constants.ts'
-import { billboardFog, CAMERA_DEPTH, MAX_BILLBOARD_FOG, SEGMENT_LENGTH } from '../src/road/constants.ts'
+import { DRAW_DISTANCE, billboardFog, CAMERA_DEPTH, MAX_BILLBOARD_FOG, SEGMENT_LENGTH } from '../src/road/constants.ts'
 import { createRng } from '../src/race/rng.ts'
 
 let passed = 0
@@ -86,7 +87,7 @@ check('the lateral test accounts for both half-widths, not just the obstacle', (
   assert.equal(hits(GROUNDED, createObstacle({ id: 4, z: 0, offsetX: gap - 1e-3, halfWidths: 0.2, kind: 'low' })), true)
 })
 
-check('the three classes produce exactly the expected outcomes, from the bands alone', () => {
+check('the two classes produce exactly the expected outcomes, from the bands alone', () => {
   const table = []
 
   for (const kind of Object.keys(OBSTACLE_BANDS)) {
@@ -99,21 +100,33 @@ check('the three classes produce exactly the expected outcomes, from the bands a
     // kind        grounded  at apex
     ['low', true, false], //   jump it
     ['blocking', true, true], //   go around it -- a jump does not help
-    ['overhead', false, true], //   run under it -- a jump kills you
   ])
 })
 
 check('an obstacle carries its band rather than a flag naming its behaviour', () => {
-  const branch = createObstacle({ id: 5, z: 0, offsetX: 0, halfWidths: 0.2, kind: 'overhead' })
+  const branch = createObstacle({ id: 5, z: 0, offsetX: 0, halfWidths: 0.2, kind: 'blocking' })
 
-  assert.equal(branch.yLow, OBSTACLE_BANDS.overhead.yLow)
-  assert.equal(branch.yHigh, OBSTACLE_BANDS.overhead.yHigh)
+  assert.equal(branch.yLow, OBSTACLE_BANDS.blocking.yLow)
+  assert.equal(branch.yHigh, OBSTACLE_BANDS.blocking.yHigh)
   // The kind is kept for *art*, and the collision must not consult it: an obstacle with a
   // hand-written band behaves according to the band.
   const custom = { ...branch, yLow: 0, yHigh: 40 }
 
   assert.equal(hits(GROUNDED, custom), true)
   assert.equal(hits(AT_APEX, custom), false)
+  // And the mirror: a band written above the snail is missed on the ground and met in the air,
+  // whatever the kind says. This is the arithmetic the deleted `overhead` class rode on — the model
+  // never needed a flag for it, which is why removing the class cost no code here.
+  //
+  // **⚠ It was written as the literal `[362, 560]` — the removed class's own band — and that made
+  // it an accidental ceiling on the mascot.** 362 was `overhead.yLow` when the body was 261 tall;
+  // grow the body past it and a *grounded* snail reaches into the fixture, so raising
+  // `PLAYER_BODY_H` failed a check about flags-versus-bands for a reason that had nothing to do
+  // with either. What the fixture means is "a band above the snail", so it says that.
+  const above = { ...branch, yLow: PLAYER_BODY_H + 20, yHigh: PLAYER_BODY_H + 220 }
+
+  assert.equal(hits(GROUNDED, above), false)
+  assert.equal(hits(AT_APEX, above), true)
 })
 
 console.log('the passability proof')
@@ -151,42 +164,42 @@ check('...and returns null for a row that genuinely cannot be got through', () =
   assert.equal(passableLine(row), null)
 })
 
-check('an overhead over the only ground gap is impassable, which is the trap the proof exists for', () => {
-  // Boulders left and right leave a gap in the middle -- and an overhead sits in that gap. On the
-  // ground you pass the overhead but hit nothing; in the air you clear nothing. This is passable,
-  // and the proof has to say so: the overhead is only a hazard to a snail that jumped.
-  const row = [
-    createObstacle({ id: 1, z: 0, offsetX: -0.75, halfWidths: 0.22, kind: 'blocking' }),
-    createObstacle({ id: 2, z: 0, offsetX: 0.75, halfWidths: 0.22, kind: 'blocking' }),
-    createObstacle({ id: 3, z: 0, offsetX: 0, halfWidths: 0.3, kind: 'overhead' }),
-  ]
-  const line = passableLine(row)
-
-  assert.notEqual(line, null)
-  assert.equal(line.mode, 'ground', 'the way through is under the overhead, on the ground')
-
-  // ...whereas the same row with the middle blocked at *both* heights is not. The middle boulder
-  // has to be wide enough to actually meet the two flanking ones: at 0.3 half-widths it leaves a
-  // 0.07-wide slot the snail fits through, and the first version of this check asserted `null` for
-  // a row that was genuinely passable. The search found the slot; the test was wrong.
-  const sealed = [...row, createObstacle({ id: 4, z: 0, offsetX: 0, halfWidths: 0.5, kind: 'blocking' })]
-
-  assert.equal(passableLine(sealed), null)
-})
-
-check('a jump-only row followed too closely by an air-blocked row is rejected', () => {
-  // **The constraint a per-row check cannot see.** Clearing a wall of low rocks puts the snail in
-  // the air for up to eleven segments at `SPEED_CAP`, and anything inside that flight has to be
-  // clearable *from the air*. An overhead placed there is a hit the player had no way to avoid,
-  // and the layout is thrown away rather than shipped.
+check('the whole layout is proved, not just each row', () => {
   const jumpOnly = [-0.8, -0.4, 0, 0.4, 0.8].map((offsetX, id) =>
     createObstacle({ id, z: 0, offsetX, halfWidths: 0.3, kind: 'low' }),
   )
-  const overheadSoon = [createObstacle({ id: 10, z: SEGMENT_LENGTH * 3, offsetX: 0, halfWidths: 1.4, kind: 'overhead' })]
-  const overheadLater = [createObstacle({ id: 11, z: SEGMENT_LENGTH * 40, offsetX: 0, halfWidths: 1.4, kind: 'overhead' })]
+  const sealed = [createObstacle({ id: 10, z: SEGMENT_LENGTH * 3, offsetX: 0, halfWidths: 1.4, kind: 'blocking' })]
+  const withGap = [createObstacle({ id: 11, z: SEGMENT_LENGTH * 3, offsetX: -0.9, halfWidths: 0.3, kind: 'blocking' })]
 
-  assert.equal(provePassable([...jumpOnly, ...overheadSoon]), false, 'an unavoidable overhead was accepted')
-  assert.equal(provePassable([...jumpOnly, ...overheadLater]), true, 'the same overhead well clear of the flight is fine')
+  assert.equal(provePassable([...jumpOnly, ...sealed]), false, 'a sealed row was accepted')
+  assert.equal(provePassable([...jumpOnly, ...withGap]), true, 'a row with a gap in it was rejected')
+})
+
+check('⚠ the flight proof is redundant TODAY, and this names the fact that makes it so', () => {
+  // **`provePassable`'s flight loop was written for a class that no longer exists** — `overhead`,
+  // whose band started above the road, so a row could be free on the ground and sealed in the air.
+  // With `low` and `blocking` both reaching y=0, the offsets blocked at the apex are a SUBSET of
+  // those blocked on the ground: a row with a ground line always has an air line, and the loop
+  // cannot reject anything the per-row check does not.
+  //
+  // The loop is KEPT rather than deleted, and this check is the price of keeping it: it states the
+  // property that makes it dead, so the day any band starts above the road the assertion fails and
+  // whoever added that band is told the flight proof is load-bearing again.
+  for (const [kind, band] of Object.entries(OBSTACLE_BANDS)) {
+    assert.equal(band.yLow, 0, `${kind} starts at ${band.yLow} — the flight proof is live again, and untested`)
+  }
+
+  // Shown against the deleted class, so the property is demonstrated rather than asserted of
+  // nothing: a band above the road is free on the ground and sealed in the air.
+  const above = {
+    ...createObstacle({ id: 1, z: 0, offsetX: 0, halfWidths: 0.3, kind: 'blocking' }),
+    // Derived from the body rather than the removed class's literal 362 — see the fixture above.
+    yLow: PLAYER_BODY_H + 20,
+    yHigh: PLAYER_BODY_H + 220,
+  }
+
+  assert.equal(hits(GROUNDED, above), false)
+  assert.equal(hits(AT_APEX, above), true)
 })
 
 check('obstacleRows groups by z and keeps them in order', () => {
@@ -207,7 +220,7 @@ console.log('the placer')
 check('200 generated stretches are every one of them passable', () => {
   // The claim the placer makes, checked against the proof rather than against itself: every
   // layout it hands back has a line through it, at every difficulty it can be asked for.
-  const counts = { low: 0, blocking: 0, overhead: 0 }
+  const counts = { low: 0, blocking: 0 }
   let total = 0
 
   for (let seed = 1; seed <= 200; seed++) {
@@ -219,7 +232,6 @@ check('200 generated stretches are every one of them passable', () => {
       toZ: SEGMENT_LENGTH * 400,
       density,
       blockingShare: 0.15 + (seed % 5) * 0.07,
-      overheadShare: 0.1 + (seed % 4) * 0.05,
     })
 
     assert.ok(obstacles.length > 0, `seed ${seed} at density ${density.toFixed(2)} placed nothing at all`)
@@ -229,13 +241,13 @@ check('200 generated stretches are every one of them passable', () => {
   }
 
   console.log(
-    `    200 stretches, ${total} obstacles: ${counts.low} low, ${counts.blocking} blocking, ${counts.overhead} overhead`,
+    `    200 stretches, ${total} obstacles: ${counts.low} low, ${counts.blocking} blocking`,
   )
-  assert.ok(counts.low > 0 && counts.blocking > 0 && counts.overhead > 0, 'a whole class was never placed')
+  assert.ok(counts.low > 0 && counts.blocking > 0, 'a whole class was never placed')
 })
 
 check('the same seed places the same stretch twice', () => {
-  const options = { fromZ: 0, toZ: SEGMENT_LENGTH * 200, density: 0.5, blockingShare: 0.3, overheadShare: 0.2 }
+  const options = { fromZ: 0, toZ: SEGMENT_LENGTH * 200, density: 0.5, blockingShare: 0.3 }
   const a = placeObstacles({ ...options, rng: createRng(4242) })
   const b = placeObstacles({ ...options, rng: createRng(4242) })
 
@@ -249,7 +261,6 @@ check('rows are never closer together than the reaction budget allows', () => {
     toZ: SEGMENT_LENGTH * 600,
     density: 1,
     blockingShare: 0.35,
-    overheadShare: 0.25,
   })
   const rows = obstacleRows(obstacles)
   const minGap = (REACTION_MS / 1000) * MAX_ATTAINABLE_SPEED
@@ -331,7 +342,6 @@ check('nothing is ever placed where the snail cannot reach it or avoid it', () =
     toZ: SEGMENT_LENGTH * 300,
     density: 0.7,
     blockingShare: 0.3,
-    overheadShare: 0.2,
   })
 
   for (const obstacle of obstacles) {
@@ -355,7 +365,6 @@ check('every knob rises with distance and saturates, and none of them is the flo
 
     assert.ok(here.density >= previous.density, 'density went down')
     assert.ok(here.blockingShare >= previous.blockingShare, 'the unjumpable share went down')
-    assert.ok(here.overheadShare >= previous.overheadShare, 'the overhead share went down')
     previous = here
   }
 
@@ -363,7 +372,7 @@ check('every knob rises with distance and saturates, and none of them is the flo
   // responding to the player.
   const far = difficultyAt(10_000_000)
 
-  assert.ok(far.density < 1 && far.blockingShare < 0.5 && far.overheadShare < 0.4)
+  assert.ok(far.density < 1 && far.blockingShare < 0.5)
   assert.ok(difficultyProgress(DIFFICULTY_TAU_Z) > 0.62 && difficultyProgress(DIFFICULTY_TAU_Z) < 0.64)
 })
 
@@ -375,7 +384,7 @@ check('500 simulated runs, and the reaction budget never falls below REACTION_MS
   // Printed as a table because the numbers are the point: a curve nobody can see is a curve nobody
   // can tune.
   const bands = [0, 45_000, 90_000, 180_000, 360_000, 720_000]
-  const worstPerBand = new Map(bands.map((z) => [z, { gap: Infinity, rows: 0, obstacles: 0, blocking: 0, overhead: 0, jumpOnly: 0 }]))
+  const worstPerBand = new Map(bands.map((z) => [z, { gap: Infinity, rows: 0, obstacles: 0, blocking: 0, jumpOnly: 0 }]))
   const floorMs = REACTION_MS
 
   for (let seed = 1; seed <= 500; seed++) {
@@ -394,7 +403,6 @@ check('500 simulated runs, and the reaction budget never falls below REACTION_MS
       record.obstacles += obstacles.length
       for (const obstacle of obstacles) {
         if (obstacle.kind === 'blocking') record.blocking++
-        if (obstacle.kind === 'overhead') record.overhead++
       }
       for (const row of rows) {
         // **The row that makes the jump a verb rather than an option.** Counted here rather than
@@ -408,7 +416,7 @@ check('500 simulated runs, and the reaction budget never falls below REACTION_MS
     }
   }
 
-  console.log('      distance  density  blocking  overhead  jump-only   rows/90k   min gap   reaction budget')
+  console.log('      distance  density  blocking  jump-only   rows/90k   min gap   reaction budget')
   for (const bandStart of bands) {
     const record = worstPerBand.get(bandStart)
     const difficulty = difficultyAt(bandStart + DIFFICULTY_TAU_Z / 2)
@@ -418,7 +426,6 @@ check('500 simulated runs, and the reaction budget never falls below REACTION_MS
       `      ${String(Math.round(bandStart / 100)).padStart(7)}m` +
         `${difficulty.density.toFixed(2).padStart(9)}` +
         `${(record.blocking / Math.max(1, record.obstacles)).toFixed(2).padStart(10)}` +
-        `${(record.overhead / Math.max(1, record.obstacles)).toFixed(2).padStart(10)}` +
         `${(record.jumpOnly / Math.max(1, record.rows)).toFixed(2).padStart(11)}` +
         `${(record.rows / 500).toFixed(1).padStart(11)}` +
         `${(record.gap / SEGMENT_LENGTH).toFixed(1).padStart(10)}seg` +
@@ -489,13 +496,22 @@ check('on the same segment, a pickup is never lost behind the obstacle beside it
 })
 
 check('the snail sits between the segment behind it and the one ahead', () => {
-  // **The snail is 9.83 segments out, and landing between two segments is the point.** An obstacle
-  // it has just passed is nearer to the camera and has to paint over it; one still ahead must not.
-  // A flat depth put the snail in front of both, so a boulder slid *under* it on the way past.
-  const snail = worldDepth(PLAYER_Z / SEGMENT_LENGTH, WORLD_LAYER.player)
+  // **Landing between two segments is the point.** An obstacle the snail has just passed is nearer
+  // to the camera and has to paint over it; one still ahead must not. A flat depth put the snail in
+  // front of both, so a boulder slid *under* it on the way past.
+  //
+  // **⚠ The two segments are derived, and hardcoding them once cost a failing check for the wrong
+  // reason.** They were written as 9 and 10 against a snail 9.83 segments out — true of the row the
+  // player stood on then, and nothing to do with the property. `PLAYER_REST_Y_FRACTION` is solved
+  // now (see its own note), so the row moves whenever the mascot's width does and the check has to
+  // move with it or it is asserting where the snail used to be.
+  const index = PLAYER_Z / SEGMENT_LENGTH
+  const snail = worldDepth(index, WORLD_LAYER.player)
 
-  assert.ok(worldDepth(9, WORLD_LAYER.obstacle) > snail, 'an obstacle the snail has passed draws behind it')
-  assert.ok(worldDepth(10, WORLD_LAYER.obstacle) < snail, 'an obstacle still ahead draws over the snail')
+  assert.ok(!Number.isInteger(index), 'the snail sits exactly on a segment boundary — there is no behind and ahead')
+  console.log(`    ${index.toFixed(2)} segments out, i.e. ${((index % 1) * 100).toFixed(0)}% through segment ${Math.floor(index)}`)
+  assert.ok(worldDepth(Math.floor(index), WORLD_LAYER.obstacle) > snail, 'an obstacle the snail has passed draws behind it')
+  assert.ok(worldDepth(Math.floor(index) + 1, WORLD_LAYER.obstacle) < snail, 'an obstacle still ahead draws over the snail')
   // ...and its shadow is under it.
   const shadow = worldDepth(PLAYER_Z / SEGMENT_LENGTH, WORLD_LAYER.shadow)
 
@@ -532,7 +548,7 @@ check('every obstacle shading band is dark enough to read as ink', () => {
   }
 })
 
-check('the three obstacle classes are told apart by value, not by hue', () => {
+check('the obstacle classes are told apart by value, not by hue', () => {
   // **⚠ THIS CHECK REPLACES A CEILING THAT WAS THE OLD ART DIRECTION WRITTEN AS AN ASSERTION.**
   // It used to require every band under 25% saturation, on the reasoning that a hazard has to
   // belong to the picture and the scenery it stands in measures 5%. That was true of the art it
@@ -541,10 +557,10 @@ check('the three obstacle classes are told apart by value, not by hue', () => {
   // `OBSTACLE_MATERIALS` for why the classes stopped being rocks.
   //
   // Deleting it outright would have left the family with no constraint at all, and the constraint
-  // it was really standing in for is still live: **the three classes are read at 9-27px on a
-  // moving road, and at that size hue is the first thing perspective haze and the biome tint take
-  // away.** So what is asserted now is the thing that survives — that the classes separate by
-  // LIGHTNESS, with a gap wide enough to read after the distance fade.
+  // it was really standing in for is still live: **the classes are read at 9-27px on a moving
+  // road, and at that size hue is the first thing perspective haze and the biome tint take away.**
+  // So what is asserted now is the thing that survives — that the classes separate by LIGHTNESS,
+  // with a gap wide enough to read after the distance fade.
   //
   // The value is `MIN_CLASS_VALUE_GAP` rather than a bare number so the failure message can say
   // what it is: 12 of 255 is roughly a 5% step, which is about twice what a 4.3% haze at the
@@ -683,7 +699,7 @@ check('the ink is not pure black, which verify:mattes would reject', () => {
 check('a shadow lies on the ground, so everything solid paints over it', () => {
   // **⚠ This was 0.35 -- above `obstacle` -- and it was right while the only shadow in the game
   // belonged to the player and the only thing it had to sit under was the player.** Pickups and
-  // overhead obstacles cast one now. A shadow is a mark on the ground: anything standing on that
+  // pickups cast one. A shadow is a mark on the ground: anything standing on that
   // ground at the same distance has to be drawn over it, or a boulder gets a dark ellipse laid
   // across its foot. Asserted at one distance, because a tiebreak is what decides ties.
   for (const layer of ['obstacle', 'player', 'pickup']) {
@@ -722,8 +738,8 @@ check('⚠ every obstacle on a lap has an id of its own', () => {
   }
 
   // Shown to catch it: the per-band call with its counter reset is exactly what shipped.
-  const bandA = placeObstacles({ rng: createRng(1), fromZ: 0, toZ: 60000, density: 0.8, blockingShare: 0.1, overheadShare: 0.1, wallShare: 0.2 })
-  const bandB = placeObstacles({ rng: createRng(2), fromZ: 60000, toZ: 120000, density: 0.8, blockingShare: 0.1, overheadShare: 0.1, wallShare: 0.2 })
+  const bandA = placeObstacles({ rng: createRng(1), fromZ: 0, toZ: 60000, density: 0.8, blockingShare: 0.1, wallShare: 0.2 })
+  const bandB = placeObstacles({ rng: createRng(2), fromZ: 60000, toZ: 120000, density: 0.8, blockingShare: 0.1, wallShare: 0.2 })
   const naive = new Set([...bandA, ...bandB].map((o) => o.id))
 
   assert.ok(
@@ -731,6 +747,59 @@ check('⚠ every obstacle on a lap has an id of its own', () => {
     'two bands with no id offset came out unique, so this check would not have caught the defect',
   )
   console.log(`    a lap's ids are unique; two bands sharing a counter collide on ${bandA.length + bandB.length - naive.size} of them`)
+})
+
+
+/**
+ * The most of `items` that ever fall inside the draw distance at once, over a whole lap.
+ *
+ * **An upper bound on what a pool is asked for, not the pool's real demand** — the renderer culls
+ * what projects off screen before it takes a slot, and reproducing that needs the mesh's own walk.
+ * The bound is the right thing to size against anyway: it is what the pool must survive on the
+ * frame where nothing happens to be culled.
+ */
+function peakInView(items, trackLength) {
+  const count = Math.round(trackLength / SEGMENT_LENGTH)
+  const perSegment = new Array(count).fill(0)
+
+  for (const item of items) perSegment[Math.floor(item.z / SEGMENT_LENGTH) % count]++
+
+  let window = 0
+
+  for (let i = 0; i < DRAW_DISTANCE; i++) window += perSegment[i]
+
+  let peak = window
+
+  for (let base = 1; base < count; base++) {
+    window += perSegment[(base + DRAW_DISTANCE - 1) % count] - perSegment[base - 1]
+    if (window > peak) peak = window
+  }
+
+  return peak
+}
+
+console.log('the pool is sized against what the placer actually produces')
+
+check('every obstacle inside the draw distance can be drawn at once', () => {
+  // **⚠ The pool was 48 and the demand it was sized against was never measured.** Its own note
+  // reasoned that the draw distance holds 37 rows at three obstacles a row — which is 111 — and then
+  // assumed the far ones would be culled. Measured on the real placer at saturated difficulty the
+  // peak is far past 48, and a wall is fourteen obstacles in a single row, so the assumption fails
+  // exactly where the road is busiest.
+  //
+  // A short obstacle pool costs more than a short pickup pool: the pool is filled near to far, so
+  // what goes undrawn is the far end — which IS the reaction budget. A hazard not drawn until it is
+  // nearer than `REACTION_MS` is a hazard the player was never shown.
+  const TRACK = 286800
+  let worst = 0
+
+  for (const seed of [1, 4242, 777, 31337, 9001]) {
+    // A late lap, so the difficulty curve is at its ceiling and the road is as busy as it ever gets.
+    worst = Math.max(worst, peakInView(placeRunObstacles(seed, TRACK, TRACK * 3), TRACK))
+  }
+
+  assert.ok(OBSTACLE_POOL_SIZE > worst, `the pool is ${OBSTACLE_POOL_SIZE} against a peak demand of ${worst}`)
+  console.log(`    pool ${OBSTACLE_POOL_SIZE} against a peak of ${worst} in the draw distance, over five saturated laps`)
 })
 
 console.log(`${passed} checks passed`)

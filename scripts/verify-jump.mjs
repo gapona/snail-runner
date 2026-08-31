@@ -6,18 +6,24 @@
 // **The last section is the one that matters.** Everything before it is ordinary arc arithmetic:
 // the apex is where `JUMP_APEX` says, the flight lasts `JUMP_AIR_MS`, neither depends on the frame
 // rate. The last section checks that those numbers *separate the three obstacle classes by
-// arithmetic alone* -- that a low rock is cleared, a boulder is not, and an overhead branch is hit
-// only by a snail that jumped into it. If that fails, the fix is a constant, never a flag: the
+// arithmetic alone* -- that a low barrier is cleared by a jump and a tall one is not, and that
+// nothing hits an airborne snail alone. If that fails, the fix is a constant, never a flag: the
 // moment anything asks "is this obstacle jumpable?" the model has been replaced by a lookup table
 // and the third class stops being free.
 import assert from 'node:assert/strict'
 import {
   SHADOW_APEX,
+  SHADOW_FOOTPRINT,
   SHADOW_GROUND_ALPHA,
   shadowAlpha,
+  shadowClipFade,
   shadowInk,
+  shadowLinkFade,
   shadowScale,
 } from '../src/run/shadows.ts'
+import { PICKUP_BOB, PICKUP_HEIGHT, PICKUP_SHADOW_LINK } from '../src/run/pickups.ts'
+import { RAMP_APEX, RAMP_LAUNCH_V } from '../src/run/ramp.ts'
+import { flightDuration, flightHeight } from '../src/run/playerMotion.ts'
 import { createPlayerState, jump, stepPlayer } from '../src/run/playerMotion.ts'
 import {
   JUMP_AIR_MS,
@@ -180,7 +186,7 @@ check('the jump does not disturb the steering', () => {
   )
 })
 
-console.log('the three classes, by arithmetic')
+console.log('the two classes, by arithmetic')
 
 check('the body band is [y, y + PLAYER_BODY_H] and nothing else decides a hit', () => {
   const { apex } = fly()
@@ -201,18 +207,20 @@ check('the body band is [y, y + PLAYER_BODY_H] and nothing else decides a hit', 
     'a blocking obstacle is jumpable -- it must not be',
   )
 
-  // An overhead: missed on the ground, hit at the apex. The class that punishes being airborne,
-  // and the reason the model needs three rows rather than two.
-  assert.equal(
-    overlaps(...onGround, OBSTACLE_BANDS.overhead.yLow, OBSTACLE_BANDS.overhead.yHigh),
-    false,
-    'an overhead hits a snail that is running underneath it',
+  // **⚠ THERE WAS A THIRD CLASS AND IT IS GONE, SO ASSERT WHAT REPLACED ITS JOB.** `overhead` was
+  // `[362, 560]` — missed on the ground, hit at the apex — and it was what punished being airborne.
+  // It was removed because it cannot be DRAWN: the sprite's canvas is the collision band, so a band
+  // starting above the snail is drawn floating, and three attempts at making that acceptable were
+  // all reported. See `OBSTACLE_BANDS`.
+  //
+  // What is left holding the jump honest is that `blocking` reaches past the apex, which the pair
+  // of assertions above states. Nothing in the game now hits *only* an airborne snail, and the
+  // check says so out loud rather than leaving it to be discovered:
+  const airOnly = Object.values(OBSTACLE_BANDS).filter(
+    (band) => !overlaps(...onGround, band.yLow, band.yHigh) && overlaps(...atApex, band.yLow, band.yHigh),
   )
-  assert.equal(
-    overlaps(...atApex, OBSTACLE_BANDS.overhead.yLow, OBSTACLE_BANDS.overhead.yHigh),
-    true,
-    'an overhead does not punish jumping into it',
-  )
+
+  assert.equal(airOnly.length, 0, 'a class hits only an airborne snail — the model has three rows again')
 
   console.log(`    grounded [0, ${PLAYER_BODY_H}] / apex [${apex.toFixed(0)}, ${(apex + PLAYER_BODY_H).toFixed(0)}]`)
   for (const [kind, band] of Object.entries(OBSTACLE_BANDS)) {
@@ -243,16 +251,6 @@ check('a low obstacle is cleared for a usable slice of the flight, not just at t
   console.log(
     `    ${(fraction * 100).toFixed(0)}% of a ${JUMP_AIR_MS}ms flight clears a low obstacle — a ${((fraction * JUMP_AIR_MS) / 1).toFixed(0)}ms window`,
   )
-})
-
-check('the overhead is not so low that a grounded snail grazes it', () => {
-  // The gap between the snail's back and the overhead's underside is the margin that keeps the
-  // third class readable as "run under this" rather than "sometimes run under this".
-  const clearance = OBSTACLE_BANDS.overhead.yLow - PLAYER_BODY_H
-
-  assert.ok(clearance > 0, 'the overhead band starts inside the snail')
-  assert.ok(clearance >= PLAYER_BODY_H * 0.3, `only ${clearance}u of headroom under an overhead`)
-  console.log(`    ${clearance}u of headroom (${((clearance / PLAYER_BODY_H) * 100).toFixed(0)}% of the snail's own height)`)
 })
 
 check('the shadow reports height: it spreads as it fades, and never fades to nothing', () => {
@@ -323,6 +321,113 @@ check('⚠ the drawn box is the proportion of the art, so the mascot cannot be s
   console.log(
     `    ${PLAYER_WIDTH.toFixed(0)}x${PLAYER_BODY_H} at ${aspect.toFixed(2)}:1, ` +
       `${(PLAYER_HALF_WIDTHS * 100).toFixed(1)}% of the road's full width (it spans two half-widths)`,
+  )
+})
+
+check('⚠ a mark far from its object is not a shadow: an arc chain casts none', () => {
+  // **The reported defect, and it is about distance rather than about pools.** Measured in the
+  // running game over 38 344 drawn shadows there were **0 orphans** -- every mark had a live owner
+  // -- and yet the worst case drew a coin 416px wide with a 597px ellipse **847px below it on a
+  // 945px frame**. The object at the top of the screen, its mark at the bottom, nothing linking
+  // them: the shadow of a thing visible where the thing is not.
+  //
+  // The gap, in the object's own drawn heights, measured over 33 185 draws:
+  //   pickups on the ground line   0.17 - 0.23    reads as a pair
+  //   overhead obstacles           0.90           reads as a pair
+  //   pickups on a ramp arc        up to 2.06     reads as an orphan
+  assert.equal(shadowLinkFade(0, PICKUP_SHADOW_LINK.full, PICKUP_SHADOW_LINK.gone), 1)
+  assert.equal(shadowLinkFade(PICKUP_HEIGHT, PICKUP_SHADOW_LINK.full, PICKUP_SHADOW_LINK.gone), 1)
+  // The bob may never dim a pickup lying on the ordinary ground line -- it would blink.
+  assert.equal(shadowLinkFade(PICKUP_HEIGHT + PICKUP_BOB, PICKUP_SHADOW_LINK.full, PICKUP_SHADOW_LINK.gone), 1)
+
+  // Monotone and continuous across the band, or two neighbours in one chain disagree visibly.
+  let previous = 1
+
+  for (let y = 0; y <= PICKUP_SHADOW_LINK.gone * 1.5; y += 4) {
+    const now = shadowLinkFade(y, PICKUP_SHADOW_LINK.full, PICKUP_SHADOW_LINK.gone)
+
+    assert.ok(now <= previous + 1e-12, `the link fade reverses at ${y}`)
+    assert.ok(previous - now < 0.06, `the link fade steps by ${(previous - now).toFixed(3)} at ${y}`)
+    previous = now
+  }
+
+  // **The arc is asked of the flight solver, not typed in.** `formations.ts` lays an arc at
+  // `flightHeight(v0, t) + PICKUP_HEIGHT` and skips both ends, so the LOWEST member of the
+  // shortest chain is what has to clear the band -- if that one still cast a mark the row would
+  // be half shadowed and half not.
+  const duration = flightDuration(RAMP_LAUNCH_V)
+  const shortest = 3
+  const lowest = flightHeight(RAMP_LAUNCH_V, duration / (shortest + 1)) + PICKUP_HEIGHT
+  const apex = RAMP_APEX + PICKUP_HEIGHT
+
+  assert.equal(
+    shadowLinkFade(lowest, PICKUP_SHADOW_LINK.full, PICKUP_SHADOW_LINK.gone),
+    0,
+    `the lowest coin of a ramp arc sits at ${lowest.toFixed(0)}u and still casts a mark`,
+  )
+  assert.equal(shadowLinkFade(apex, PICKUP_SHADOW_LINK.full, PICKUP_SHADOW_LINK.gone), 0)
+
+  // **Shown to reject a band that does not reach**, so the two assertions above cannot pass by
+  // being asked of a threshold nothing could fail. A `gone` set just past the arc's apex leaves
+  // every member of the chain marking the road, which is the arrangement that shipped.
+  const unfaded = shadowLinkFade(lowest, PICKUP_SHADOW_LINK.full, apex * 4)
+
+  assert.ok(
+    unfaded > 0.8,
+    `a band that never reaches is not being rejected (${unfaded.toFixed(2)}), so this is measuring nothing`,
+  )
+
+  console.log(
+    `    full to ${PICKUP_SHADOW_LINK.full}u, gone by ${PICKUP_SHADOW_LINK.gone}u; ` +
+      `ground pickup ${PICKUP_HEIGHT}u keeps 1.00, lowest arc coin ${lowest.toFixed(0)}u keeps 0.00, ` +
+      `arc apex ${apex.toFixed(0)}u keeps 0.00 (a band that never reaches leaves it at ${unfaded.toFixed(2)})`,
+  )
+})
+
+check('⚠ the hill clips the mark as well as the object', () => {
+  // **A shadow lies in the ground plane, so a crest covers it like anything else on that segment
+  // -- and nothing was clipping it.** `billboardVisibleFraction` was applied to the sprite only,
+  // so the pools cropped the object against the ridge and drew its mark straight through the
+  // hillside. Measured live over 63 758 on-screen draws: 6 271 (10.6%) drawn with their ground
+  // point behind a crest, 1 171 (1.8%) drawn while the object above them was under 35% visible.
+  //
+  // It is the crest's ordering that makes this the visible half: a hill hides a billboard from the
+  // bottom up, so the object's top emerges first and its mark last. The mark is exactly the part
+  // that should still be hidden.
+  const markHeight = 8
+
+  // **⚠ On flat road `clipY` IS the segment's own ground row**, so a mark centred on the ground
+  // straddles it. Anything measured against the mark's EXTENT therefore reports every shadow in
+  // the game as half hidden -- which is what the first version of this check did. The test is the
+  // centre, and on the flat that has to come out at exactly full strength.
+  assert.equal(shadowClipFade(500, markHeight, 500), 1, 'a mark on flat road is being clipped')
+  assert.equal(shadowClipFade(500, markHeight, 520), 1, 'a mark clear of the crest is being clipped')
+
+  // Past the crest it goes, and it is gone by the time the ridge has crossed the mark itself.
+  assert.equal(shadowClipFade(500 + markHeight / 2, markHeight, 500), 0)
+  assert.equal(shadowClipFade(500 + markHeight, markHeight, 500), 0)
+  assert.ok(shadowClipFade(500 + markHeight / 4, markHeight, 500) < 1)
+
+  // Monotone and continuous across the band, or the mark blinks as the crest crosses it.
+  let previous = 1
+
+  for (let hidden = 0; hidden <= markHeight; hidden += markHeight / 40) {
+    const now = shadowClipFade(500 + hidden, markHeight, 500)
+
+    assert.ok(now <= previous + 1e-12, `the clip fade reverses at ${hidden}`)
+    previous = now
+  }
+
+  // **The case that was reported, stated as arithmetic.** An overhead 21px past the clip line was
+  // drawn at full strength with 1% of the obstacle above it visible; with the fade it draws at 0.
+  assert.equal(shadowClipFade(500 + 21, 59 * (SHADOW_FOOTPRINT.height / SHADOW_FOOTPRINT.width), 500), 0)
+
+  // Shown to reject the arrangement that shipped: no clip term at all is a constant 1.
+  assert.ok(1 > shadowClipFade(500 + markHeight, markHeight, 500), 'an unclipped mark is not being rejected')
+
+  console.log(
+    `    flat road keeps 1.00; a mark ${markHeight / 4}px past the crest keeps ` +
+      `${shadowClipFade(500 + markHeight / 4, markHeight, 500).toFixed(2)}, one half a mark past it keeps 0.00`,
   )
 })
 

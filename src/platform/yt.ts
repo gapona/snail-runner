@@ -1,4 +1,5 @@
 import type * as Phaser from 'phaser'
+import { READY_RETRY, readyAttempts } from './retry'
 
 /**
  * Single point of contact with the YouTube Playables SDK (`ytgame`).
@@ -110,35 +111,107 @@ export async function waitForPlatformReady(timeoutMs = SDK_WAIT_TIMEOUT_MS): Pro
 // empty/instant Preloader, Boot -> Preloader -> MainMenu can run in a single synchronous
 // tick, calling gameReady() before the first POST_RENDER — so gameReady() is deferred
 // here until firstFrameReady() has actually fired, regardless of call order.
-let firstFrameSignaled = false
+let firstFrameRequested = false
 let gameReadyRequested = false
-let gameReadySignaled = false
 
-function signalGameReady(): void {
-  if (gameReadySignaled) return
-  gameReadySignaled = true
-  getSdk()?.game.gameReady()
-  console.debug('[yt] gameReady()')
+/** Which mandatory signals the SDK has actually accepted. Read by the DEV hook and the check. */
+const delivered = { firstFrame: false, gameReady: false }
+let retryTimer: ReturnType<typeof setInterval> | null = null
+let attemptsMade = 0
+
+/**
+ * What the platform has actually been told, as opposed to what has been asked for.
+ *
+ * **The distinction is the whole point of this file's retry.** `firstFrameReady()` returning does
+ * not mean the SDK heard it; only `delivered.firstFrame` does.
+ */
+export function readySignalState(): { firstFrame: boolean; gameReady: boolean; attempts: number; pending: boolean } {
+  return { ...delivered, attempts: attemptsMade, pending: retryTimer !== null }
+}
+
+/**
+ * Delivers whatever has been requested and not yet accepted, if the SDK is there to take it.
+ *
+ * **⚠ THIS USED TO BE `getSdk()?.game.firstFrameReady()` AND THAT IS A SUBMISSION BLOCKER.** Both
+ * signals are MUST-CALL — without `firstFrameReady()` the platform never shows the game — and an
+ * optional chain against a global that has not attached yet does *nothing*, silently, once. The
+ * old code then logged `[yt] firstFrameReady()` either way, so a platform 200ms late produced a
+ * game that is never displayed and a console that says it is fine.
+ *
+ * The SDK is a parser-blocking script and is normally there long before the first frame; the case
+ * this exists for is the one nobody can reproduce on a developer machine, which is exactly why it
+ * has to be a retry rather than a belief.
+ */
+function pump(): void {
+  const sdk = getSdk()
+
+  attemptsMade++
+
+  // **⚠ Outside Playables there is nothing to deliver, and retrying would report a false failure.**
+  // `ytgame` present with `IN_PLAYABLES_ENV` false is the SDK telling us it is a no-op here — a
+  // definite answer, unlike `ytgame` being undefined, which only means "not yet". Marking the
+  // signals delivered on that answer is what keeps a local run, a `vite preview` and every
+  // automated capture from spending eight seconds polling and then logging an error to the health
+  // API. Found immediately: the first build of the retry did exactly that on localhost.
+  if (!sdk && typeof ytgame !== 'undefined') {
+    delivered.firstFrame = firstFrameRequested || delivered.firstFrame
+    delivered.gameReady = gameReadyRequested || delivered.gameReady
+  }
+
+  if (sdk) {
+    if (firstFrameRequested && !delivered.firstFrame) {
+      sdk.game.firstFrameReady()
+      delivered.firstFrame = true
+      console.debug(`[yt] firstFrameReady() delivered on attempt ${attemptsMade}`)
+    }
+    // Ordering is not merely preserved, it is enforced: `gameReady` is only ever offered once the
+    // SDK has taken `firstFrameReady`, whatever order the scenes asked in.
+    if (gameReadyRequested && delivered.firstFrame && !delivered.gameReady) {
+      sdk.game.gameReady()
+      delivered.gameReady = true
+      console.debug(`[yt] gameReady() delivered on attempt ${attemptsMade}`)
+    }
+  }
+
+  const outstanding =
+    (firstFrameRequested && !delivered.firstFrame) || (gameReadyRequested && !delivered.gameReady)
+
+  if (!outstanding || attemptsMade >= readyAttempts()) {
+    if (outstanding) {
+      // Loud, and only ever printed when a mandatory call really was lost. A silent give-up is the
+      // failure mode this whole mechanism exists to remove.
+      console.error(`[yt] gave up delivering ready signals after ${attemptsMade} attempts`, { ...delivered })
+      logError()
+    }
+    if (retryTimer !== null) {
+      clearInterval(retryTimer)
+      retryTimer = null
+    }
+  }
+}
+
+function requestSignal(): void {
+  pump()
+
+  const outstanding =
+    (firstFrameRequested && !delivered.firstFrame) || (gameReadyRequested && !delivered.gameReady)
+
+  if (outstanding && retryTimer === null) {
+    retryTimer = setInterval(pump, READY_RETRY.intervalMs)
+  }
 }
 
 export function firstFrameReady(): void {
-  if (!firstFrameSignaled) {
-    firstFrameSignaled = true
-    getSdk()?.game.firstFrameReady()
-    console.debug('[yt] firstFrameReady()')
-  }
-  if (gameReadyRequested) {
-    signalGameReady()
-  }
+  firstFrameRequested = true
+  requestSignal()
 }
 
 export function gameReady(): void {
   gameReadyRequested = true
-  if (firstFrameSignaled) {
-    signalGameReady()
-  } else {
+  if (!firstFrameRequested) {
     console.debug('[yt] gameReady() requested before firstFrameReady() — deferring until the first frame renders')
   }
+  requestSignal()
 }
 
 export async function saveData(data: string): Promise<void> {

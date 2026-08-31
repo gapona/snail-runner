@@ -1,97 +1,143 @@
 import * as Phaser from 'phaser'
-import { renderSfxUris } from '../audio/sfx'
-import { skyPlateKey, SKYLINE_TEXTURE } from '../road/Backdrop'
+import { SFX_FILES, renderSfxUris } from '../audio/sfx'
+import { ensureSkyTextures, skyPlateKey, SKYLINE_TEXTURE, skyTextureKey } from '../road/Backdrop'
 import { DECOR_TEXTURES } from '../road/decorShapes'
 import { themeIds } from '../road/themes'
+import { t } from '../i18n/strings'
 import { OBSTACLE_ART_KEYS } from '../run/obstacleArt'
+import { CRITTER_TEXTURE_KEYS } from '../run/critterArt'
 import { PICKUP_TEXTURES } from '../run/pickupArt'
-import { SNAIL_FRAMES, snailFrameKey } from '../run/snailArt'
+import { SNAIL_FRAMES, SNAIL_TEXTURE, SNAIL_TEXTURE_SIZE, snailFrameKey } from '../run/snailArt'
+import { INK } from '../run/artPalette'
 import { bindLayout } from '../ui/layout'
-import { createBrand, type Brand } from '../ui/brand'
-import { getTheme, neonProgressBar, type NeonProgressBar } from '../ui/theme'
+import { getDisplayFontStack, isDisplayFontReady } from '../ui/font'
+import { kitButton, type KitButton } from '../ui/kit'
+import { KIT } from '../ui/kitPalette'
+import { toCssColor } from '../ui/theme'
 import { uiScale } from '../ui/uiScale'
 
-const MAX_BAR_WIDTH = 468
-const BAR_HEIGHT = 32
-// Keeps the bar off the edges on narrow viewports (e.g. 390px wide) instead of
-// overflowing them at a fixed 468px.
-const BAR_MARGIN = 40
+/** The bar's geometry, in unscaled pixels. */
+const BAR = { maxWidth: 420, height: 16, radius: 8, margin: 28 } as const
 
-/** Where the wordmark's centre sits, and how far under it the bar hangs. See `layout`. */
-const BRAND_CENTER_FRACTION = 0.42
-const BAR_GAP = 54
+/** Where the block sits, as fractions of viewport height. */
+const ROWS = { snail: 0.46, bar: 0.60, title: 0.72 } as const
 
+/** The mascot's drawn width, as a fraction of the bar's own length. */
+const SNAIL_WIDTH_FRACTION = 0.34
+
+/** How fast the glide cycle runs while the snail is crawling, in frames per second. */
+const GLIDE_FPS = 7
+
+const TITLE_FONT_SIZE = 44
+const TITLE_INK = { stroke: 0.17, shadowY: 0.11 } as const
+
+/**
+ * The slime the snail leaves behind it, which is what fills the bar.
+ *
+ * The trail's own two colours, lifted from `SlimeTrail` rather than invented, so the loading
+ * screen's one piece of colour is the same green the game draws behind the mascot all run.
+ */
+const SLIME = { body: 0x9fc24a, core: 0xe8f7a6 } as const
+
+/**
+ * The loading screen.
+ *
+ * **⚠ IT IS JUDGED BY HOW FAST IT DISAPPEARS.** There is no minimum display time, no intro to sit
+ * through and nothing that has to finish before `MainMenu` may start — if the whole load is in
+ * cache, this scene is one frame long and that is the best outcome, not a bug. Everything below is
+ * arranged so that being fast is free: the background is a canvas gradient, the bar is `Graphics`,
+ * and the only file it waits on is one 22KB mascot frame that `Boot` fetched ahead of it.
+ *
+ * **The progress is the loader's own.** `this.load.on('progress')` and nothing else — no timer, no
+ * eased catch-up, no "hold at 90%". A fake bar lies in one direction on a fast connection and in
+ * the other on a slow one, and the player finds out which at exactly the moment they care.
+ *
+ * **The bar IS the character.** The snail crawls along it as the fraction rises and its slime fills
+ * the part it has passed, so the scale is not a widget next to a mascot — it is what the mascot is
+ * doing. Same sprite, same six-frame cycle, no new art.
+ */
 export class Preloader extends Phaser.Scene {
-  private brand!: Brand
-  private bar!: NeonProgressBar
-  private barWidth = MAX_BAR_WIDTH
-  private barY = 0
+  private sky!: Phaser.GameObjects.Image
+  private skyline?: Phaser.GameObjects.TileSprite
+  private bar!: Phaser.GameObjects.Graphics
+  private snail?: Phaser.GameObjects.Image
+  private title?: Phaser.GameObjects.Text
+
+  private failure?: { text: Phaser.GameObjects.Text; button: KitButton }
+
   private progress = 0
+  private elapsedMs = 0
+  private failed: string[] = []
 
   constructor() {
     super('Preloader')
   }
 
   init() {
-    // Built in init(), not create(): preload()'s 'progress' events fire between init()
-    // and create(), so the bar has to exist before that to have anything to update.
-    //
-    // The branding goes in first so it sits behind the bar in the display list. Its two textures
-    // were loaded by `Boot` for exactly this moment — see that scene's own note on why the
-    // loading screen cannot show art it is itself still loading.
-    this.brand = createBrand(this)
-    // The kit's own progress widget rather than two bare rectangles: the loading screen is the
-    // one screen a certification reviewer is guaranteed to see, and it has no business being the
-    // only part of the game drawn in a different visual language from everything else.
-    this.bar = neonProgressBar(this)
+    // **Built in `init`, not `create`**: `preload`'s `progress` events fire between the two, so
+    // everything the bar needs has to exist before then or the first half of the load draws nothing.
+    this.progress = 0
+    this.elapsedMs = 0
+    this.failed = []
+
+    // Zero bytes and no theme file: `ensureSkyTextures` paints its gradient onto a canvas from the
+    // active theme's own two sky colours. The road is deliberately not drawn — it is the expensive
+    // half of the world and none of it is loaded yet.
+    ensureSkyTextures(this)
+    this.sky = this.add.image(0, 0, skyTextureKey(0)).setOrigin(0.5, 0)
+    this.bar = this.add.graphics()
+
+    if (this.textures.exists(SNAIL_TEXTURE)) this.createSnail()
+
+    // The mascot's remaining frames and the mountain strip both arrive during the load. Each is
+    // picked up the moment it lands rather than waited for: the screen is already up.
+    this.load.on(`filecomplete-image-${SNAIL_TEXTURE}`, () => this.createSnail())
+    this.load.on(`filecomplete-image-${SKYLINE_TEXTURE}`, () => this.createSkyline())
 
     this.load.on('progress', (progress: number) => {
       this.progress = progress
-      this.layoutBar()
+    })
+    this.load.on(Phaser.Loader.Events.FILE_LOAD_ERROR, (file: Phaser.Loader.File) => {
+      this.failed.push(file.key)
     })
 
     bindLayout(this, (width, height) => this.layout(width, height))
   }
 
   preload() {
-    // The game's sound effects are rendered here rather than shipped: they are self-generated
-    // by construction, so there is no provenance row to keep in AUDIO-SOURCES.md and nothing
-    // in dist/. Loaded as data URIs through the ordinary loader, which is what makes them work
-    // on the HTML5 Audio backend as well as WebAudio — see src/audio/synth.ts.
+    // Most of the game's sound effects are rendered here rather than shipped: a tone from
+    // arithmetic is self-generated by construction, so there is no provenance row to keep and
+    // nothing in `dist/`.
     for (const { key, uri } of renderSfxUris()) this.load.audio(key, uri)
+    // **The two that are recordings**, because a waveform cannot sound like an object being struck
+    // — see `SFX_FILES` for how each was picked and `AUDIO-SOURCES.md` for their CC0 rows. Loaded
+    // through the same loader and under the same keys, so nothing downstream knows the difference.
+    for (const [key, path] of Object.entries(SFX_FILES)) this.load.audio(key, `assets/${path}`)
 
-    // All six sky plates, not just the active theme's. The whole set is ~330KB, so the lazy
-    // per-theme load `applyTheme` was built to host would trade a runtime load path and a
-    // "plate not ready yet" state for 280KB of boot — not a trade worth making. That hook is
-    // still the right place if a theme ever grows a real per-theme sprite set.
-    for (const theme of themeIds()) this.load.image(skyPlateKey(theme), `assets/sky/${theme}.png`)
-    // The mountain range: one strip shared by every theme and every biome, tinted per biome at
-    // draw time exactly as a verge prop is. See `SKYLINE_LAYER`.
+    // First in the queue because it is the only remaining thing the loading screen itself shows.
     this.load.image(SKYLINE_TEXTURE, 'assets/sky/skyline.png')
 
-    // Scenery, loaded under **exactly the keys the generators would have used**. That is the
-    // whole switch: `createDecorTextures` checks whether its key already exists and draws a
-    // placeholder only when it does not, so arriving first is all a real sprite has to do to take
-    // over. Nothing downstream branches on art vs drawn.
+    // The mascot's other five frames. `snail-0` came from `Boot`; asking again would be a second
+    // request for a file already in the texture manager.
+    for (let i = 1; i < SNAIL_FRAMES; i++) {
+      this.load.image(snailFrameKey(i), `assets/snail/${snailFrameKey(i)}.png`)
+    }
+
+    // All seven sky plates, not just the active theme's: the set is ~330KB, so the lazy per-theme
+    // path `applyTheme` was built to host would trade a runtime load and a "plate not ready" state
+    // for a fraction of boot. That hook stays the right place if a theme grows a real sprite set.
+    for (const theme of themeIds()) this.load.image(skyPlateKey(theme), `assets/sky/${theme}.png`)
+
+    // Scenery, obstacles and pickups, under **exactly the keys the generators would have used**:
+    // each of those modules draws a placeholder only when its key does not exist, so arriving first
+    // is all a real sprite has to do. The keys are asked for through the modules that declare them
+    // rather than spelled out — `OBSTACLE_VARIANTS` has changed twice, and a literal list here
+    // would keep loading five of six files with nothing to say which one went missing.
     for (const { key } of DECOR_TEXTURES) {
       this.load.image(key, `assets/decor/${key.replace('decor-', '')}.png`)
     }
-
-    // The mascot, the obstacles and the pickups, on exactly the same switch the scenery uses:
-    // each of the three modules below checks whether its key already exists and draws a
-    // placeholder only when it does not, so arriving first is all a real sprite has to do.
-    //
-    // **The keys are asked for through the modules that declare them, never spelled out here.**
-    // `obstacleTextureKey` builds `obstacle-<kind>-<variant>` from `OBSTACLE_VARIANTS`, and that
-    // table has already changed once — a literal list in the loader would keep loading five of six
-    // files with nothing to say which one had gone missing. Same reason `DECOR_TEXTURES` is
-    // iterated above rather than typed out.
-    for (let i = 0; i < SNAIL_FRAMES; i++) {
-      this.load.image(snailFrameKey(i), `assets/snail/${snailFrameKey(i)}.png`)
-    }
-    // `OBSTACLE_ART_KEYS`, not every key: a pulled render has no PNG, and asking for one would
-    // spend a loader error on a deliberate gap. See `PULLED_ART`.
     for (const key of OBSTACLE_ART_KEYS) this.load.image(key, `assets/obstacle/${key}.png`)
+    for (const key of CRITTER_TEXTURE_KEYS) this.load.image(key, `assets/critter/${key}.png`)
     for (const key of Object.values(PICKUP_TEXTURES).flat()) {
       this.load.image(key, `assets/pickup/${key}.png`)
     }
@@ -102,31 +148,211 @@ export class Preloader extends Phaser.Scene {
   }
 
   create() {
+    // **⚠ A failed file stops the handover rather than being ignored.** Before this the loader's
+    // error event had no listener at all: a 404 left the bar frozen wherever it stopped, forever,
+    // with nothing on screen to say why and nothing to press. The game is not startable with half
+    // its art, so the honest outcome is a message and a retry.
+    if (this.failed.length > 0) {
+      this.showFailure()
+
+      return
+    }
+
     this.scene.start('MainMenu')
   }
 
-  layout(width: number, height: number): void {
-    // The wordmark sits above the middle and the bar under it, so the two read as one screen
-    // rather than as a logo with an unrelated widget beneath. `BRAND_CENTER_FRACTION` is above
-    // 0.5 by a little because the bar and its own margin hang below the mark, and a block that is
-    // *optically* centred sits slightly high of the geometric centre.
-    this.brand.layout(width, height, height * BRAND_CENTER_FRACTION, uiScale(width))
+  /**
+   * The mascot, once its first frame exists.
+   *
+   * Created rather than shown, because `Boot` may still be fetching it when this scene starts — and
+   * an `Image` built against a missing key is Phaser's green placeholder, which is worse than
+   * nothing on the first screen of the game.
+   */
+  private createSnail(): void {
+    if (this.snail) return
 
-    this.barWidth = Math.min(MAX_BAR_WIDTH, width - BAR_MARGIN * 2)
-    this.barY = Math.min(height - BAR_MARGIN, this.brand.bottom + BAR_GAP)
-    this.layoutBar()
+    this.snail = this.add.image(0, 0, SNAIL_TEXTURE).setOrigin(0.5, 1)
+    this.layout(this.scale.width, this.scale.height)
   }
 
-  private layoutBar(): void {
-    // `neonProgressBar` owns no position state — the caller hands it fresh geometry on every
-    // call, which is why the width and the row are fields on this scene rather than on it.
-    this.bar.draw(
-      this.scale.width / 2 - this.barWidth / 2,
-      this.barY - BAR_HEIGHT / 2,
-      this.barWidth,
-      BAR_HEIGHT,
-      this.progress,
-      getTheme().colors.primary,
-    )
+  private createSkyline(): void {
+    if (this.skyline) return
+
+    // A `TileSprite` for the same reason `Backdrop` uses one: the strip is authored to wrap, so a
+    // frame wider than it repeats instead of stretching into spires.
+    this.skyline = this.add.tileSprite(0, 0, 1, 1, SKYLINE_TEXTURE).setOrigin(0.5, 1)
+    // Behind the bar and the mascot, in front of the sky.
+    this.children.moveBelow(this.skyline, this.bar)
+    this.layout(this.scale.width, this.scale.height)
+  }
+
+  /**
+   * The wordmark, once the display face is in `document.fonts`.
+   *
+   * **The title is drawn when the face is there, never before.** A `Text` object does not repaint
+   * when a web font arrives after it has already drawn, so setting it early and hoping is a
+   * guaranteed flash of system sans on the first screen of the game. `main.ts` gives the face a
+   * 200ms grace and then boots regardless, so this has to be able to happen late.
+   *
+   * **⚠ Polled from `update` rather than chained off the promise, and the promise version shipped
+   * broken.** It was `whenDisplayFontReady().then(createTitle)` with an `isActive()` guard inside —
+   * and on a warm cache the face is ready *before* `Preloader.init` runs, so the call happened
+   * during `init`, where the scene's status is INIT rather than RUNNING, hit the guard and returned.
+   * Nothing called again: the loading screen simply never had a title. A poll has no ordering to
+   * get wrong and costs one boolean a frame.
+   */
+  private createTitle(): void {
+    if (this.title) return
+
+    this.title = this.add
+      .text(0, 0, t('gameTitle'), {
+        fontFamily: getDisplayFontStack(),
+        fontSize: TITLE_FONT_SIZE,
+        color: toCssColor(KIT.coin),
+      })
+      .setOrigin(0.5, 0.5)
+    this.layout(this.scale.width, this.scale.height)
+  }
+
+  /**
+   * What the player sees when a file did not arrive.
+   *
+   * A message and a button, rather than a bar that never fills. Retry is `scene.restart()`: the
+   * loader keeps what it already has in the texture manager, so a retry re-requests only what is
+   * missing — and the same error path catches it again if the file is still gone.
+   */
+  private showFailure(): void {
+    const message = this.add
+      .text(0, 0, t('loadFailed'), {
+        fontFamily: getDisplayFontStack(),
+        fontSize: 20,
+        color: toCssColor(KIT.rim),
+        align: 'center',
+        wordWrap: { width: Math.max(200, this.scale.width - 80) },
+      })
+      .setOrigin(0.5)
+      .setStroke(toCssColor(INK), 5)
+    const button = kitButton(this, t('retry'), { primary: true, solid: true, fontSize: 24 })
+
+    button.container.setInteractive()
+    button.container.on(Phaser.Input.Events.POINTER_UP, () => this.scene.restart())
+
+    // **The loading screen stops being a loading screen.** Leaving the bar and the mascot up under
+    // an error message says the load is still going, which is the one thing that is no longer true.
+    this.snail?.setVisible(false)
+    this.title?.setVisible(false)
+    this.failure = { text: message, button }
+    console.error('[preload] assets failed to load', this.failed)
+    this.layout(this.scale.width, this.scale.height)
+  }
+
+  update(_time: number, delta: number): void {
+    this.elapsedMs += delta
+
+    // Not once the screen has failed: the wordmark's own row is the retry button's now, and a
+    // title created after `showFailure` would be laid out by a branch that no longer runs.
+    if (!this.title && !this.failure && isDisplayFontReady()) this.createTitle()
+
+    this.drawBar()
+  }
+
+  layout(width: number, height: number): void {
+    const scale = uiScale(width)
+
+    this.sky.setPosition(width / 2, 0)
+    this.sky.setDisplaySize(width, height)
+
+    if (this.skyline) {
+      // Its own aspect in both axes — a mountain has shape in both, and scaling them apart is what
+      // turns peaks into spires. See `SKYLINE_LAYER`.
+      const tileScale = Math.max(0.25, (height * 0.3) / this.skyline.texture.getSourceImage().height)
+
+      this.skyline.setTileScale(tileScale, tileScale)
+      this.skyline.setSize(width, height * 0.3)
+      this.skyline.setPosition(width / 2, height * ROWS.bar + BAR.height * scale)
+    }
+
+    if (this.title && !this.failure) {
+      const size = TITLE_FONT_SIZE * scale
+
+      this.title.setFontSize(size)
+      this.title.setStroke(toCssColor(INK), size * TITLE_INK.stroke)
+      this.title.setShadow(0, size * TITLE_INK.shadowY, toCssColor(INK), 0, true, true)
+      this.title.setPosition(width / 2, height * ROWS.title)
+    }
+
+    if (this.failure) {
+      this.failure.text.setPosition(width / 2, height * ROWS.snail)
+      this.failure.text.setWordWrapWidth(Math.max(200, width - 80 * scale))
+      this.failure.button.setFontSize(24 * scale)
+      this.failure.button.container.setPosition(width / 2, height * ROWS.title)
+    }
+
+    this.drawBar()
+  }
+
+  /** The bar's own box, so the bar, the fill and the snail cannot disagree about where it is. */
+  private barRect(): { x: number; y: number; width: number; height: number } {
+    const scale = uiScale(this.scale.width)
+    const width = Math.min(BAR.maxWidth * scale, this.scale.width - BAR.margin * 2 * scale)
+    const height = BAR.height * scale
+
+    return { x: this.scale.width / 2 - width / 2, y: this.scale.height * ROWS.bar - height / 2, width, height }
+  }
+
+  private drawBar(): void {
+    const rect = this.barRect()
+    const scale = uiScale(this.scale.width)
+    const radius = BAR.radius * scale
+
+    this.bar.clear()
+
+    if (this.failure) return
+
+    this.bar.fillStyle(KIT.plate, 0.55)
+    this.bar.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, radius)
+
+    // The slime: the part the snail has already crawled over. Drawn as the trail's own two greens,
+    // the darker body under a lighter core, which is what `SlimeTrail` puts on the road.
+    const filled = rect.width * this.progress
+
+    if (filled > radius) {
+      this.bar.fillStyle(SLIME.body, 0.95)
+      this.bar.fillRoundedRect(rect.x, rect.y, filled, rect.height, radius)
+      this.bar.fillStyle(SLIME.core, 0.5)
+      this.bar.fillRoundedRect(rect.x, rect.y + rect.height * 0.22, filled, rect.height * 0.34, radius * 0.5)
+    }
+
+    this.bar.lineStyle(Math.max(1.5, 2 * scale), KIT.rim, 0.55)
+    this.bar.strokeRoundedRect(rect.x, rect.y, rect.width, rect.height, radius)
+
+    if (!this.snail) return
+
+    // **The snail rides the bar rather than sitting beside it.** Its foot is on the bar's own top
+    // edge and its x is the progress fraction across the same rectangle the fill uses, so the front
+    // of the slime is always exactly under it — the scale and the character are one object.
+    const drawnWidth = rect.width * SNAIL_WIDTH_FRACTION
+    const aspect = SNAIL_TEXTURE_SIZE.height / SNAIL_TEXTURE_SIZE.width
+
+    this.snail.setDisplaySize(drawnWidth, drawnWidth * aspect)
+    this.snail.setPosition(rect.x + filled, rect.y + rect.height * 0.55)
+    this.snail.setTexture(this.glideFrame())
+  }
+
+  /**
+   * Which glide frame to show.
+   *
+   * **On a clock rather than on distance, which is the one place this differs from the game.** In a
+   * run the cycle advances with the ground travelled, because an animation that ripples at a fixed
+   * rate while the world speeds up has come loose from it. Here there is no ground: what the player
+   * should read is that the creature is alive and working, and that is a wall-clock cycle.
+   *
+   * Falls back to frame 0 for any frame that has not loaded yet, so the cycle starts as a still and
+   * becomes an animation partway through the load rather than flickering into Phaser's placeholder.
+   */
+  private glideFrame(): string {
+    const key = snailFrameKey(Math.floor((this.elapsedMs / 1000) * GLIDE_FPS))
+
+    return this.textures.exists(key) ? key : SNAIL_TEXTURE
   }
 }

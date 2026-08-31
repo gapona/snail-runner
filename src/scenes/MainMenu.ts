@@ -4,104 +4,183 @@ import { DEFAULT_ROAD_THEME } from '../road/themes'
 import { bindAction } from '../platform/input'
 import { gameReady } from '../platform/yt'
 import { t } from '../i18n/strings'
-import type { ShopItem } from '../shop/catalog'
+import { getCatalog, type ShopItem } from '../shop/catalog'
 import { themeIdFromItem } from '../shop/themeCatalog'
+import { resolveSelectedSnail, skinIdFromItem, snailSkin } from '../run/snailSkins'
+import { hasPurchased } from '../shop/coins'
 import { applyTheme } from '../road/applyTheme'
-import { getRoadThemeId } from '../road/themes'
 import { getState, mutate } from '../save/store'
 import { bindLayout } from '../ui/layout'
 import { kitButton, type KitButton } from '../ui/kit'
+import { KIT } from '../ui/kitPalette'
 import { toCssColor } from '../ui/theme'
 import { getDisplayFontStack } from '../ui/font'
 import { uiScale } from '../ui/uiScale'
-import { buttonBand, titleBand } from '../ui/menuLayout'
-import { ContrastProbe } from '../ui/contrastProbe'
-import { ensureScrimTexture, SCRIM_TEXTURE } from '../ui/scrimTexture'
+import { buttonBand, MENU_ENTRY as ENTRY, titleBand, titleRow } from '../ui/menuLayout'
 import { WorldView } from '../run/WorldView'
-import { SPEED_BASE } from '../run/constants'
+import { biomeIndexForSegment } from '../road/biomes'
+import { PlayerView } from '../run/PlayerView'
+import { createPlayerState } from '../run/playerMotion'
+import { PLAYER_REST_Y_FRACTION, PLAYER_WIDTH, PLAYER_Z, readableScale, SPEED_BASE } from '../run/constants'
+import { CAMERA_HEIGHT, HORIZON_Y } from '../road/constants'
+import { INK } from '../run/artPalette'
 
-/** Base font sizes, scaled by `uiScale(width)` and by the button band's own fit. */
-const TITLE_FONT_SIZE = 64
-const PLAY_FONT_SIZE = 30
-const SECONDARY_FONT_SIZE = 20
-
-/** How fast the menu's world travels, as a fraction of the run's speed. */
-const MENU_SPEED_FRACTION = 0.55
-
-/** The title's left edge, as a fraction of width. */
-const TITLE_LEFT_FRACTION = 0.08
+/** Base font sizes, scaled by `uiScale(width)` and by each band's own fit. */
+const TITLE_FONT_SIZE = 112
+const PLAY_FONT_SIZE = 38
+const ICON_FONT_SIZE = 24
+const RECORD_FONT_SIZE = 24
 
 /**
- * How much of the title band the wordmark may fill, and how much of the frame's width.
+ * The wordmark's outline and shadow, as fractions of its own font size.
  *
- * **Both are fits, not preferences, and the height one is the reason this exists.** `uiScale`
- * scales on *width*, so at 844x390 — a landscape phone — it returns 1 and the title kept its full
- * 64px while the band it has to live in is 55px tall. Measured: the wordmark ran from y=70 to
- * y=140 there, i.e. through the HUD's rows *and* into `ENEMY_BAND`, breaking the one rule the
- * whole layout is built on. Every element that is sized in points and placed in a band needs the
- * same second pass the button stack already had.
+ * **⚠ These replace a measured translucent plate, and the swap is the point.** The menu used to
+ * solve a scrim alpha per theme from a framebuffer read (`ui/contrastProbe.ts`), because white text
+ * on a pale sky measures well under 3:1 — and what that bought was a grey smear behind the title on
+ * every bright theme. An outline is the same guarantee obtained differently: the letter is dark-
+ * edged against *whatever* is behind it, so the contrast stops being a property of the sky at all
+ * and the probe stops having anything to measure.
+ *
+ * Stated as fractions rather than pixels because the title shrinks to fit — a 14px stroke on a 74px
+ * face is a logo, and the same 14px on the 34px the narrowest frame gets is a blob.
  */
-const TITLE_BAND_FILL = 0.72
-const TITLE_MAX_WIDTH_FRACTION = 0.84
+const TITLE_INK = { stroke: 0.19, shadowY: 0.13, tiltDegrees: -3 } as const
 
-/** Gaps inside the button stack, in unscaled pixels. */
-const PLAY_MIN_WIDTH = 220
-const BUTTON_GAP = 18
-const SECONDARY_GAP = 22
+/** How much of the title band the wordmark may fill, and how much of the frame's width. */
+const TITLE_BAND_FILL = 0.78
+const TITLE_MAX_WIDTH_FRACTION = 0.88
 
-/** How close the secondary row may come to the edges of the frame. */
+/**
+ * The primary action's own geometry, in unscaled pixels.
+ *
+ * **A share of the frame between a floor and a ceiling, not a fixed width.** A 264px button is
+ * two thirds of a 320px phone and an eighth of a desktop — the same object reading as "the thing to
+ * press" on one and as a chip on the other. The floor is what keeps it thumb-sized on the narrowest
+ * supported frame; the ceiling is what stops a wide desktop turning it into a banner.
+ */
+const PLAY_WIDTH = { fraction: 0.4, min: 264, max: 380 }
+const RECORD_GAP = 10
+
+/** How close anything may come to the edges of the frame. */
 const SIDE_MARGIN = 16
 
-/** The entry cascade, in milliseconds. Delays are from scene create; see the redesign's table. */
-const ENTRY = {
-  title: { delay: 120, duration: 320, rise: 16 },
-  play: { delay: 240, duration: 260 },
-  secondary: { delay: 340, duration: 220 },
+/**
+ * How heavily the record line is outlined, as a fraction of its own face.
+ *
+ * **⚠ There is no strip under the buttons any more, and this is what replaced it.** The band was
+ * the last plate on the front screen — a soft dark wash so the row never had to argue with whatever
+ * biome the near ground was showing — and it was reported as exactly what it is: a dark slab lying
+ * across the road, in a picture whose whole subject is the road.
+ *
+ * The rule that removes it is the one this screen already reached for the title: **a thick dark
+ * outline is the same guarantee obtained differently.** The letter is dark-edged against *whatever*
+ * is behind it, so the contrast stops being a property of the ground and there is nothing left to
+ * plate over. The Play button needs none of it — it is the one solid shape on the screen — so the
+ * record is the only thing the strip was actually protecting.
+ *
+ * Stated as a fraction of the face, for `TITLE_INK`'s reason: this text shrinks to fit, and a
+ * 4px stroke is a rim on a 20px face and a blob on the 13px the narrowest frame gets.
+ */
+const RECORD_INK = { stroke: 0.2, shadowY: 0.16 } as const
+
+/**
+ * The mascot's place in the picture.
+ *
+ * `offsetX` is in road half-widths, so the snail rides the road through a bend exactly as it does
+ * in a run; `scale` is the one place in the game the drawn box is allowed to exceed the collision
+ * box, and it may be, because the menu has no collision — see `PlayerView`'s own note.
+ *
+ * **⚠ `zScale` is what keeps the mascot out of the buttons, and it is a composition tool rather
+ * than a cheat.** The snail's row on screen is fixed by `PLAYER_Z`: at the run's own distance its
+ * feet land at 0.80 of the frame, which is inside the button band, and no amount of scaling moves
+ * that — scaling about a bottom-centre origin grows a sprite UPWARDS from the same row. Standing it
+ * further up the road raises the row (the offset from the horizon goes as 1/z) and shrinks it, and
+ * `scale` buys the size back. Net: the same big mascot, a band higher, with nothing to argue with.
+ */
+const MASCOT = { offsetX: 0.58, widthFraction: 0.2, zScale: 1.55 } as const
+
+/**
+ * The multiplier that puts the front screen's mascot at `MASCOT.widthFraction` of the frame.
+ *
+ * **⚠ It was a bare `scale: 3.4`, and that made the menu's composition a function of the run's
+ * hitbox.** The run's mascot is `PLAYER_WIDTH * scale(PLAYER_REST_Y_FRACTION)` of the frame's
+ * width, and a round that grew either of those grew the front screen by the same factor without
+ * anybody deciding to — measured, the hero snail went from 20% of a desktop frame to 32% of one as
+ * a side effect of making the *in-run* snail readable on a phone.
+ *
+ * So the size the picture wants is stated, and the multiplier is solved from it. Nothing about the
+ * run can move it now: if `PLAYER_BODY_H` or the rest row changes, this changes with them and the
+ * front screen looks the same.
+ *
+ * `zScale` is in it because standing the mascot further up the road shrinks it by exactly that
+ * factor — see `MASCOT.zScale`.
+ */
+function mascotScale(): number {
+  const runFraction = (PLAYER_WIDTH * 2 * (PLAYER_REST_Y_FRACTION - HORIZON_Y)) / CAMERA_HEIGHT / 2
+
+  return (MASCOT.widthFraction / runFraction) * MASCOT.zScale
+}
+
+/**
+ * The idle cycle: a slow breath, a slower sway, and a rarer glance back.
+ *
+ * **⚠ There is no blink and no eye turn, and that is an art fact rather than an omission.** The
+ * shipped mascot is a REAR view — shell to the camera, head and both stalks going away, which
+ * CLAUDE.md records as the pick that fixed the model's drift to profile. There are no eyes facing
+ * the player to blink or to turn, and drawing some would be new art.
+ *
+ * What is available is the same one scalar the jump uses (`squash.ts`: `> 1` taller and narrower,
+ * `< 1` flatter and wider, volume-preserving) plus a rotation. So: `breath` is the creature
+ * breathing, `sway` is its weight shifting, and `glance` is an occasional quick rise-and-tilt that
+ * reads as looking back over the shell. Three periods that share no common multiple under a
+ * minute, so the cycle never visibly repeats — the same trick the sun's corona uses.
+ */
+const IDLE = {
+  breath: { amount: 0.055, periodMs: 2600 },
+  sway: { degrees: 2.4, periodMs: 4100 },
+  glance: { periodMs: 9400, durationMs: 620, degrees: 7, rise: 0.09 },
 } as const
 
 /** The exit: interface out, world up to speed, then the handover. */
 const EXIT = { fadeMs: 180, accelerateMs: 600 } as const
 
+/** How loud the corner icons are against the primary. Secondary means quieter, not just smaller. */
+const CORNER_ALPHA = 0.78
+
 /** The idle pulse on the primary action. */
-const PLAY_PULSE = { scale: 1.03, periodMs: 2000 } as const
+const PLAY_PULSE = { scale: 1.035, periodMs: 1900 } as const
 
 /**
- * The front screen: the game's own world, running, with an interface laid over the rows a run
- * leaves empty.
+ * The front screen: the game itself, running, with the fewest controls that can start it.
  *
- * **It renders the real thing rather than a picture of it** — `WorldView` is the same class
- * `RunScene` builds its world from, on the same circuit machinery, at a little over half the
- * run's speed. What that replaced, back in the rail shooter, was a static illustration of a
- * highway with white text on a pale sky measuring well under 3:1; the argument survives the
- * genre change untouched, and so does the code.
+ * **It is an attract mode rather than a picture of one.** The same `WorldView` the play scene
+ * builds, on the same circuit machinery, at the run's own `SPEED_BASE`, with the real `PlayerView`
+ * on the road — biomes change, the verge streams past, the mascot glides. What it does *not* have
+ * is the run: no obstacles, no pickups, no collision, no HUD. That costs nothing to draw and it is
+ * the only thing on the screen that sells both the speed and the character.
  *
- * **Nothing here occupies a row that means something in a run.** The title sits high on clear
- * sky, the buttons sit on the near ground a run deliberately leaves empty, and the HUD's own rows
- * at the top of the frame are left blank so that the distance, the lives and the boost meter
- * appear *into* empty space rather than pushing the eye somewhere new. That is what lets the
- * transition into play be nothing but a fade of the interface: the world does not have to move,
- * so it does not have to be hidden while it moves. See `ui/menuLayout.ts`.
+ * **The composition keeps off the vanishing point.** Every line in the frame converges at
+ * `HORIZON_Y`; the title takes the empty sky above it, the mascot stands in the middle distance off
+ * the centreline, and the controls sit on the near ground a run leaves blank. See `ui/menuLayout.ts`
+ * for the bands and for why nothing may sit in the middle.
  *
- * **The snail is not here yet.** The rail shooter flew its own ship across this screen on a
- * script, through the real spring; the mascot's menu appearance is chunk 7's, and `update` marks
- * where it goes.
- *
- * **Text legibility is measured, not chosen.** Seven themes over a world that is a different
- * colour at every point of the track cannot be served by one text colour and one plate alpha —
- * see `ui/contrastProbe.ts` for what is sampled and `ui/scrim.ts` for what is solved from it.
+ * **The hierarchy is one filled button and two icons.** Play is the only solid shape on the screen;
+ * Shop and Settings are unlabelled glyphs in the corner at half its weight. That is the reverse of
+ * what shipped: Play was a 16%-alpha outline and the two secondaries were near-opaque plates.
  */
 export class MainMenu extends Phaser.Scene {
   private world!: WorldView
+  private mascot!: PlayerView
+  private mascotState = createPlayerState()
   private uiCamera!: Phaser.Cameras.Scene2D.Camera
 
   private title!: Phaser.GameObjects.Text
-  private titleScrim!: Phaser.GameObjects.Image
-  private buttonScrim!: Phaser.GameObjects.Image
   private playButton!: KitButton
+  private record!: Phaser.GameObjects.Text
   private shopButton!: KitButton
   private settingsButton!: KitButton
+  private shopBadge!: Phaser.GameObjects.Graphics
 
-  private contrast!: ContrastProbe
   private elapsedMs = 0
   private leaving = false
   private playPulse?: Phaser.Tweens.Tween
@@ -113,46 +192,59 @@ export class MainMenu extends Phaser.Scene {
   create() {
     this.elapsedMs = 0
     this.leaving = false
+    this.mascotState = createPlayerState()
+    this.mascotState.offsetX = MASCOT.offsetX
 
-    // Built exactly as the play scene builds it, on the menu's own circuit and at a little over
-    // half its speed — see `road/circuits.ts` for why the menu gets a different one.
-    this.world = new WorldView(this, {
-      circuit: 'menu',
-      speed: SPEED_BASE * MENU_SPEED_FRACTION,
-      decorSeed: 4242,
+    // **At the run's own speed, not a fraction of it.** The menu used to travel at 0.55 of
+    // `SPEED_BASE` so the frame would sit still under a block of text; with the text out of the
+    // middle of the picture there is nothing left for the motion to fight, and an attract mode that
+    // moves slower than the game is an attract mode advertising the wrong game.
+    this.world = new WorldView(this, { circuit: 'menu', speed: SPEED_BASE, decorSeed: 4242 })
+    this.mascot = new PlayerView(this, {
+      sizeScale: mascotScale(),
+      // **The front screen is the skin's preview, and this is why it can be.** The shop's rows are
+      // a glyph and a name; what a player is actually buying is the creature standing on the road
+      // behind the panel, so the menu draws the skin they have chosen and changes it the moment
+      // they choose another. `resolveSelectedSnail` rather than the raw field: a save can outlive a
+      // skin id, and a hand-edited one must not unlock anything.
+      skin: resolveSelectedSnail(getState().selectedSnail, getState().purchases),
     })
 
-    ensureScrimTexture(this)
-    // Created before the text so the display list puts them behind it; both are positioned and
-    // sized in `layout` and left invisible until the probe has measured what is under them.
-    this.titleScrim = this.add.image(0, 0, SCRIM_TEXTURE).setAlpha(0)
-    this.buttonScrim = this.add.image(0, 0, SCRIM_TEXTURE).setAlpha(0)
 
     this.title = this.add
       .text(0, 0, t('gameTitle'), {
         fontFamily: getDisplayFontStack(),
         fontSize: TITLE_FONT_SIZE,
-        color: '#ffffff',
+        color: toCssColor(KIT.coin),
       })
       .setOrigin(0, 0.5)
+      .setAngle(TITLE_INK.tiltDegrees)
 
-    // The front screen's three buttons are the same widgets `Settings` and `Shop` are built from
-    // (`ui/kit.ts`), which is the point: the menu, the overlays and the HUD now share one palette
-    // instead of the menu showing the world and the overlays showing the template's neon demo.
     this.playButton = kitButton(this, t('play'), {
       primary: true,
+      solid: true,
       fontSize: PLAY_FONT_SIZE,
       fontFamily: getDisplayFontStack(),
     })
-    this.shopButton = kitButton(this, t('shop'), { fontSize: SECONDARY_FONT_SIZE })
-    this.settingsButton = kitButton(this, t('settings'), { fontSize: SECONDARY_FONT_SIZE })
 
-    // World/UI split, same contract as `RailScene`: `uiCamera` draws the interface 1:1 and must
-    // not draw the world, and `cameras.main` must not draw the interface.
+    // The reason to come back, in the one place the eye is already going: beside the button.
+    this.record = this.add
+      .text(0, 0, this.recordText(), {
+        fontFamily: getDisplayFontStack(),
+        fontSize: RECORD_FONT_SIZE,
+        color: toCssColor(KIT.coin),
+      })
+      .setOrigin(0.5, 0)
+      .setStroke(toCssColor(INK), 4)
+
+    // **Glyphs, not textures.** Two unlabelled icons is what "secondary" looks like, and the game
+    // already sets emoji in `valueBadge` and the ad button — so this needs no new asset, which is
+    // the constraint this whole round is under.
+    this.shopButton = kitButton(this, '🛒', { fontSize: ICON_FONT_SIZE })
+    this.settingsButton = kitButton(this, '⚙', { fontSize: ICON_FONT_SIZE })
+    this.shopBadge = this.add.graphics()
+
     this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height)
-    // Built after the camera, because it hides that camera for the frame it captures — see
-    // `ContrastProbe`.
-    this.contrast = new ContrastProbe(this, this.uiCamera)
     this.uiCamera.ignore(this.worldObjects())
     this.cameras.main.ignore(this.uiObjects())
 
@@ -168,7 +260,7 @@ export class MainMenu extends Phaser.Scene {
       // idle pulse on the same button, at whatever phase each happened to be at.
       this.tweens.killAll()
       this.playPulse = undefined
-      this.contrast.destroy()
+      this.mascot.destroy()
       this.world.destroy()
     })
 
@@ -176,87 +268,107 @@ export class MainMenu extends Phaser.Scene {
     gameReady()
   }
 
+  /** `BEST 1,240 · 🪙 87`, or just the coins on a save that has never finished a run. */
+  private recordText(): string {
+    const state = getState()
+    const coins = `🪙 ${state.coins}`
+
+    return state.bestScore > 0 ? `${t('best')} ${state.bestScore.toLocaleString()}   ${coins}` : coins
+  }
+
+  /**
+   * Whether the shop has something the player can act on right now.
+   *
+   * **Affordable and unowned, which is a narrower question than "is there anything in there".** A
+   * badge that is always lit is a badge nobody reads, so it is not "you have coins" and not "there
+   * are themes" — it is that some specific row would succeed if tapped today.
+   */
+  private shopHasNews(): boolean {
+    const state = getState()
+
+    return getCatalog().some(
+      (item) => item.priceCoins > 0 && item.priceCoins <= state.coins && !hasPurchased(state.purchases, item.id),
+    )
+  }
+
   /**
    * The DEV-only handle the menu's acceptance is measured through.
    *
-   * Every claim the redesign asks for is a number taken from the running scene — the contrast of
-   * each text block on each theme, which rows each element occupies at each viewport, how many
-   * tweens are alive after a second visit. None of those can be read from outside: the theme, the
-   * probe and the tween manager are all module or scene state, and a test script that imported
-   * the modules itself would get its own disconnected copies (see CLAUDE.md "Audio Layer").
-   *
-   * Gated like every other hook in this project, and `__menu` is registered in
-   * `check-bundle.mjs` so that "we gated it" can be checked against "it is gone" — which is
-   * exactly the check that caught the first version of this method.
-   *
-   * **The guard is inside the method, not at the call site, and that is the whole trick.**
-   * Gating the *call* removes the call and leaves the method on the class, unreferenced, with
-   * its string literals intact — `check-bundle` found `__menu` in the production bundle that
-   * way. An early return on `import.meta.env.DEV` makes the body itself dead code, which is
-   * what the minifier can actually drop. Same shape as `ContrastProbe.reportForDev`.
+   * Gated like every other hook in this project, and `__menu` is registered in `check-bundle.mjs`
+   * so that "we gated it" can be checked against "it is gone". **The guard is inside the method,
+   * not at the call site**: gating the *call* removes the call and leaves the method on the class,
+   * unreferenced, with its string literals intact — which is exactly how the first version of this
+   * shipped into a production bundle.
    */
   private exposeForTesting(): void {
     if (!import.meta.env.DEV) return
 
     ;(window as unknown as Record<string, unknown>).__menu = {
-      contrast: () => ({ title: this.contrast.titleResult, buttons: this.contrast.buttonResult }),
       setTheme: (id: string) => {
         if (!applyTheme(this, id)) return false
-        this.refreshAfterThemeChange()
+        this.world.refreshTheme(this, this.scale.width, this.scale.height)
 
         return true
       },
       bounds: () => ({
         viewport: { width: this.scale.width, height: this.scale.height },
         title: rectOf(this.title.getBounds()),
-        play: rectOf(this.playButton.container.getBounds()),
-        shop: rectOf(this.shopButton.container.getBounds()),
-        settings: rectOf(this.settingsButton.container.getBounds()),
+        // **⚠ Not `getBounds()`, which for a `Container` is the union of its CHILDREN.** A kit
+        // button's box is drawn by a `Graphics`, which contributes nothing to that union, so the
+        // first version of this hook reported the label's own size — a 76px "Play" and two icons
+        // under the touch floor, none of which is what is on screen or what is tappable.
+        play: boxOf(this.playButton),
+        record: rectOf(this.record.getBounds()),
+        shop: boxOf(this.shopButton),
+        settings: boxOf(this.settingsButton),
+        mascot: rectOf(this.mascot.sprite.getBounds()),
       }),
+      alphas: () => ({
+        title: this.title.alpha,
+        play: this.playButton.container.alpha,
+        shop: this.shopButton.container.alpha,
+        settings: this.settingsButton.container.alpha,
+      }),
+      biome: () => biomeIndexForSegment(this.world.baseIndex, this.world.track.length),
       tweens: () => this.tweens.getTweens().length,
       leave: () => this.leave(),
     }
   }
 
   private worldObjects(): Phaser.GameObjects.GameObject[] {
-    return [...this.world.gameObjects]
+    return [...this.world.gameObjects, ...this.mascot.gameObjects]
   }
 
   private uiObjects(): Phaser.GameObjects.GameObject[] {
-    return this.uiAlphaTargets()
+    return [...this.uiAlphaTargets(), this.shopBadge]
   }
 
   /**
-   * The secondary buttons, left to right, as one list.
+   * The corner icons, as one list.
    *
-   * **⚠ There were two lists and they disagreed, which is how the third button shipped invisible.**
-   * `playEntry` sets every `uiAlphaTargets()` object to alpha 0 and then fades in an *explicitly
-   * named* set; adding `Loadout` to the first list and not the second left it correctly positioned,
-   * correctly sized, interactive, and drawn at alpha 0 — a button that measures as present at every
-   * viewport and cannot be seen. Every consumer now reads this one accessor: the entry cascade, the
-   * exit fade, the layout, the scrim and the contrast probe's regions.
+   * **⚠ There were two lists and they disagreed, which is how a third button once shipped
+   * invisible.** `playEntry` sets every `uiAlphaTargets()` object to alpha 0 and then fades in an
+   * explicitly named set; a button in the first list and not the second is correctly positioned,
+   * correctly sized, interactive, and drawn at alpha 0 — present to every measurement and invisible
+   * to the eye. Every consumer reads this one accessor.
    */
-  private secondaryButtons(): KitButton[] {
+  private cornerButtons(): KitButton[] {
     return [this.shopButton, this.settingsButton]
   }
 
   /** The same objects, typed as things that have an alpha — for the entry and exit tweens. */
   private uiAlphaTargets(): (Phaser.GameObjects.Image | Phaser.GameObjects.Text | Phaser.GameObjects.Container)[] {
     return [
-      this.titleScrim,
-      this.buttonScrim,
       this.title,
+      this.record,
       this.playButton.container,
-      ...this.secondaryButtons().map((button) => button.container),
+      ...this.cornerButtons().map((button) => button.container),
     ]
   }
 
   private bindActions(): void {
     // 'primary' must fire at most once — starting the same scene twice mid-transition is unsafe,
-    // and the exit here runs for `EXIT.accelerateMs` before the handover, which is a long window.
-    // **Play starts the run.** The rail shooter's Play opened a level list, which was the honest
-    // shape once it had levels; an endless runner has exactly one place to go, and a menu that
-    // costs a tap to reach it is a menu that has forgotten what it is for.
+    // and the exit runs for `EXIT.accelerateMs` before the handover, which is a long window.
     bindAction(this, 'primary', { pointer: this.playButton.container, keys: ['SPACE', 'ENTER'] }, () => {
       if (this.leaving) return
       this.leave()
@@ -271,56 +383,77 @@ export class MainMenu extends Phaser.Scene {
       this.scene.pause()
       this.scene.launch('Shop', {
         opener: 'MainMenu',
-        // Themes are the only thing this game sells: the rail shooter's weapons, hulls and
-        // loadout slots went with the combat layer, and a runner's shop is cosmetics plus the
-        // coins that buy them.
         onSelect: (item: ShopItem) => this.selectItem(item),
-        // Themes compare against the *saved selection*, not against the theme currently on screen:
-        // `auto` is a selection and not a theme, so it has no road theme to be equal to, and while
-        // it is chosen the menu still renders in some real theme.
-        isSelected: (item: ShopItem) => themeIdFromItem(item.id) !== null && themeIdFromItem(item.id) === getState().selectedTheme,
+        isSelected: (item: ShopItem) => this.isSelected(item),
       })
+    })
+
+    // The shop can spend coins and buy a theme, so both readouts are stale the moment it closes.
+    this.events.on(Phaser.Scenes.Events.RESUME, () => {
+      this.record.setText(this.recordText())
+      this.layout(this.scale.width, this.scale.height)
     })
   }
 
-  /** Applies a shop selection. Every item in this game's catalogue is a theme. */
+  /**
+   * Whether a shop row is the one currently worn or driven.
+   *
+   * Asked per refresh rather than answered once, because the selection changes while the shop is
+   * open — and asked of *both* id spaces, since the two catalogues share one row list. A predicate
+   * that only knew about themes would leave every skin row reading `Select`, including the one the
+   * player is looking at on the road behind the panel.
+   */
+  private isSelected(item: ShopItem): boolean {
+    const skinId = skinIdFromItem(item.id)
+
+    if (skinId !== null) return skinId === getState().selectedSnail
+
+    const themeId = themeIdFromItem(item.id)
+
+    return themeId !== null && themeId === getState().selectedTheme
+  }
+
+  /**
+   * Applies a shop selection — a look for the road, or a look for the snail.
+   *
+   * **The two are told apart by their id prefix and nothing else**, which is what lets a third kind
+   * of cosmetic land here without the shop scene learning about it: `skinIdFromItem` and
+   * `themeIdFromItem` each answer `null` for anything that is not theirs.
+   */
   private selectItem(item: ShopItem): void {
+    const skinId = skinIdFromItem(item.id)
+
+    if (skinId !== null) {
+      // Rejected rather than trusted: the row could name a skin this build no longer has.
+      if (!snailSkin(skinId)) return
+
+      // The mascot first, the save second — the frame behind the panel is the confirmation, and a
+      // save written before the picture changed is a save that can outlive a failed texture build.
+      this.mascot.setSkin(this, skinId)
+      mutate((state) => {
+        state.selectedSnail = skinId
+      })
+
+      return
+    }
+
     const themeId = themeIdFromItem(item.id)
 
     if (!themeId) return
 
-    // `auto` is the absence of an override. The rail shooter's levels each carried their own
-    // authored light for it to defer to; an endless run has one continuous track, so `auto`
-    // resolves to the default theme and the biomes do the varying.
     const applied = themeId === AUTO_THEME_ID ? DEFAULT_ROAD_THEME : themeId
 
-    // `applyTheme` swaps the pixels behind live texture keys, so it may only run while nothing
-    // is drawing them. **That precondition is not free**: this scene draws the world itself, and
-    // it is paused (not stopped) while the shop is open — paused means its `update` does not run,
-    // so no render of ours can be in flight when this executes.
+    // `applyTheme` swaps the pixels behind live texture keys, so it may only run while nothing is
+    // drawing them. That precondition is not free here: this scene draws the world itself, and it
+    // is paused (not stopped) while the shop is open — paused means its `update` does not run, so
+    // no render of ours can be in flight when this executes.
     if (!applyTheme(this, applied)) return
 
-    this.refreshAfterThemeChange()
+    this.world.refreshTheme(this, this.scale.width, this.scale.height)
 
     mutate((state) => {
       state.selectedTheme = themeId
     })
-    // The world's colours are read through getters, but the two scrims were solved against the
-    // *old* theme's sky. Re-measure rather than keep a plate tuned for a palette that is gone.
-    this.contrast.restart()
-  }
-
-  /**
-   * Rebuilds everything a theme swap invalidated, and re-measures the text against the new sky.
-   *
-   * The world half is `WorldView.refreshTheme` — see it for what `applyTheme` leaves dangling.
-   * The measurement half is not optional either: both plates were solved against the *previous*
-   * theme's colours, and a plate tuned for a palette that is gone is worse than no plate at all,
-   * because it is dark where nothing needed darkening.
-   */
-  private refreshAfterThemeChange(): void {
-    this.world.refreshTheme(this, this.scale.width, this.scale.height)
-    this.contrast.restart()
   }
 
   /** The entry cascade. The world is already running, so it has no entrance of its own. */
@@ -328,45 +461,35 @@ export class MainMenu extends Phaser.Scene {
     for (const object of this.uiAlphaTargets()) object.setAlpha(0)
 
     this.tweens.add({
-      targets: this.title,
+      targets: [this.title],
       alpha: 1,
       delay: ENTRY.title.delay,
       duration: ENTRY.title.duration,
       ease: 'Cubic.easeOut',
     })
     this.tweens.add({
-      targets: this.title,
-      y: { from: this.title.y + ENTRY.title.rise, to: this.title.y },
-      delay: ENTRY.title.delay,
-      duration: ENTRY.title.duration,
-      ease: 'Cubic.easeOut',
-    })
-    this.tweens.add({
-      targets: this.playButton.container,
+      targets: [this.playButton.container, this.record],
       alpha: 1,
-      scale: { from: 0.92, to: 1 },
       delay: ENTRY.play.delay,
       duration: ENTRY.play.duration,
-      ease: 'Back.easeOut',
+      ease: 'Cubic.easeOut',
       onComplete: () => this.startPlayPulse(),
     })
     this.tweens.add({
-      // The accessor, never a hand-written pair — see `secondaryButtons`.
-      targets: this.secondaryButtons().map((button) => button.container),
-      alpha: 1,
-      delay: ENTRY.secondary.delay,
-      duration: ENTRY.secondary.duration,
+      // The accessor, never a hand-written pair — see `cornerButtons`.
+      targets: this.cornerButtons().map((button) => button.container),
+      alpha: CORNER_ALPHA,
+      delay: ENTRY.corner.delay,
+      duration: ENTRY.corner.duration,
       ease: 'Cubic.easeOut',
     })
-    // The scrims fade with whatever they back, but only once the probe has decided how dark they
-    // need to be — see `applyContrast`.
   }
 
   /**
    * The idle pulse on the primary action, which stops the moment the pointer is on it.
    *
-   * A pulse is an invitation, and an invitation the player has already accepted is noise — worse,
-   * a button that keeps moving under the cursor is a button that is harder to hit.
+   * A pulse is an invitation, and an invitation the player has already accepted is noise — worse, a
+   * button that keeps moving under the cursor is a button that is harder to hit.
    */
   private startPlayPulse(): void {
     this.playPulse = this.tweens.add({
@@ -386,36 +509,29 @@ export class MainMenu extends Phaser.Scene {
   }
 
   /**
-   * Hands over to the run **without a fade to black**, which is the whole point of the redesign.
+   * Hands over to the run **without a fade to black**.
    *
-   * The interface leaves, the world speeds up to the run's own rail speed, and only then does the
-   * scene change. Nothing is hidden during the change because nothing has to move: the horizon,
-   * the palette and the fog are the same numbers on both sides of it.
+   * The interface leaves, the world is already at the run's speed, and only then does the scene
+   * change. Nothing is hidden during the change because nothing has to move: the horizon, the
+   * palette and the fog are the same numbers on both sides of it — and now so is the speed.
    */
   private leave(): void {
     if (this.leaving) return
     this.leaving = true
 
     this.playPulse?.stop()
-    // **The entry cascade has to be killed first, or it wins.** Play is clickable from the frame
-    // it appears, which is well before the secondary row's own fade-in has finished — and a
-    // still-running entry tween keeps writing alpha 1 over the exit tween's fade. Seen exactly
-    // that way: the title and Play faded out on cue and the Shop/Settings row sat there at full
-    // alpha over an accelerating road.
+    // **The entry cascade has to be killed first, or it wins.** Play is clickable from the frame it
+    // appears, which is before the corner row's own fade-in has finished — and a still-running entry
+    // tween keeps writing alpha 1 over the exit tween's fade.
     this.tweens.killTweensOf(this.uiAlphaTargets())
     this.tweens.add({
       targets: this.uiAlphaTargets(),
       alpha: 0,
       duration: EXIT.fadeMs,
       ease: 'Cubic.easeIn',
+      onUpdate: () => this.shopBadge.setAlpha(this.shopButton.container.alpha),
     })
-    this.tweens.add({
-      targets: this.world,
-      speed: SPEED_BASE,
-      duration: EXIT.accelerateMs,
-      ease: 'Cubic.easeIn',
-      onComplete: () => this.scene.start('RunScene'),
-    })
+    this.time.delayedCall(EXIT.accelerateMs, () => this.scene.start('RunScene'))
   }
 
   update(_time: number, delta: number): void {
@@ -424,42 +540,52 @@ export class MainMenu extends Phaser.Scene {
 
     this.elapsedMs += delta
 
-    // Nothing is being followed, so the camera looks straight down the track. The menu's world is
-    // the run's world at a little over half speed and with no snail on it yet — the mascot's
-    // menu appearance is chunk 7's, and it goes here.
-    this.world.advance(delta, 0.5)
+    // The camera leans towards the mascot exactly as it does in a run, so the one object the
+    // picture is about is also the one the frame is composed around.
+    this.world.advance(delta, 0.5 + this.mascotState.offsetX * 0.5)
     this.world.render(width, height)
 
-    // One framebuffer read per frame at most, and only while a measurement is outstanding.
-    this.contrast.update(() => this.applyContrast())
+    // After the world, never before: it reads this frame's segment projections out of the mesh pass.
+    this.mascot.render(
+      this.mascotState,
+      this.world.track,
+      this.world.baseIndex,
+      // Stood further up the road than a run stands it — see `MASCOT.zScale`. `PlayerView` adds
+      // `PLAYER_Z` to whatever it is handed, so the extra distance goes in here rather than in a
+      // second knob on a class that must not learn about menus.
+      this.world.cameraZ + PLAYER_Z * (MASCOT.zScale - 1),
+      width,
+      height,
+      this.idleSquash(),
+      this.world.cameraZ,
+    )
+    this.mascot.sprite.setAngle(this.idleAngle())
+  }
+
+  /** The breath, plus the rise of a glance. One scalar, the same one the jump uses. */
+  private idleSquash(): number {
+    const breath = Math.sin((this.elapsedMs / IDLE.breath.periodMs) * Math.PI * 2) * IDLE.breath.amount
+
+    return 1 + breath + this.glance() * IDLE.glance.rise
+  }
+
+  /** The sway, plus the tilt of a glance. */
+  private idleAngle(): number {
+    const sway = Math.sin((this.elapsedMs / IDLE.sway.periodMs) * Math.PI * 2) * IDLE.sway.degrees
+
+    return sway + this.glance() * IDLE.glance.degrees
   }
 
   /**
-   * Applies what the probe measured: the text colour, and how dark each plate has to be.
+   * `0..1` over the glance's own window, and exactly 0 outside it.
    *
-   * Both scrims fade in rather than appearing, because the measurement finishes somewhere inside
-   * the entry cascade and a plate that popped would be the one part of the screen that did.
+   * A half-sine rather than a ramp, for the reason the sun's glint is one: a linear rise shows its
+   * corners and reads as the sprite being switched rather than as the creature moving.
    */
-  private applyContrast(): void {
-    const title = this.contrast.titleResult
-    const buttons = this.contrast.buttonResult
+  private glance(): number {
+    const into = this.elapsedMs % IDLE.glance.periodMs
 
-    if (!title || !buttons) return
-
-    this.title.setColor(toCssColor(title.textColor))
-    this.titleScrim.setTint(this.contrast.scrimColor)
-    this.buttonScrim.setTint(this.contrast.scrimColor)
-
-    for (const [scrim, alpha] of [
-      [this.titleScrim, title.alpha],
-      [this.buttonScrim, buttons.alpha],
-    ] as const) {
-      if (alpha <= 0) {
-        scrim.setAlpha(0)
-        continue
-      }
-      this.tweens.add({ targets: scrim, alpha, duration: ENTRY.title.duration, ease: 'Cubic.easeOut' })
-    }
+    return into < IDLE.glance.durationMs ? Math.sin((into / IDLE.glance.durationMs) * Math.PI) : 0
   }
 
   layout(width: number, height: number): void {
@@ -468,40 +594,43 @@ export class MainMenu extends Phaser.Scene {
     this.uiCamera.setViewport(0, 0, width, height)
     this.world.layout(width, height)
 
+    // **The mascot is boosted on a narrow frame, and it is the one object here allowed to be.**
+    // Everything on this road is sized off the frame's WIDTH — which is what keeps an object the
+    // same size relative to the road at every aspect, and which makes the snail a fifth of its
+    // desktop size on a phone. That is correct for a hitbox and wrong for the subject of a
+    // picture, so the front screen borrows `readableScale`: the same rule, for the same reason, in
+    // the only other place a sprite and a box need not agree.
+    this.mascot.setSizeScale(mascotScale() * readableScale(width))
+
     this.layoutTitle(width, height, scale)
-
     this.layoutButtons(width, height, scale)
-
-    // Sized around what they back, after both have their final size and position.
-    layoutScrim(this.titleScrim, this.title.getBounds())
-    layoutScrim(
-      this.buttonScrim,
-      rectAround([this.playButton.container, ...this.secondaryButtons().map((button) => button.container)]),
-    )
-
-    // The probe samples where the text ended up, so it has to be told after every layout — a
-    // resize can move a block from clear sky onto a hillside.
-    this.contrast.setRegions({
-      title: this.title.getBounds(),
-      // The *leftmost* secondary, taken from the accessor rather than named: the probe measures the
-      // band the block actually occupies, and a region that stops short of a button solves the
-      // plate against a background that button is not sitting on.
-      buttons: rectAround([this.playButton.container, this.secondaryButtons()[0].container]),
-    })
+    this.layoutCorner(width, scale)
   }
 
   /**
-   * Sets the wordmark inside the title band, shrinking it to fit that band's height and the
-   * frame's width.
+   * Sets the wordmark inside the title band.
    *
-   * Measured off the drawn text rather than the nominal font size, and applied in a second pass:
-   * a `Text` object's height is a property of the font's metrics, not of the size asked for, so
-   * the only honest way to know whether it fits is to set it and look.
+   * **⚠ The title is what shrinks, and the Play button is what does not.** The band's fit is applied
+   * here and `layoutButtons` has no fit of its own beyond the touch floor — if the frame is too
+   * short for both, the thing the player came to press keeps its size and the decoration gives way.
+   * That is the reverse of the old order, where a single stack fit shrank Play along with everything
+   * else on a landscape phone.
+   *
+   * Measured off the drawn text rather than the nominal font size, in a second pass: a `Text`
+   * object's height is a property of the font's metrics, not of the size asked for, so the only
+   * honest way to know whether it fits is to set it and look.
    */
   private layoutTitle(width: number, height: number, scale: number): void {
     const band = titleBand(height)
+    const setSize = (size: number): void => {
+      this.title.setFontSize(size)
+      // Both are fractions of the face, so a title shrunk to fit keeps its own proportions rather
+      // than turning into a thin letter inside a fixed-width stroke.
+      this.title.setStroke(toCssColor(INK), size * TITLE_INK.stroke)
+      this.title.setShadow(0, size * TITLE_INK.shadowY, toCssColor(INK), 0, true, true)
+    }
 
-    this.title.setFontSize(TITLE_FONT_SIZE * scale)
+    setSize(TITLE_FONT_SIZE * scale)
 
     const fit = Math.min(
       1,
@@ -509,97 +638,97 @@ export class MainMenu extends Phaser.Scene {
       (width * TITLE_MAX_WIDTH_FRACTION) / this.title.width,
     )
 
-    if (fit < 1) this.title.setFontSize(TITLE_FONT_SIZE * scale * fit)
+    if (fit < 1) setSize(TITLE_FONT_SIZE * scale * fit)
 
-    // Left-aligned at a fraction of the width rather than centred: the mascot gets the right of
-    // the frame (chunk 7), so the two sit on a diagonal and the vanishing point stays clear.
-    this.title.setPosition(width * TITLE_LEFT_FRACTION, band.centre)
+    // Left-aligned rather than centred: the mascot has the right of the frame, so the two sit on a
+    // diagonal and the vanishing point between them stays clear.
+    const left = SIDE_MARGIN * scale + this.title.height * 0.1
+
+    // **And pushed down where the sun is in the way**, which on a portrait phone it is — see
+    // `titleRow`. On a landscape frame the two never overlap and this returns the band's centre.
+    this.title.setPosition(left, titleRow(width, height, { left, width: this.title.width, height: this.title.height }))
   }
 
   /**
-   * Stacks the three buttons inside the button band, shrinking them if the band is shorter than
-   * the stack.
+   * The primary action and the record, on the bare near ground.
    *
-   * The second pass is not optional. At 844x390 the band is 86px tall and the stack at its
-   * nominal sizes is 96px — every element inside the frame, and the last one 10px below the safe
-   * line. `uiScale` cannot catch that: it scales on *width*, and 844 is a wide viewport.
+   * Both are centred: the button is the one thing on the screen the player is meant to hit, and the
+   * centre of the near ground is the easiest place on a phone to hit with either thumb. The mascot
+   * is what moves out of the way — it stands off the centreline in `MASCOT.offsetX` and, being in
+   * the middle distance, sits a band above this one.
    */
   private layoutButtons(width: number, height: number, scale: number): void {
     const band = buttonBand(height)
-    const secondaries = this.secondaryButtons()
-    const apply = (factor: number) => {
-      this.playButton.setFontSize(PLAY_FONT_SIZE * scale * factor)
-      this.playButton.setMinWidth(PLAY_MIN_WIDTH * scale * factor)
-      for (const button of secondaries) button.setFontSize(SECONDARY_FONT_SIZE * scale * factor)
-    }
-    const secondaryHeight = () => Math.max(...secondaries.map((button) => button.height))
-    const secondaryWidth = (factor: number) =>
-      secondaries.reduce((total, button) => total + button.width, 0) + SECONDARY_GAP * scale * factor * 2
 
-    apply(1)
-
-    let gap = BUTTON_GAP * scale
-    let stack = this.playButton.height + gap + secondaryHeight()
-    // **Two fits, not one, because the row grew a third button.** The height fit has always been
-    // needed — `uiScale` scales on *width*, so a landscape phone keeps a full-size stack in an 86px
-    // band. The width fit is new: three secondaries at their nominal size are 259px on a 390px
-    // frame with the margins the rest of the screen is laid out to, and the first thing that
-    // overflows is the one furthest from the centre. Both are the same lever, so the smaller wins.
-    const available = width - SIDE_MARGIN * 2 * scale
-    const fit = Math.min(
-      stack > band.height ? band.height / stack : 1,
-      secondaryWidth(1) > available ? available / secondaryWidth(1) : 1,
+    this.playButton.setFontSize(PLAY_FONT_SIZE * scale)
+    this.playButton.setMinWidth(
+      Math.min(
+        Math.max(width * PLAY_WIDTH.fraction, PLAY_WIDTH.min * scale),
+        PLAY_WIDTH.max,
+        width - SIDE_MARGIN * 4 * scale,
+      ),
     )
+    const face = RECORD_FONT_SIZE * scale
 
-    if (fit < 1) {
-      apply(fit)
-      gap *= fit
-      stack = this.playButton.height + gap + secondaryHeight()
-    }
+    this.record.setFontSize(face)
+    // The outline, and a shadow under it, are the whole of what keeps this legible now the strip is
+    // gone — see `RECORD_INK`. Re-applied per layout because both are stated against the face.
+    this.record.setStroke(toCssColor(INK), face * RECORD_INK.stroke)
+    this.record.setShadow(0, face * RECORD_INK.shadowY, toCssColor(INK), 0, true, true)
 
+    const stack = this.playButton.height + RECORD_GAP * scale + this.record.height
     const top = band.centre - stack / 2
-    const playY = top + this.playButton.height / 2
-    const secondaryY = top + stack - secondaryHeight() / 2
-    const spacing = SECONDARY_GAP * scale * fit
-    const rowWidth = secondaryWidth(fit)
 
-    this.playButton.container.setPosition(width / 2, playY)
+    this.playButton.container.setPosition(width / 2, top + this.playButton.height / 2)
+    this.record.setPosition(width / 2, top + this.playButton.height + RECORD_GAP * scale)
+  }
 
-    let cursor = width / 2 - rowWidth / 2
+  /**
+   * The two icons, in the top-right corner, at half the primary's weight.
+   *
+   * The corner is the one part of the frame a run's HUD leaves to the *right* of its own gauge, and
+   * it is as far from the primary action as the screen allows — which is the point: a secondary
+   * control that shares a zone with the primary one is competing with it.
+   */
+  private layoutCorner(width: number, scale: number): void {
+    const margin = SIDE_MARGIN * scale
+    const gap = 8 * scale
+    let right = width - margin
 
-    for (const button of secondaries) {
-      button.container.setPosition(cursor + button.width / 2, secondaryY)
-      cursor += button.width + spacing
+    for (const button of this.cornerButtons()) {
+      button.setFontSize(ICON_FONT_SIZE * scale)
+      button.container.setPosition(right - button.width / 2, margin + button.height / 2)
+      right -= button.width + gap
     }
 
-    // No `ensureMinHitArea` call here, and that is not an omission: `neonButton` floors its own
-    // core box *and* its hit area at `MIN_TOUCH_TARGET` on every `setFontSize`, with the
-    // Container-origin correction that helper cannot do (see CLAUDE.md "UI Kit"). Calling it on
-    // a Container would build the hit area in the wrong frame and move every tap target by half
-    // a button. The floor is asserted per viewport in the menu's own acceptance instead.
+    // A dot on the shop, drawn rather than a texture, and only when the shop can actually do
+    // something for the player right now — see `shopHasNews`.
+    const shop = this.shopButton.container
+    const radius = Math.max(4, 5 * scale)
+
+    this.shopBadge.clear()
+    this.shopBadge.setAlpha(shop.alpha)
+
+    if (this.shopHasNews()) {
+      this.shopBadge.fillStyle(KIT.plate, 1)
+      this.shopBadge.fillCircle(shop.x + this.shopButton.width / 2, shop.y - this.shopButton.height / 2, radius * 1.5)
+      this.shopBadge.fillStyle(KIT.coin, 1)
+      this.shopBadge.fillCircle(shop.x + this.shopButton.width / 2, shop.y - this.shopButton.height / 2, radius)
+    }
   }
 }
 
-/** How far past the text a plate spreads, as a multiple of the block's own size. */
-const SCRIM_PADDING = { x: 1.3, y: 2.1 } as const
-
-/** Sizes and centres one scrim on the block it backs. */
-function layoutScrim(scrim: Phaser.GameObjects.Image, bounds: Phaser.Geom.Rectangle): void {
-  scrim.setPosition(bounds.centerX, bounds.centerY)
-  scrim.setDisplaySize(bounds.width * SCRIM_PADDING.x, bounds.height * SCRIM_PADDING.y)
+/** A kit button's real drawn box, centred on its container. */
+function boxOf(button: KitButton): { x: number; y: number; width: number; height: number } {
+  return {
+    x: button.container.x - button.width / 2,
+    y: button.container.y - button.height / 2,
+    width: button.width,
+    height: button.height,
+  }
 }
 
 /** A `Rectangle` as plain numbers, for the DEV hook to hand out. */
 function rectOf(rect: Phaser.Geom.Rectangle): { x: number; y: number; width: number; height: number } {
   return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
 }
-
-/** The rectangle enclosing several game objects, in screen pixels. */
-function rectAround(objects: readonly Phaser.GameObjects.Container[]): Phaser.Geom.Rectangle {
-  const rect = objects[0].getBounds()
-
-  for (const object of objects.slice(1)) Phaser.Geom.Rectangle.Union(rect, object.getBounds(), rect)
-
-  return rect
-}
-

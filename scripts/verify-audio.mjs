@@ -3,6 +3,7 @@
 // (the lock scale and the repeat policy). Neither imports phaser. Plain assertions, no
 // framework, via the register-ts-loader.mjs + ts-extensionless-loader.mjs setup.
 import assert from 'node:assert/strict'
+import { existsSync, statSync } from 'node:fs'
 import {
   encodeWav,
   FADE_TEARDOWN_GAP_MS,
@@ -24,6 +25,7 @@ import {
   renderSfxUris,
   SFX,
   SFX_ASSETS,
+  SFX_FILES,
   VARIATION_CENTS,
 } from '../src/audio/sfx.ts'
 
@@ -138,12 +140,44 @@ check('every sound renders to a playable data URI, and none is absurdly large', 
   console.log(`    ${uris.length} sounds, ${Math.round(total / 1024)}KB of base64 in total, zero bytes in the bundle`)
 })
 
-check('every declared key has an asset, and vice versa', () => {
+check('every declared key is either rendered or shipped, and never both', () => {
+  // **Two sources now, and the failure this guards is a key with neither.** Most sounds are
+  // arithmetic; two are CC0 recordings, because a waveform cannot sound like an object being struck
+  // (see `SFX_FILES`). A key in *both* lists would load twice into one cache entry, and a key in
+  // neither is a `playSfx` that throws on a missing key at the moment it is wanted.
   const declared = new Set(Object.values(SFX))
   const rendered = new Set(SFX_ASSETS.map((a) => a.key))
+  const shipped = new Set(Object.keys(SFX_FILES))
 
-  for (const key of declared) assert.ok(rendered.has(key), `${key} is declared in SFX but never rendered`)
+  for (const key of declared) {
+    const sources = (rendered.has(key) ? 1 : 0) + (shipped.has(key) ? 1 : 0)
+
+    assert.equal(sources, 1, `${key} has ${sources} sources — it must be rendered or shipped, exactly one`)
+  }
   for (const key of rendered) assert.ok(declared.has(key), `${key} is rendered but not declared in SFX`)
+  for (const key of shipped) assert.ok(declared.has(key), `${key} is shipped but not declared in SFX`)
+  console.log(`    ${rendered.size} rendered, ${shipped.size} shipped, ${declared.size} declared`)
+})
+
+check('⚠ every shipped sound is actually on disk, and small enough to be one', () => {
+  // A path that does not exist is a 404 during the loading screen and a throw at the moment the
+  // sound is wanted -- and the loader's own error handler stops the handover, so a typo here is a
+  // game that never reaches the menu. Checked against the file system rather than trusted, because
+  // nothing else in the build looks at these strings.
+  let bytes = 0
+
+  for (const [key, path] of Object.entries(SFX_FILES)) {
+    const file = `public/assets/${path}`
+
+    assert.ok(existsSync(file), `${key} points at ${file}, which is not there`)
+    const size = statSync(file).size
+
+    // Not a budget so much as a shape check: these are one-shot effects, and anything approaching a
+    // hundred kilobytes is a music loop that has been filed in the wrong place.
+    assert.ok(size > 0 && size < 100 * 1024, `${file} is ${size} bytes — that is not a one-shot effect`)
+    bytes += size
+  }
+  console.log(`    ${Object.keys(SFX_FILES).length} shipped sounds, ${(bytes / 1024).toFixed(1)}KB in total`)
 })
 
 console.log('src/audio/synth.ts -- the fade teardown gap')

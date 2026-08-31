@@ -32,9 +32,17 @@ export interface ActionSources {
    * full-screen rectangle to `setInteractive()` would put a click-swallowing object over
    * everything (the same argument `bindHeldAction`'s `screenBand` makes).
    *
-   * **The slop test is what lets this share a pointer with steering.** A steer is a drag; a jump
-   * is a tap; `isTap` is the same rule the shop's scrolling rows already use to tell one from the
-   * other, so the two gestures compose on one finger instead of competing for it.
+   * **The slop test is what lets this share a pointer with steering — on a finger.** A touch steer
+   * is a drag and a touch jump is a tap; `isTap` is the same rule the shop's scrolling rows use to
+   * tell one from the other, so the two gestures compose on one finger instead of competing.
+   *
+   * **⚠ A mouse fires on the PRESS, and the reason is `bindSteering`'s own rule.** A mouse steers by
+   * where it *is* — hovering is the input, the button plays no part — so a mouse press has nothing
+   * to be ambiguous with, and waiting for the release was pure latency. Reported as the left button
+   * responding worse than the space bar, which understates it: the release also had to land within
+   * `TAP_SLOP_PX` of the press, and on a desktop the mouse is *moving*, because moving it is how
+   * the snail is steered. So a click taken mid-dodge — the moment a jump is most wanted — did not
+   * merely arrive late, it did not arrive at all.
    */
   screenTap?: boolean
 }
@@ -72,11 +80,21 @@ export function bindAction(scene: Phaser.Scene, action: string, sources: ActionS
     const pressedAt = new Map<number, { x: number; y: number }>()
 
     const onDown = (pointer: Phaser.Input.Pointer) => {
+      // **A mouse fires here and a finger fires on release**, which is the same split
+      // `bindSteering` makes and for the same reason: a mouse steers by hovering, so its button is
+      // free and a press means one thing only. A finger steers by being held, so every steer starts
+      // with a press and only the release can tell a jump from a dodge. See `screenTap`.
+      if (!pointer.wasTouch) {
+        guarded()
+
+        return
+      }
       pressedAt.set(pointer.id, { x: pointer.x, y: pointer.y })
     }
     const onUp = (pointer: Phaser.Input.Pointer) => {
       const start = pressedAt.get(pointer.id)
 
+      // Nothing is recorded for a mouse, so this cannot fire twice for one click.
       pressedAt.delete(pointer.id)
       if (start && isTap(pointer.x - start.x, pointer.y - start.y, TAP_SLOP_PX)) guarded()
     }

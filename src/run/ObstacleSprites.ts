@@ -9,8 +9,8 @@ import { billboardAppear, billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, ROAD_W
 import type { Segment } from '../road/track'
 import { createObstacleTextures, obstacleTextureKey } from './obstacleArt'
 import { WORLD_LAYER, worldDepth } from './worldDepth'
-import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowScale } from './shadows'
-import type { Obstacle } from './obstacles'
+import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowClipFade, shadowScale } from './shadows'
+import { OBSTACLE_POOL_SIZE, type Obstacle } from './obstacles'
 
 /** What one pool slot is currently showing, so a frame can skip work it does not need. */
 interface SlotState {
@@ -18,27 +18,23 @@ interface SlotState {
   /**
    * The shadow, owned by the same slot as the sprite it belongs to.
    *
-   * Only an `overhead` ever shows one: `low` and `blocking` sit on the road, and a shadow under
-   * something already touching the ground is a dark rim nobody can read. Kept as a field rather
-   * than a second pool for the reason `PickupSprites` states — two pools filled in the same order
-   * on every frame is a desync waiting to happen, and its symptom is a shadow with no object.
+   * **⚠ Nothing casts one today, and the condition is kept rather than the code deleted.** The rule
+   * is `yLow > 0` — an obstacle standing off the road throws a mark on it — and the only class that
+   * ever did was `overhead`, which is gone. `low` and `blocking` sit on the road, and a shadow
+   * under something already touching the ground is a dark rim nobody can read. The branch is three
+   * lines, evaluates false, and is what any future floating class would need; `verify:obstacles`
+   * asserts every band starts at zero, so it cannot go stale unnoticed.
+   *
+   * Kept as a field rather than a second pool for the reason `PickupSprites` states — two pools
+   * filled in the same order on every frame is a desync waiting to happen, and its symptom is a
+   * shadow with no object.
    */
   shadow: Phaser.GameObjects.Ellipse
   key: string
   cropped: boolean
 }
 
-/**
- * How many obstacles may be on screen at once.
- *
- * **The pool never grows**, the same guarantee `RoadSprites` makes and for the same reason: a pool
- * that allocates on demand turns a busy moment into a texture-upload stall at exactly the moment
- * the frame is already the most expensive. At the placer's tightest spacing (8.1 segments) and
- * three obstacles a row, the 300-segment draw distance holds 37 rows — but almost all of them are
- * a few pixels tall near the horizon, and `wantedLastFrame` reports the real demand so the ceiling
- * can be checked against measurement rather than against arithmetic.
- */
-export const OBSTACLE_POOL_SIZE = 48
+export { OBSTACLE_POOL_SIZE }
 
 /**
  * Every obstacle on screen, drawn from a fixed pool of `Image`s.
@@ -205,7 +201,7 @@ export class ObstacleSprites {
             )
           : null
 
-        this.place(this.slots[used], key, rect, visible, n, (obstacle.id & 1) === 1, shadowRect, obstacle.yLow)
+        this.place(this.slots[used], key, rect, visible, n, (obstacle.id & 1) === 1, shadowRect, obstacle.yLow, clip)
         if (import.meta.env.DEV) {
           this.drawnIds.push({
             id: obstacle.id,
@@ -213,8 +209,12 @@ export class ObstacleSprites {
             distanceIndex: n,
           })
         }
-        if (import.meta.env.DEV && shadowRect) {
-          this.shadowMarks.push({ x: shadowRect.x, y: shadowRect.y, owner: `${obstacle.kind}#${obstacle.id}` })
+        if (import.meta.env.DEV && this.slots[used].shadow.visible) {
+          this.shadowMarks.push({
+            x: this.slots[used].shadow.x,
+            y: this.slots[used].shadow.y,
+            owner: `${obstacle.kind}#${obstacle.id}`,
+          })
         }
         used++
       }
@@ -255,19 +255,22 @@ export class ObstacleSprites {
     flipX: boolean,
     shadowRect: { x: number; y: number; w: number; h: number } | null,
     height: number,
+    clip: number,
   ): void {
     const image = slot.image
 
-    if (shadowRect) {
-      const scale = shadowScale(height)
+    const scale = shadowScale(height)
+    const markHeight = shadowRect ? shadowRect.w * SHADOW_FOOTPRINT.height * scale : 0
+    // **The hill clips the mark as well as the object** -- see `shadowClipFade`. A crest hides a
+    // billboard from the bottom up, so the ground under an overhead is the LAST part of it to
+    // come out from behind the ridge, and it was the only part never clipped at all.
+    const clipped = shadowRect ? shadowClipFade(shadowRect.y, markHeight, clip) : 0
 
+    if (shadowRect && clipped > 0) {
       slot.shadow.setVisible(true)
       slot.shadow.setPosition(shadowRect.x, shadowRect.y)
-      slot.shadow.setSize(
-        shadowRect.w * SHADOW_FOOTPRINT.width * scale,
-        shadowRect.w * SHADOW_FOOTPRINT.height * scale,
-      )
-      slot.shadow.setAlpha(shadowAlpha(height) * SHADOW_DARKEN)
+      slot.shadow.setSize(shadowRect.w * SHADOW_FOOTPRINT.width * scale, markHeight)
+      slot.shadow.setAlpha(shadowAlpha(height) * SHADOW_DARKEN * clipped)
       slot.shadow.setDepth(worldDepth(distanceIndex, WORLD_LAYER.shadow))
     } else {
       slot.shadow.setVisible(false)

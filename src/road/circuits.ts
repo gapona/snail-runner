@@ -23,6 +23,14 @@ import { TrackBuilder, type Segment } from './track'
 const S_ARM = ROAD_LENGTH.MEDIUM * 3
 
 /**
+ * `addLowRollingHills`' own default length, written out because the run passes it a height.
+ *
+ * Spelled out rather than left to the default so the *length* is visibly unchanged while the height
+ * halves — the lap is 1434 segments and a great deal downstream is divided by that.
+ */
+const ROLLING_LENGTH = ROAD_LENGTH.SHORT * 3
+
+/**
  * The run's circuit: a run-up, one hard bend, a rolling stretch, then a long gentle S.
  *
  * **⚠ It used to end with `addSCurve()`, and that made one stretch of the lap nearly unfightable.**
@@ -41,19 +49,59 @@ const S_ARM = ROAD_LENGTH.MEDIUM * 3
  * **The single hard bend stays.** It is one section long, not three, and it measured clean — the
  * lesson is about how long a bend lasts relative to the draw distance, not about how tight it is.
  *
+ * ## ⚠ The hills are half what they were, and the reason is the mascot
+ *
+ * **A descent drops the ground out from under the player, and past a point off the bottom of the
+ * frame.** The snail stands `PLAYER_Z` ahead of the camera on the road's own surface, so on a
+ * downhill it is drawn below its flat row by `CAMERA_DEPTH * gradient / 2` of the frame's height —
+ * a figure that does *not* depend on how far ahead it stands, because the distance cancels. At the
+ * old heights that was **17.6% of the frame**, and the mascot went out of sight on the steepest
+ * crest. Reported with a screenshot of a hill.
+ *
+ * That number is the only thing bounding how near the camera the snail may stand, and standing it
+ * nearer is the one way to draw it bigger without touching a hitbox — see `PLAYER_REST_Y_FRACTION`.
+ * So the run's own hills are halved: `ROAD_HILL.MEDIUM` becomes `LOW` on the S-arms and the rolling
+ * stretch is given half its default height. Peak gradient **0.419 -> 0.209**, drop **17.6% -> 8.8%**,
+ * and the mascot goes from 44px to 54px on a 375px frame with the collision box untouched.
+ *
+ * **⚠ Halving the arms was not enough on its own, and the thing that was left is not a hill.** With
+ * the arms at `LOW` the steepest descent on the lap became `TrackBuilder.build()`'s own **closing
+ * section** — the run-back-to-zero it appends when the composed sections do not end level, whose
+ * length is `4` segments per height unit however steep that makes it. At a net of `+20` that is 80
+ * segments for 4000 units of drop: gradient **0.393**, i.e. almost exactly what had just been taken
+ * out. So the arms are composed to **sum to zero**, there is no closing section at all, and the
+ * steepest thing on the lap is a hill somebody chose.
+ *
+ * **The lap is 1452 segments rather than 1434**, and the opening straight is what makes it so.
+ * Dropping the closing section took 84 segments off, which left the lap at 1350 — nine biomes of
+ * exactly 150 against a floor of exactly 150, i.e. a lap sitting on a limit with no headroom at
+ * all. The run-up is `ROAD_LENGTH.LONG * 2` instead, which puts the biomes back at 161 each and
+ * spends the extra road on the one stretch of the circuit that has nothing to do with hills.
+ * `verify:road` re-measures the biome division and the sightline over the new shape.
+ *
+ * **`addLowRollingHills` itself is untouched**, and passing it a height rather than editing the
+ * preset is why: the menu circuit uses the same preset, has no player standing on it, and has no
+ * reason to be flattened.
+ *
+ * ⚠ This is an edit inside `src/road/`, which the fork does not modify. The three reasons that rule
+ * gives are the projection, the depth budget and billboards agreeing with the ground — a circuit's
+ * *composition* touches none of them, and `verify:road`'s 93 checks (loop closure, the sightline
+ * floor, the biome division) are what make that safe rather than merely arguable. Same standing as
+ * the `themes.ts` palette change.
+ *
  * `build()` appends whatever closing section is needed to bring the road back to height zero and
  * pads to a whole rumble cycle — see `TrackBuilder.build()`.
  */
 export function buildRunCircuit(): Segment[] {
   return new TrackBuilder()
-    .addStraight(ROAD_LENGTH.LONG)
+    .addStraight(ROAD_LENGTH.LONG * 2)
     .addCurve(ROAD_LENGTH.MEDIUM, ROAD_CURVE.HARD)
-    .addLowRollingHills()
+    .addLowRollingHills(ROLLING_LENGTH, ROAD_HILL.LOW / 2)
     .addCurve(S_ARM, -ROAD_CURVE.EASY, ROAD_HILL.NONE)
-    .addCurve(S_ARM, ROAD_CURVE.EASY, ROAD_HILL.MEDIUM)
+    .addCurve(S_ARM, ROAD_CURVE.EASY, ROAD_HILL.LOW)
     .addCurve(S_ARM, ROAD_CURVE.EASY, -ROAD_HILL.LOW)
-    .addCurve(S_ARM, -ROAD_CURVE.EASY, ROAD_HILL.MEDIUM)
-    .addCurve(S_ARM, -ROAD_CURVE.EASY, -ROAD_HILL.MEDIUM)
+    .addCurve(S_ARM, -ROAD_CURVE.EASY, ROAD_HILL.LOW)
+    .addCurve(S_ARM, -ROAD_CURVE.EASY, -ROAD_HILL.LOW)
     .build()
 }
 

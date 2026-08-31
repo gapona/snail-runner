@@ -7,8 +7,18 @@ import { showInterstitial, showRewarded } from './platform/adGate'
 import { init as initSaveStore, bindAutosave } from './save/store'
 import { init as initAudio } from './audio/audio'
 import { initLocale } from './i18n/strings'
+import { initDisplayFont, whenDisplayFontReady } from './ui/font'
+
+/**
+ * How long boot waits for the display face before starting without it.
+ *
+ * Long enough that a warm cache is always inside it — the file is 10.7KB — and short enough that a
+ * cold 3G connection does not hold the first frame hostage to a typeface.
+ */
+const DISPLAY_FONT_GRACE_MS = 200
 import { setCatalog } from './shop/catalog'
 import { buildThemeCatalog, resolveSelectedTheme } from './shop/themeCatalog'
+import { buildSnailCatalog } from './shop/snailCatalog'
 import { setRoadTheme } from './road/themes'
 import { UI_THEME_COLORS } from './ui/kitPalette'
 import { setTheme } from './ui/theme'
@@ -24,15 +34,37 @@ await initSaveStore()
 // synchronously in the same tick as Boot/Preloader (see yt.ts's gameReady()-queuing note for
 // an instant/asset-less Preloader).
 await initLocale()
+// **Awaited here for the same reason `initLocale` is**: a Canvas/WebGL `Text` does not repaint
+// when a web font arrives after it has already drawn with a fallback, so the face has to be in
+// `document.fonts` before the first scene creates its first label.
+//
+// **A local file, never a CDN link.** Playables is offline-only and its CSP blocks the request;
+// `ui/font.ts` uses the `FontFace` API against a file under `public/assets/` for exactly that.
+// Titan One is OFL — see ART-SOURCES.md — and is the one face in the game with enough weight to
+// hold the title's outline. Never blocks boot: `initDisplayFont` swallows its own failures.
+// **⚠ RACED, NOT AWAITED, AND THE 200ms IS THE WHOLE POINT.** This used to be a bare `await`, which
+// put a font file in front of `new Phaser.Game(...)` — i.e. in front of the loading screen itself.
+// A loading screen is judged by how fast it appears; a face that has not arrived in 200ms is one
+// the first screen draws its title *without*, and `Preloader` adds the title the moment
+// `whenDisplayFontReady()` resolves. The promise is kept inside `ui/font.ts`, so nothing is lost by
+// not awaiting it here.
+void initDisplayFont({ family: 'Titan One', url: 'assets/fonts/titan-one.woff2' })
+await Promise.race([whenDisplayFontReady(), new Promise((resolve) => setTimeout(resolve, DISPLAY_FONT_GRACE_MS))])
 
 // The real catalogue, registered unconditionally — the template's DEV-gated demo items existed
 // only because the bare template had nothing to sell.
 //
-// **Themes are the whole catalogue now.** The rail shooter sold weapons, upgrade steps, hulls and
-// a fourth loadout slot alongside them; all four went with the combat layer, and none of them had
-// an equivalent in a runner whose only verb is "keep going". What is left is the one kind of item
-// that was always a pure `'unlock'` — a look for the road.
-setCatalog(buildThemeCatalog())
+// **Two kinds of look, and that is the whole catalogue.** The rail shooter sold weapons, upgrade
+// steps, hulls and a fourth loadout slot alongside the themes; all four went with the combat layer,
+// and none of them had an equivalent in a runner whose only verb is "keep going". What is left is
+// the kind of item that was always a pure `'unlock'`: a look for the road, and a look for the snail
+// running down it.
+//
+// **The snails come first, and the order is the tab order** — `Shop.ts` groups by first appearance
+// rather than having an opinion of its own. A player looks at the character before they look at the
+// scenery, and the free skin standing in row one is what says the tab is a wardrobe rather than a
+// paywall.
+setCatalog([...buildSnailCatalog(), ...buildThemeCatalog()])
 
 // The interface palette, before any scene creates a widget: every factory in `ui/theme.ts` reads
 // `getTheme()` at *creation* time, so a widget already on screen never retints itself. The

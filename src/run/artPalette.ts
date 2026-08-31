@@ -125,12 +125,10 @@ export const SNAIL_BODY = { light: 0xd7e86a, mid: 0xb6cf42, dark: 0x7c9a28 } as 
  * 32% / 16% / 37% mean saturation against the mascot's 70%.
  */
 export const OBSTACLE_MATERIALS = {
-  /** Sun-bleached sandstone and straw — the low course of blocks, the bales, the barrels. */
+  /** Sun-bleached stone: the low barrier block, and the brightest of the three. */
   low: { light: 0xdcc5a0, mid: 0xa89070, dark: 0x413729 },
-  /** Weathered crate timber and pale granite — whichever upright variant a row draws. */
-  blocking: { light: 0xada695, mid: 0x7d766a, dark: 0x2f2c26 },
-  /** Bark: the darkest of the three, because it is read against sky rather than against road. */
-  overhead: { light: 0x9d8869, mid: 0x6f5f47, dark: 0x2b2519 },
+  /** Weathered grey timber: the upright panel, whichever variant a row draws. */
+  blocking: { light: 0xb6b6b0, mid: 0x82827c, dark: 0x31312c },
 } as const
 
 /**
@@ -151,5 +149,64 @@ export const OBSTACLE_MATERIALS = {
 export const PICKUP_COLORS = {
   fruit: { light: 0xe3b6f5, mid: 0xa964d8, dark: 0x5d2f80 },
   shield: { light: 0x9df2a1, mid: 0x4fc663, dark: 0x1f6b34 },
-  coin: { light: 0xffd964, mid: 0xf0b024, dark: 0x8f5f0e },
+  coin: { light: 0xffd35a, mid: 0xf2b526, dark: 0xc07a10 },
+} as const
+
+/**
+ * The bug: chitin, and two eyes.
+ *
+ * **It is separated from the obstacles by VALUE, which is the one axis that survives this road.**
+ * The rule the barrier family is held to — classes at least 12 lightness apart, because the distance
+ * haze and the biome tint take hue away before they take brightness — applies with more force here,
+ * since a critter is met at the sizes a `low` block is and must never be mistaken for one. It is the
+ * darkest thing the game draws on the road: **57 lightness against sun-bleached stone at 134 and
+ * weathered timber at 120**, on a surface that is warm pale flagstone.
+ *
+ * **And it is deliberately NOT saturated, which is the opposite of what a hazard wants to be.**
+ * Colour in this game means "come and get it" — the mascot and the pickups own it, at 70% and 61%
+ * against the barriers' 19% — so a vivid bug would be the first thing on the road a player steers
+ * *towards*. Measured, this sits at **18%**, below the barriers it has to be told apart from and a
+ * quarter of the mascot's. What makes a critter noticeable instead is the one cue nothing else in
+ * the frame has: it is the only object that moves against the road rather than with it.
+ *
+ * **The eyes are the whole of the "this is alive" read**, and they are near-neutral on purpose. Two
+ * pale dots on a dark head is what a player resolves at the 20px a phone delivers, long after the
+ * legs have gone; giving them a hue would spend a colour the reward family is using.
+ */
+export const CRITTER_COLORS = {
+  /** The lit top of the carapace. */
+  light: 0x655a66,
+  /** The shell's own body, and the legs. */
+  mid: 0x3b323d,
+  /** Under the shell and along the seam — below `INK_LIGHTNESS`, like every other `dark` band. */
+  dark: 0x1e181f,
+  /** Two dots, and nothing else in the drawing is this bright. */
+  eye: 0xdfe6ea,
+} as const
+
+/**
+ * The bee: the one hazard in this game allowed to be loud.
+ *
+ * **⚠ It breaks the rule the beetle's own palette states, and the exception is the point.** Colour
+ * here means "come and get it" — the mascot and the pickups own it, and a critter was deliberately
+ * drawn at 18% saturation so a player would never steer *towards* one. A bee is the opposite kind of
+ * object: it is the thing you must not fly into, and unlike a beetle it cannot be read from its
+ * position on the road, because it is not on the road. Its whole warning is its own surface.
+ *
+ * So it wears the one pattern that means "do not touch this" outside any game — **black and amber
+ * banding** — and that is a real cost, stated rather than hidden: amber is the mascot's own shell
+ * hue. What keeps the two apart is value and context. The mascot is `SNAIL_SHELL` at 141 lightness
+ * on the road; the bee's body is 92, its bands sit against near-black, and it is the only object in
+ * the game drawn *above* the road. `verify:critters` holds it clear of the reserved threat band and
+ * measures the separation from the mascot rather than trusting it.
+ */
+export const BEE_COLORS = {
+  /** The lit top of the thorax, and the bands. */
+  band: 0xf2b12c,
+  /** Chitin between the bands, and the head. */
+  dark: 0x241d18,
+  /** Wings: pale, and the only translucent-reading thing in the set. */
+  wing: 0xd6e4ef,
+  /** Two dots, as the beetle has. */
+  eye: 0xdfe6ea,
 } as const

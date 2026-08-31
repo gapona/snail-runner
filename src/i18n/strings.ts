@@ -60,6 +60,7 @@ const en = {
   shopTabWeapons: 'Weapons',
   shopTabUpgrades: 'Upgrades',
   shopTabThemes: 'Themes',
+  shopTabSnails: 'Snails',
   // Not "cannot afford": a blocked row is waiting on the row above it, which is a different
   // problem and has a different answer.
   shopLocked: 'Locked',
@@ -78,8 +79,47 @@ const en = {
   // RACER` described a racer, which this game stopped being at the pivot.
   gameTitle: 'SNAIL RUNNER',
   play: 'Play',
+  /**
+   * The first run, which teaches itself. See `run/tutorial.ts`.
+   *
+   * **Each card is a title and a reason, and the reason is the half that matters.** A line naming
+   * the button is a control the player forgets; a line saying what the thing is *for* is something
+   * they can apply to the next one the game deals them without being told again.
+   *
+   * Kept to a handful of words each, because they are read at speed while a road is coming.
+   */
+  tutorialSteerTitle: 'Steer',
+  tutorialSteerWhy: 'Drag anywhere. Coins are score — your line is what they cost.',
+  tutorialJumpTitle: 'Jump',
+  tutorialJumpWhy: 'Tap or press space. Height is the other way past things.',
+  tutorialLowTitle: 'Low rock',
+  tutorialLowWhy: 'Short enough to hop. Or go round it — both work.',
+  tutorialWallTitle: 'A wall',
+  tutorialWallWhy: 'No gap anywhere. The jump is the only way through.',
+  tutorialBlockingTitle: 'Too tall',
+  tutorialBlockingWhy: 'A jump will not clear this. Go around.',
+  tutorialFruitTitle: 'Fruit',
+  tutorialFruitWhy: 'Fills the leaf. A full leaf fires a Fever: faster, and it pulls pickups in.',
+  tutorialShieldTitle: 'Shield',
+  tutorialShieldWhy: 'A bubble you can see. It takes one hit instead of a life.',
+  tutorialRampTitle: 'Ramp',
+  tutorialRampWhy: 'Ride it. The coins are laid along the flight you are about to take.',
+  tutorialDone: 'Good. The road is yours.',
+  /**
+   * The prompt under a `read` card.
+   *
+   * **It names the outcome, not the key**, for the reason every other line here does: the player is
+   * about to press whatever is under their thumb, and what they need to know is that the road will
+   * start when they do.
+   */
+  tutorialContinue: 'Tap to go',
+  /** Under an `act` card, which is answered by doing the thing rather than by dismissing it. */
+  tutorialTryIt: 'Try it',
+  tutorialReplay: 'Tutorial',
+  loadFailed: 'Could not load the game.\nCheck your connection and try again.',
+  retry: 'Retry',
   /** The run's own screen: what a run produced and the two things to do next. */
-  runOver: 'Run over',
+  runOver: 'Run Over',
   newBest: 'New best!',
   best: 'Best',
   menu: 'Menu',
@@ -124,6 +164,14 @@ const en = {
   nextLevel: 'Next',
   levelLockedBy: 'Clear {name}',
   themeAuto: 'Match level',
+  // The mascot's five recolours. Names of colours rather than of species: what a skin changes is
+  // where the shell and the foot sit on the hue wheel, and calling one "Forest Snail" would promise
+  // a different creature. See `run/snailSkins.ts`.
+  snail_amber: 'Amber',
+  snail_fern: 'Fern',
+  snail_teal: 'Teal',
+  snail_indigo: 'Indigo',
+  snail_rose: 'Rose',
   biome_forest: 'Forest',
   biome_dunes: 'Dunes',
   biome_wetland: 'Wetland',
@@ -195,6 +243,7 @@ const es: Record<StringKey, string> = {
   shopTabWeapons: 'Armas',
   shopTabUpgrades: 'Mejoras',
   shopTabThemes: 'Temas',
+  shopTabSnails: 'Caracoles',
   shopLocked: 'Bloqueado',
   upgradeRate: 'Cadencia',
   upgradePower: 'Potencia',
@@ -206,7 +255,29 @@ const es: Record<StringKey, string> = {
   // it, and both hold the same word on purpose.
   gameTitle: 'SNAIL RUNNER',
   play: 'Jugar',
-  runOver: 'Fin del recorrido',
+  tutorialSteerTitle: 'Conduce',
+  tutorialSteerWhy: 'Arrastra donde sea. Las monedas son puntos: tu trazada es lo que cuestan.',
+  tutorialJumpTitle: 'Salta',
+  tutorialJumpWhy: 'Toca o pulsa espacio. La altura es la otra forma de pasar.',
+  tutorialLowTitle: 'Roca baja',
+  tutorialLowWhy: 'Basta un salto. O rodéala: las dos valen.',
+  tutorialWallTitle: 'Un muro',
+  tutorialWallWhy: 'No hay hueco. El salto es la única forma de pasar.',
+  tutorialBlockingTitle: 'Demasiado alto',
+  tutorialBlockingWhy: 'Un salto no lo supera. Rodéalo.',
+  tutorialFruitTitle: 'Fruta',
+  tutorialFruitWhy: 'Llena la hoja. Una hoja llena lanza el Fever: más rápido, y atrae los objetos.',
+  tutorialShieldTitle: 'Escudo',
+  tutorialShieldWhy: 'Una burbuja visible. Aguanta un golpe en lugar de una vida.',
+  tutorialRampTitle: 'Rampa',
+  tutorialRampWhy: 'Súbete. Las monedas están puestas a lo largo del vuelo que vas a hacer.',
+  tutorialDone: 'Bien. La carretera es tuya.',
+  tutorialContinue: 'Toca para seguir',
+  tutorialTryIt: 'Pruébalo',
+  tutorialReplay: 'Tutorial',
+  loadFailed: 'No se pudo cargar el juego.\nComprueba tu conexión e inténtalo de nuevo.',
+  retry: 'Reintentar',
+  runOver: 'Recorrido terminado',
   newBest: '¡Nuevo récord!',
   best: 'Mejor',
   menu: 'Menú',
@@ -242,6 +313,11 @@ const es: Record<StringKey, string> = {
   nextLevel: 'Siguiente',
   levelLockedBy: 'Completa {name}',
   themeAuto: 'Según el nivel',
+  snail_amber: 'Ámbar',
+  snail_fern: 'Helecho',
+  snail_teal: 'Turquesa',
+  snail_indigo: 'Índigo',
+  snail_rose: 'Rosa',
   biome_forest: 'Bosque',
   biome_dunes: 'Dunas',
   biome_wetland: 'Humedal',

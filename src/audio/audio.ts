@@ -28,6 +28,8 @@ let soundManager: Phaser.Sound.BaseSoundManager | null = null
 let platformAudioEnabled = true
 let currentMusicKey: string | null = null
 let currentMusic: MutableSound | null = null
+/** Sound keys already reported as undecoded — one line each, not one per play. See `playSfx`. */
+const missingReported = new Set<string>()
 let pausedMusicSeek = 0
 
 function userSoundOn(): boolean {
@@ -71,6 +73,21 @@ function applyMusicAudibility(): void {
  */
 export function playSfx(key: string, options?: { detune?: number; volume?: number }): void {
   if (!soundManager || !effectiveSound()) {
+    return
+  }
+
+  // **⚠ `SoundManager.play` THROWS on a key that is not decoded yet, and this is called from inside
+  // gameplay.** The sounds are loaded in `Preloader`, so the cache is normally full long before a
+  // run — but decoding is deferred while the `AudioContext` is locked, and the one place that
+  // matters is the frame a run ends: `RunScene.crash` plays a sound and then starts the wreck, so a
+  // throw there takes the whole run-over path with it and leaves the player on a frozen frame with
+  // no panel. A missing sound is worth knowing about and is never worth ending a run over.
+  if (!soundManager.game.cache.audio.exists(key)) {
+    if (!missingReported.has(key)) {
+      missingReported.add(key)
+      console.warn(`[audio] no decoded sound for "${key}" — skipped`)
+    }
+
     return
   }
 

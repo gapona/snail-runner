@@ -11,6 +11,7 @@ Reads dev-assets/sprites/<slot>_v<n>.png (the picked variant per slot, PICKS bel
 
   public/assets/decor/<slot>.png          the nine biomes' roadside props
   public/assets/obstacle/<key>.png        the three obstacle classes
+  public/assets/critter/<key>.png         the beetle and the bee, two poses each
   public/assets/pickup/<key>.png          the three pickups, on a shared backing disc
   public/assets/snail/snail-<0..5>.png    six glide frames, all from ONE render
 
@@ -459,12 +460,11 @@ OBSTACLE_KEYS = {
     "obs_low_2": "obstacle-low-2",
     "obs_block_0": "obstacle-blocking-0",
     "obs_block_1": "obstacle-blocking-1",
-    # `obs_over_0` is PULLED. The render is a hollow log with the bore squared off into a dark
-    # rectangle in its end face, which at obstacle size is a crate with a doorway rather than a
-    # log -- reported by a player pointing at a row of them across the road. The class falls back
-    # to its procedural silhouette; see `PULLED_ART` in src/run/obstacleArt.ts. Re-render before
-    # putting it back, and the fix is a solid end face, not a different bore shape: `coa_drift`
-    # was kept once on the reasoning that a hexagonal bore reads as a log, and it does not.
+    # **There is no `obs_over_0` because there is no `overhead` class.** It was drawn three times --
+    # a hollow log, a banded arm, a hazard board hung from a rail -- and reported as a thing hanging
+    # in the air every time. The sprite's canvas IS the collision band and that band starts above
+    # the snail, so the class cannot be drawn touching the ground; see `OBSTACLE_BANDS` in
+    # src/run/constants.ts for the argument it lost.
 }
 
 
@@ -492,6 +492,49 @@ def build_obstacles(report: list) -> None:
         report.append((key, f"{dst.stat().st_size // 1024}KB {meta['size'][0]}x{meta['size'][1]} "
                             f"aspect {meta['aspect']} plate {meta['platePx']} "
                             f"threat {meta['threatMoved']}"))
+
+
+# The critter slot in the renders, and the texture key the game declares for it.
+# `critterFrameKey(kind, pose)` builds `critter-<kind>-<pose>`, so these are the four keys
+# `CRITTER_TEXTURE_KEYS` enumerates and the loader will ask for by exactly this name.
+CRITTER_KINDS_BUILT = ("beetle", "ladybird", "spider", "frog", "bee", "wasp")
+CRITTER_KEYS = {
+    f"critter_{kind}_{pose}": f"critter-{kind}-{pose}"
+    for kind in CRITTER_KINDS_BUILT
+    for pose in (0, 1)
+}
+
+
+def build_critters(report: list) -> None:
+    """The two hazards that come at the player, from `dev-assets/cc0-3d/critter_render.py`.
+
+    **Treated as obstacles rather than as decor**, and for the obstacles' reason: a critter is never
+    tinted. `biomes.ts` multiplies scenery by its biome's colour so a forest reads as a forest, and a
+    hazard that took the same tint would be the colour of the bush beside it — where the whole job of
+    this family is to separate from the scenery instantly.
+
+    **No `strip_background` either, unlike the obstacles.** These come from `smooth_render`, whose
+    alpha is triangle coverage: there is no plate, no halo and no baked cast shadow, so the flood has
+    nothing to find and could only take something it should not. Same reason `build_pickups` refuses
+    it. The barriers ask for it because they went through the generator's matte first.
+    """
+    out_dir = ASSETS / "critter"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for slot, key in CRITTER_KEYS.items():
+        src = _pick(slot)
+        if src is None:
+            report.append((slot, "SKIPPED — no pick"))
+            continue
+        image, meta = process(
+            Image.open(src),
+            LONG_SIDE["obstacle"],
+            desaturate=0.0,
+            strip_background=False,
+        )
+        dst = out_dir / f"{key}.png"
+        image.save(dst, "PNG", optimize=True)
+        report.append((key, f"{dst.stat().st_size // 1024}KB {meta['size'][0]}x{meta['size'][1]} "
+                            f"aspect {meta['aspect']} threat {meta['threatMoved']}"))
 
 
 PICKUP_KEYS = {
@@ -843,10 +886,10 @@ def load_picks() -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", default="", help="comma-separated: snail,obstacles,pickups,decor")
+    ap.add_argument("--only", default="", help="comma-separated: snail,obstacles,critters,pickups,decor")
     args = ap.parse_args()
     families = [f.strip() for f in args.only.split(",") if f.strip()] or [
-        "snail", "obstacles", "pickups", "decor"
+        "snail", "obstacles", "critters", "pickups", "decor"
     ]
 
     load_picks()
@@ -859,6 +902,8 @@ def main() -> None:
         build_snail(report)
     if "obstacles" in families:
         build_obstacles(report)
+    if "critters" in families:
+        build_critters(report)
     if "pickups" in families:
         build_pickups(report)
     if "decor" in families:

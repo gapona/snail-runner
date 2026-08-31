@@ -1,0 +1,4 @@
+# The source packs are kept out of the repo: they are 3.4MB of CC0 zips that only two 6KB files are
+# taken from, and both of those ship under `public/assets/audio/` with a row in AUDIO-SOURCES.md.
+# `measure.py` is committed, because the picks were made with it and the next one should be too.
+*.zip

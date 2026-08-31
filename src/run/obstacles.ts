@@ -15,7 +15,7 @@
  * `PLAYER_BODY_H`. `verify:jump` and `verify:obstacles` both assert the resulting table.
  *
  * That matters more than it looks. The obvious design is a `jumpable: boolean`, and it fails on
- * the third class: an overhead is not "unjumpable", it is *hit by jumping*, which a boolean cannot
+ * the class that was removed: an overhead was not "unjumpable", it was *hit by jumping*, which a
  * say. Without that class the optimal play is to hold the jump button and the mechanic evaporates.
  *
  * **A layout is proved passable before it ships.** `placeObstacles` searches for a line through
@@ -35,6 +35,7 @@ import {
   OFFROAD_LIMIT,
   PLAYER_BODY_H,
   PLAYER_HALF_WIDTHS,
+  PLAYER_WIDTH,
   REACTION_MS,
   ROAD_EDGE,
   type ObstacleKind,
@@ -64,6 +65,51 @@ export interface Obstacle {
 export interface Body {
   offsetX: number
   y: number
+  /**
+   * How far the body is rotated, in degrees. Absent or `0` for anything upright.
+   *
+   * **⚠ The drawn box stopped being the collision box the moment the ramp's spin was added, and
+   * nothing said so.** `PlayerView` turns the sprite about its **bottom-centre** origin, so a
+   * tumbling snail hangs below its own feet — at half a turn it is entirely below them — while
+   * `hits` went on testing the upright band `[y, y + PLAYER_BODY_H]`. Measured over a real ramp
+   * flight against a `blocking` barrier: the model is hittable for **31%** of the flight and the
+   * *drawn* snail overlaps the barrier for **48%** of it, at worst **198 world units inside** one
+   * the model says it cleared. Reported as tumbling off a ramp into a tall barrier and taking no
+   * damage, which is exactly what those numbers are.
+   */
+  spinDegrees?: number
+}
+
+/**
+ * The vertical band the body actually occupies, which is the band it is drawn in.
+ *
+ * At zero rotation this is exactly `[y, y + PLAYER_BODY_H]`, so an ordinary jump, `passableLine`
+ * and the whole passability proof are untouched — they pass no rotation and get the old answer.
+ *
+ * **The lateral half-width deliberately does NOT rotate with it.** A snail turned on its side is
+ * drawn narrower than one upright, and taking that literally would let a tumble slip through gaps a
+ * grounded snail cannot — a hitbox that shrinks while the player is mid-air is far harder to read
+ * than one that stays the size of the creature. The vertical extent is the half the spin genuinely
+ * breaks, because the whole question a barrier asks is how high you are.
+ */
+export function bodyBand(body: Body): { low: number; high: number } {
+  const spin = body.spinDegrees ?? 0
+
+  if (spin === 0) return { low: body.y, high: body.y + PLAYER_BODY_H }
+
+  const radians = (spin * Math.PI) / 180
+  const sin = Math.sin(radians)
+  const cos = Math.cos(radians)
+  // The four corners of the drawn rectangle about its bottom-centre origin, as heights. Unrolled
+  // rather than looped over an array: this runs per obstacle per frame, and the frame it matters on
+  // is the busiest one.
+  const halfWidth = PLAYER_WIDTH / 2
+  const foot = halfWidth * sin
+  const crown = PLAYER_BODY_H * cos
+  const lo = Math.min(-foot, foot, crown - foot, crown + foot)
+  const hi = Math.max(-foot, foot, crown - foot, crown + foot)
+
+  return { low: body.y + lo, high: body.y + hi }
 }
 
 /** Builds an obstacle, taking its band from its kind. */
@@ -91,7 +137,9 @@ export function hits(body: Body, obstacle: Pick<Obstacle, 'offsetX' | 'halfWidth
 
   if (!lateral) return false
 
-  return body.y < obstacle.yHigh && obstacle.yLow < body.y + PLAYER_BODY_H
+  const band = bodyBand(body)
+
+  return band.low < obstacle.yHigh && obstacle.yLow < band.high
 }
 
 
@@ -180,9 +228,18 @@ export const FLIGHT_LENGTH_Z = (JUMP_AIR_MS / 1000) * MAX_ATTAINABLE_SPEED
  *
  * **The per-row check is not enough, and the gap between the two is the interesting part.** A row
  * that only a jump clears puts the snail in the air for up to `FLIGHT_LENGTH_Z`, and everything
- * inside that flight has to be clearable *from the air* — an overhead placed there is a hit the
- * player had no way to avoid, however carefully they played. So the walk carries the commitment
- * forward: a jump-only row demands that every row within one flight of it is air-passable too.
+ * inside that flight has to be clearable *from the air*: something free on the ground and sealed
+ * in the air is a hit the player had no way to avoid, however carefully they played. So the walk
+ * carries the commitment forward — a jump-only row demands that every row within one flight of it
+ * is air-passable too.
+ *
+ * **⚠ That loop cannot fire today, and it is kept anyway.** It was written for the deleted
+ * `overhead` class, whose band started above the road; with `low` and `blocking` both reaching
+ * `y = 0` the offsets blocked at the apex are a *subset* of those blocked on the ground, so a row
+ * with a ground line always has an air line. It stays because it becomes load-bearing again the
+ * instant any band starts above the road, and `verify:obstacles` asserts that none does — so the
+ * day one is added, the check fails and says the flight proof is live and untested rather than
+ * letting it be rediscovered by a player.
  *
  * It does **not** try to be exact about where the jump starts. The snail can jump early or late,
  * and modelling that would need the speed at that moment, which the placer does not know. Assuming
@@ -221,9 +278,8 @@ export interface PlacementOptions {
   toZ: number
   /** How busy the road is, `0..1`. Scales how often a row appears, not how big it is. */
   density: number
-  /** What share of obstacles are `blocking`, and what share `overhead`. The rest are `low`. */
+  /** What share of obstacles are `blocking`. The rest are `low`. */
   blockingShare: number
-  overheadShare: number
   /**
    * How often a row is a wall of `low` obstacles across the whole road — passable only by jumping.
    *
@@ -263,7 +319,7 @@ const MAX_PER_ROW = 3
  * rather than a nudge. Also cut by looking: at the original 0.16–0.3 a three-obstacle row filled
  * most of the carriageway and the road read as walled rather than as obstructed.
  */
-const OBSTACLE_HALF_WIDTHS = { min: 0.12, max: 0.22 } as const
+export const OBSTACLE_HALF_WIDTHS = { min: 0.12, max: 0.22 } as const
 
 /**
  * Lays obstacles along a stretch, and proves the result can be got through.
@@ -309,6 +365,26 @@ export function placeObstacles(options: PlacementOptions): Obstacle[] {
   return placed
 }
 
+/**
+ * How many obstacles may be drawn at once.
+ *
+ * **⚠ This was 48, and the demand it was sized against was never measured.** Its own note reasoned
+ * that "the 300-segment draw distance holds 37 rows" at three obstacles a row — which is 111, not
+ * 48 — and then assumed the far ones would be culled. Measured over five saturated laps of the real
+ * placer, the peak inside the draw distance is **90**, and a wall is fourteen obstacles in a single
+ * row, so the assumption fails exactly where the road is busiest.
+ *
+ * What a short obstacle pool costs is worse than what a short pickup pool costs: the pool is filled
+ * near to far, so what goes undrawn is the far end — which is the reaction budget. A hazard that is
+ * not drawn until it is nearer than `REACTION_MS` is a hazard the player was never shown, and
+ * `ObstacleSprites.refusedIds` exists to catch precisely that.
+ *
+ * 112 covers the row arithmetic above rather than only the measurement, since the measurement is a
+ * sample of seeds and the arithmetic is a bound. Declared here rather than in `ObstacleSprites` so
+ * `verify:obstacles` can hold it against the placer's own output.
+ */
+export const OBSTACLE_POOL_SIZE = 112
+
 /** How many times a row is redrawn before it is given up on. */
 const ROW_ATTEMPTS = 12
 
@@ -323,7 +399,7 @@ const ROW_ATTEMPTS = 12
  * Overlapping by a third of a width on purpose: a wall with a hair-width seam in it is a wall the
  * player will find once, by accident, and then never again.
  */
-function drawWall(z: number, nextId: () => number): Obstacle[] {
+export function drawWall(z: number, nextId: () => number): Obstacle[] {
   const halfWidths = OBSTACLE_HALF_WIDTHS.max
   const step = halfWidths * 1.3
   const row: Obstacle[] = []
@@ -337,7 +413,7 @@ function drawWall(z: number, nextId: () => number): Obstacle[] {
 
 /** Draws one row at `z`, retrying until it has a line through it or the attempts run out. */
 function drawRow(options: PlacementOptions, z: number, nextId: () => number): Obstacle[] {
-  const { rng, blockingShare, overheadShare } = options
+  const { rng, blockingShare } = options
 
   if (rng() < (options.wallShare ?? 0)) return drawWall(z, nextId)
 
@@ -347,7 +423,7 @@ function drawRow(options: PlacementOptions, z: number, nextId: () => number): Ob
 
     for (let i = 0; i < count; i++) {
       const roll = rng()
-      const kind: ObstacleKind = roll < blockingShare ? 'blocking' : roll < blockingShare + overheadShare ? 'overhead' : 'low'
+      const kind: ObstacleKind = roll < blockingShare ? 'blocking' : 'low'
       const halfWidths =
         OBSTACLE_HALF_WIDTHS.min + rng() * (OBSTACLE_HALF_WIDTHS.max - OBSTACLE_HALF_WIDTHS.min)
       // Kept fully on the road: an obstacle hanging off the verge is invisible *and* free, which

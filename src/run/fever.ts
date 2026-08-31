@@ -9,22 +9,34 @@
  * twice on exactly that rule. So **all of the speed is in the fruit now**: fruit fills a gauge, the
  * gauge buys Fever, and there is no other way to go faster than the run's own ceiling.
  *
- * ## ⚠ The exit is the whole difficulty, and it is an ordering
+ * ## ⚠ THERE IS NO GUARD. A FEVER CAN BE CRASHED, AND THAT IS THE POINT
  *
- * Leaving Fever at Fever speed is a guaranteed death: the player has been flying through obstacles
- * for six seconds, the guard comes off, and the next row arrives sooner than they can answer it.
- * The best moment of the run would end in a hit the player cannot explain, and they would blame the
- * game — correctly. The three steps are therefore ordered and none of them is optional:
+ * Fever used to switch the hitbox off for its whole length, plus the ease after it, plus a fourth
+ * phase that held the guard up until the road ahead opened. **Reported twice, from two
+ * directions**: that a lot of things on the road were passing through the snail without doing
+ * anything, and that flying under the fruit boost should not make the player immortal. Those are
+ * the same sentence.
  *
- * 1. **the speed comes back first**, over `FEVER_EASE_MS`, while the guard is still up;
- * 2. **only then does the guard come off** — `feverInvulnerable` covers `active` *and* `easing`;
- * 3. **and the road ahead is already clear** for `REACTION_MS` past that, because the scene clears
- *    it at the moment the ease begins (see `feverClearanceUnits`).
+ * A hazard that passes through the snail without hurting it is the same defect as one that hits
+ * from further away than it looks, read from the other side — which is what this file used to say
+ * about a *removal*, while performing the suppression it was arguing against.
  *
- * Step 3 is a *removal*, not a suppression: obstacles inside the window are cleared off the road
- * while the player is still visibly in Fever, rather than being drawn and then declining to hurt
- * anyone. A hazard that passes through the snail without doing anything is the same defect as one
- * that hits from further away than it looks, read from the other side.
+ * **Being hittable at Fever speed is safe by construction rather than by luck.** Every row in this
+ * game is spaced against `REACTION_MS` at `MAX_ATTAINABLE_SPEED`, and `MAX_ATTAINABLE_SPEED` *is*
+ * `SPEED_CAP * FEVER_SPEED_FACTOR` — the placer has always laid the road on the assumption that
+ * the player might be meeting it at Fever speed and would have to react. `verify:obstacles`
+ * measures that floor over 500 simulated runs; `verify:fever` asserts the two constants are the
+ * same number, so a Fever can never outrun the spacing it was measured against.
+ *
+ * What a Fever is now is speed and a magnet, and it is *ridden* rather than waited out.
+ *
+ * ## The exit is still an ordering, and it is still not optional
+ *
+ * The speed cannot simply stop: sixty percent of it has to come off, and it comes off over
+ * `FEVER_EASE_MS` with `FEVER_SETTLE_MS` at the end spent at factor 1, so the run lands on its own
+ * ceiling rather than a tenth above it. What went with the guard is the fourth phase — `holding`
+ * existed only to keep an invulnerability up until the road opened, and an ordering that protects
+ * nothing is not an ordering.
  *
  * ## Why the gauge does not drain
  *
@@ -37,23 +49,23 @@ import {
   FEVER_EASE_MS,
   FEVER_FRUIT_TARGET,
   FEVER_MAGNET_Z,
-  FEVER_CLEAR_MARGIN,
-  FEVER_HOLD_MAX_MS,
   FEVER_MS,
   FEVER_SETTLE_MS,
   FEVER_SPEED_FACTOR,
-  REACTION_MS,
 } from './constants'
 
 /**
  * Where the run is in the cycle.
  *
  * `easing` is a phase of its own rather than a flag on `active` because the two differ in the one
- * thing that matters: `active` is a reward and `easing` is a landing, and the guard has to outlive
- * both. Collapsing them would make "how much Fever is left" and "am I safe" the same number, which
- * is the bug this file is mostly about.
+ * thing that still matters once the guard is gone: `active` is a reward held at a fixed ceiling and
+ * `easing` is the ramp down off it, and `feverSpeedFactor` has to tell them apart.
+ *
+ * **There were four.** `holding` waited, after the ease, until the road ahead was clear enough to
+ * drop the invulnerability. With no invulnerability to drop it is a phase nothing branches on, so
+ * it is gone rather than left as dead state.
  */
-export type FeverPhase = 'idle' | 'active' | 'easing' | 'holding'
+export type FeverPhase = 'idle' | 'active' | 'easing'
 
 export interface FeverState {
   /** Fruit banked toward the next Fever, `0..FEVER_FRUIT_TARGET`. */
@@ -108,60 +120,30 @@ export function ignite(state: FeverState): FeverState {
   return { fruit: state.fruit - FEVER_FRUIT_TARGET, phase: 'active', msRemaining: FEVER_MS }
 }
 
-export interface FeverStep {
-  state: FeverState
-  /** True on the tick `active` handed over to `easing` — when the scene clears the road ahead. */
-  easingStarted: boolean
-  /** True on the tick the guard came off. */
-  ended: boolean
-}
-
-/** Advances by `dtMs` of **simulated** time. Called from inside `stepRun`'s fixed tick. */
-export function stepFever(state: FeverState, dtMs: number, roadClear = true): FeverStep {
-  if (state.phase === 'idle') return { state, easingStarted: false, ended: false }
+/**
+ * Advances by `dtMs` of **simulated** time. Called from inside `stepRun`'s fixed tick.
+ *
+ * **It returns the state and nothing else.** It used to return two flags beside it — one for the
+ * tick the ease began on, so the scene could clear the road ahead of the guard, and one for the
+ * tick the guard came off. Neither is a thing any more, and neither had a reader left.
+ */
+export function stepFever(state: FeverState, dtMs: number): FeverState {
+  if (state.phase === 'idle') return state
 
   const msRemaining = state.msRemaining - dtMs
 
-  // **The hold ends on the road, not on the clock** — that is the whole of step 2. The clock is
-  // only a ceiling, so a run that somehow never finds a gap still leaves Fever.
-  if (state.phase === 'holding') {
-    if (roadClear || msRemaining <= 0) {
-      // Straight into the next one if the gauge filled again on the way — see `ignite`.
-      const next = ignite({ ...state, phase: 'idle', msRemaining: 0 })
-
-      return { state: next, easingStarted: false, ended: next.phase === 'idle' }
-    }
-
-    return { state: { ...state, msRemaining }, easingStarted: false, ended: false }
-  }
-
-  if (msRemaining > 0) return { state: { ...state, msRemaining }, easingStarted: false, ended: false }
+  if (msRemaining > 0) return { ...state, msRemaining }
 
   if (state.phase === 'active') {
     // The overrun carries into the ease rather than being dropped, so the two phases together are
     // exactly `FEVER_MS + FEVER_EASE_MS` however the ticks happen to fall.
-    return {
-      state: { ...state, phase: 'easing', msRemaining: FEVER_EASE_MS + msRemaining },
-      easingStarted: true,
-      ended: false,
-    }
+    return { ...state, phase: 'easing', msRemaining: FEVER_EASE_MS + msRemaining }
   }
 
-  return {
-    state: { ...state, phase: 'holding', msRemaining: FEVER_HOLD_MAX_MS },
-    easingStarted: false,
-    ended: false,
-  }
-}
-
-/**
- * Whether the road ahead is clear enough to drop the guard, given the nearest obstacle.
- *
- * `REACTION_MS` at the *current* speed, which is the ordinary ceiling by the time the hold begins —
- * the ease has already brought the run back. `Infinity` for an empty road.
- */
-export function roadIsClear(nearestAheadUnits: number, speed: number): boolean {
-  return nearestAheadUnits >= (speed * REACTION_MS * FEVER_CLEAR_MARGIN) / 1000
+  // **Straight into the next one if the gauge filled again on the way.** A Fever that ended on a
+  // full gauge used to sit there doing nothing — the leaf came back reading 1.00 with the run idle,
+  // waiting for one *further* fruit before it would fire. See `ignite`.
+  return ignite({ ...state, phase: 'idle', msRemaining: 0 })
 }
 
 /**
@@ -171,23 +153,20 @@ export function roadIsClear(nearestAheadUnits: number, speed: number): boolean {
  * — a ramp rather than a curve because what it has to guarantee is arriving at exactly `1` at a
  * known moment, and an ease-out spends its last third almost stationary above the ceiling.
  *
- * **The ramp finishes `FEVER_SETTLE_MS` before the ease does**, and the guard is up for all of it.
- * See that constant: the speed *follows* this number rather than being it, and following a falling
- * ramp leaves a fixed error above it.
+ * **The ramp finishes `FEVER_SETTLE_MS` before the ease does.** See that constant: the speed
+ * *follows* this number rather than being it, and following a falling ramp leaves a fixed error
+ * above it — measured at 3958 u/s against a 3600 ceiling before the settle existed. That error is
+ * no longer an unfair death; it is the run meeting rows at a speed the placer never spaced them
+ * for, which is worse.
  */
 export function feverSpeedFactor(state: FeverState): number {
-  if (state.phase === 'idle' || state.phase === 'holding') return 1
+  if (state.phase === 'idle') return 1
   if (state.phase === 'active') return FEVER_SPEED_FACTOR
 
   const ramp = Math.max(1, FEVER_EASE_MS - FEVER_SETTLE_MS)
   const t = Math.max(0, Math.min(1, (state.msRemaining - FEVER_SETTLE_MS) / ramp))
 
   return 1 + (FEVER_SPEED_FACTOR - 1) * t
-}
-
-/** Whether the guard is up. **Covers the ease as well as the Fever** — that is step 2 above. */
-export function feverInvulnerable(state: FeverState): boolean {
-  return state.phase !== 'idle'
 }
 
 /** Whether pickups are being pulled in. Ends with the guard, so the reward is one continuous thing. */

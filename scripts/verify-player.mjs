@@ -28,9 +28,16 @@ import {
   PLAYER_DAMPING,
   PLAYER_HALF_WIDTHS,
   PLAYER_STIFFNESS,
+  MAX_DESCENT_DROP,
+  PLAYER_BODY_H,
+  PLAYER_REST_Y_FRACTION,
+  PLAYER_WIDTH,
   PLAYER_Z,
   ROAD_EDGE,
+  STEER_REACH_MARGIN,
   FEVER_SPEED_FACTOR,
+  HIT_INVULNERABLE_Z,
+  MAX_ATTAINABLE_SPEED,
   SPEED_BASE,
   SPEED_CAP,
   halfWidthsAtLane,
@@ -48,7 +55,37 @@ import {
   stepSlime,
 } from '../src/run/slime.ts'
 import { createScreenPoint, projectInto } from '../src/road/project.ts'
+import { buildRunCircuit } from '../src/road/circuits.ts'
+import { WORLD_LAYER } from '../src/run/worldDepth.ts'
+import {
+  DEATH_FLASH_MS,
+  DEATH_SPIN_DEGREES,
+  DEATH_SWELL,
+  NOT_DEAD,
+  PLAYER_DEATH_MS,
+  createPlayerDeath,
+  deathComplete,
+  deathFlash,
+  deathSpin,
+  hasDied,
+  hullBurstProgress,
+  hullFade,
+  hullSwell,
+  isDying,
+  startPlayerDeath,
+} from '../src/run/playerDeath.ts'
+import { groundYAt, trackLengthOf } from '../src/road/track.ts'
+import { HORIZON_Y } from '../src/road/constants.ts'
 import { CAMERA_DEPTH, CAMERA_HEIGHT, ROAD_WIDTH, SEGMENT_LENGTH } from '../src/road/constants.ts'
+import {
+  SHIELD_BREATH,
+  SHIELD_BUBBLE_SPAN,
+  SHIELD_POP,
+  shieldBreathAlpha,
+  shieldBreathScale,
+  shieldPopAlpha,
+  shieldPopScale,
+} from '../src/run/shield.ts'
 
 let passed = 0
 function check(name, fn) {
@@ -171,7 +208,227 @@ check('the whole road is reachable from inside the frame', () => {
   const edge = playerScreenFraction(ROAD_EDGE)
 
   assert.ok(edge < 1 && edge > 0.5, `the road's edge is at screen fraction ${edge.toFixed(3)}`)
-  console.log(`    the asphalt's edge (offsetX ${ROAD_EDGE}) sits at ${(edge * 100).toFixed(1)}% across the frame`)
+  console.log(`    the asphalt's edge (offsetX ${ROAD_EDGE.toFixed(3)}) sits at ${(edge * 100).toFixed(1)}% across the frame`)
+})
+
+check('⚠ the row the player rests on is solved, and it is what sizes the mascot', () => {
+  // **The only lever that makes the snail bigger without touching a hitbox.** Everything on this
+  // road is scaled by the frame's width, so the mascot cannot be grown on a phone alone -- but
+  // standing it nearer the camera grows it everywhere, and the collision box does not move. Two
+  // things bound how near, and the row is the lower of them.
+  //
+  // **One: a finger at the edge of the screen must still be able to ask for the edge of the road**,
+  // or the verge stops being somewhere the player can choose to go.
+  const reach = halfWidthsAtLane(1)
+  const steering = HORIZON_Y + CAMERA_HEIGHT / (2 * ROAD_WIDTH * ROAD_EDGE * STEER_REACH_MARGIN)
+
+  assert.ok(
+    reach >= ROAD_EDGE * STEER_REACH_MARGIN - 1e-9,
+    `the screen's edge only asks for offsetX ${reach.toFixed(3)} against an asphalt edge at ${ROAD_EDGE.toFixed(3)}`,
+  )
+
+  // **Two: the road falls away on a descent, and the mascot must not fall off the frame with it.**
+  // This is the bound the first version of the solve missed, and a player found it in one
+  // screenshot going down a hill.
+  const descent = 1 - MAX_DESCENT_DROP
+  const bound = Math.min(steering, descent)
+
+  assert.ok(
+    PLAYER_REST_Y_FRACTION <= bound + 1e-9,
+    `the rest row ${PLAYER_REST_Y_FRACTION.toFixed(4)} is past the bounds' ${bound.toFixed(4)}`,
+  )
+
+  // **Three: the snail must not sit on a segment boundary**, which is a rule about the painter's
+  // order rather than about the picture — see `PLAYER_SEGMENT_PHASE`, and the check below that
+  // measures the consequence. The snap only ever pushes the player further from the camera, so it
+  // spends size the bounds had allowed rather than breaking them.
+  const frac = (PLAYER_Z / SEGMENT_LENGTH) % 1
+  const boundZ = CAMERA_DEPTH / ((2 * (bound - HORIZON_Y)) / CAMERA_HEIGHT)
+
+  assert.ok(Math.abs(frac - 0.25) < 1e-9, `the player sits ${frac.toFixed(3)} into its segment, not on the phase`)
+  assert.ok(PLAYER_Z >= boundZ - 1e-9, 'the snap moved the player nearer the camera, which the bounds forbid')
+  assert.ok(PLAYER_Z - boundZ < SEGMENT_LENGTH, 'the snap gave away more than one segment of the size the bounds allowed')
+
+  const at = (rest) => (PLAYER_WIDTH * (2 * (rest - HORIZON_Y))) / CAMERA_HEIGHT / 2
+
+  console.log(
+    `    steering allows ${steering.toFixed(4)}, the steepest descent allows ${descent.toFixed(4)} — ` +
+      `the ${steering < descent ? 'steering' : 'descent'} binds at ${bound.toFixed(4)}, and the segment ` +
+      `phase snaps it to ${PLAYER_REST_Y_FRACTION.toFixed(4)}`,
+  )
+  console.log(
+    `    the mascot is ${(at(PLAYER_REST_Y_FRACTION) * 375).toFixed(0)}px wide on a 375px frame, against ` +
+      `${(at(5 / 6) * 375).toFixed(0)}px on the rail shooter's inherited 5/6 row — the same collision box in both`,
+  )
+
+  // Both bounds shown to bite, because a bound that has never rejected anything is not a bound.
+  const tooLow = HORIZON_Y + CAMERA_HEIGHT / (2 * ROAD_WIDTH * ROAD_EDGE * 0.95)
+
+  assert.ok(
+    CAMERA_HEIGHT / (2 * (tooLow - HORIZON_Y) * ROAD_WIDTH) < ROAD_EDGE,
+    'the steering control row is reachable, so that half is measuring nothing',
+  )
+  assert.ok(descent < 1, 'the descent bound allows the whole frame, so that half is measuring nothing')
+})
+
+check('⚠ the snail is far enough into its segment for the depth order to come out right', () => {
+  // **There is no depth buffer**: everything sorts on `worldDepth(distanceIndex, layer)` with the
+  // layer as a sub-segment tiebreak, so the snail's fractional position IS what decides whether an
+  // obstacle on its own segment paints over it. Asserted on the real layers rather than on the
+  // 0.1 the constant's docstring quotes, so a re-ordered `WORLD_LAYER` fails here.
+  const frac = (PLAYER_Z / SEGMENT_LENGTH) % 1
+  const behind = WORLD_LAYER.player - WORLD_LAYER.obstacle
+  const ahead = WORLD_LAYER.pickup - WORLD_LAYER.player
+
+  assert.ok(frac > behind, `an obstacle on the snail's own segment draws behind it (${frac} <= ${behind})`)
+  assert.ok(1 - frac > ahead, `a pickup one segment ahead draws over the snail (${1 - frac} <= ${ahead})`)
+
+  // Shown to bite, on the row the bounds alone would have chosen: 0.077 into its segment, which is
+  // what `verify:obstacles` rejected before the phase existed.
+  assert.ok(0.077 <= behind, 'the control fraction is legal, so this check is measuring nothing')
+  console.log(
+    `    ${(PLAYER_Z / SEGMENT_LENGTH).toFixed(2)} segments out, ${(frac * 100).toFixed(0)}% into its own — ` +
+      `legal window is ${(behind * 100).toFixed(0)}%..${((1 - ahead) * 100).toFixed(0)}%`,
+  )
+})
+
+check('⚠ MAX_DESCENT_DROP is what the real circuit actually does, and the snail survives it', () => {
+  // **Measured against the track rather than trusted.** The constant is a fact about
+  // `buildRunCircuit`; a re-composed circuit moves it, and a rest row solved from a stale value
+  // would put the mascot off the bottom of the frame on exactly the stretch nobody tests on.
+  //
+  // The drop does not depend on `PLAYER_Z`: it is `scale * gradient * PLAYER_Z * h / 2` with
+  // `scale = CAMERA_DEPTH / PLAYER_Z`, so the distance cancels and `CAMERA_DEPTH * gradient / 2` is
+  // left. That is why standing the snail nearer the camera buys size without making this worse.
+  const track = buildRunCircuit()
+  const length = trackLengthOf(track.length)
+  const height = 667
+  const width = 375
+  const steps = 4000
+  const flat = PLAYER_REST_Y_FRACTION
+  let worstFeet = 0
+  let worstHidden = 0
+
+  const drawnPx = (PLAYER_BODY_H * (2 * (flat - HORIZON_Y)) * width) / CAMERA_HEIGHT / 2
+
+  for (let i = 0; i < steps; i++) {
+    const z = (i / steps) * length
+    const cameraY = groundYAt(track, z) + CAMERA_HEIGHT
+    const worldY = groundYAt(track, (z + PLAYER_Z) % length)
+    const feet =
+      projectInto(
+        createScreenPoint(),
+        { x: 0, y: worldY, z: PLAYER_Z },
+        0,
+        cameraY,
+        0,
+        CAMERA_DEPTH,
+        width,
+        height,
+        ROAD_WIDTH,
+      ).y / height
+
+    worstFeet = Math.max(worstFeet, feet)
+    worstHidden = Math.max(worstHidden, Math.min(1, Math.max(0, ((feet - 1) * height) / drawnPx)))
+  }
+
+  const measured = worstFeet - flat
+
+  assert.ok(
+    measured <= MAX_DESCENT_DROP + 1e-3,
+    `the circuit drops ${(measured * 100).toFixed(1)}% of the frame against a stated ${(MAX_DESCENT_DROP * 100).toFixed(1)}%`,
+  )
+  // The property the constant exists for. **Strict**: a softer version of this passed while the
+  // frame showed a sliver of shell along the bottom edge, which is the report again in a smaller
+  // size. The player has to be able to see the thing they are steering.
+  assert.equal(worstHidden, 0, `the steepest descent hides ${(worstHidden * 100).toFixed(0)}% of the mascot`)
+  console.log(
+    `    the steepest descent drops the ground ${(measured * 100).toFixed(1)}% of the frame; feet reach ` +
+      `${(worstFeet * 100).toFixed(1)}% and at worst ${(worstHidden * 100).toFixed(0)}% of a ${drawnPx.toFixed(0)}px mascot is off the bottom`,
+  )
+})
+
+console.log('the wreck')
+
+check('⚠ the run does not end on the frame the last life goes', () => {
+  // **The defect this exists for, and the fork shipped it twice.** `takeHit` went straight to
+  // `scene.pause()` and the result panel: the snail was mid-stride, the road was still scrolling,
+  // and the screen reporting the crash arrived over a frame in which no crash had been drawn.
+  const death = createPlayerDeath()
+
+  assert.equal(hasDied(death), false)
+  assert.equal(deathComplete(death, 1000), false, 'a living player must not end the run')
+  assert.equal(startPlayerDeath(death, 500), true, 'the killing hit did not start the wreck')
+  assert.equal(isDying(death, 500), true)
+  assert.equal(deathComplete(death, 500 + PLAYER_DEATH_MS - 1), false, 'the panel arrived mid-wreck')
+  assert.equal(deathComplete(death, 500 + PLAYER_DEATH_MS), true, 'the wreck never finished')
+  console.log(`    ${PLAYER_DEATH_MS}ms of wreck before the result screen`)
+})
+
+check('a second fatal hit neither restarts the wreck nor ends the run twice', () => {
+  // Two obstacles in one row is ordinary, and the second must not stretch the death or fire
+  // `endRun` again -- that call pauses the scene and launches the panel.
+  const death = createPlayerDeath()
+
+  assert.equal(startPlayerDeath(death, 100), true)
+  assert.equal(startPlayerDeath(death, 140), false, 'a second hit restarted the wreck')
+  assert.equal(death.startedAt, 100, 'the second hit moved the clock')
+})
+
+check('⚠ NOT_DEAD is not zero, so a death on the first frame is still a death', () => {
+  // A scene's first frame can report `now === 0` -- this project's own stepping harness does
+  // exactly that -- and a sentinel of 0 would make "died at once" indistinguishable from "alive".
+  assert.ok(NOT_DEAD < 0, `NOT_DEAD is ${NOT_DEAD}, which a real timestamp can equal`)
+
+  const death = createPlayerDeath()
+
+  assert.equal(startPlayerDeath(death, 0), true)
+  assert.equal(hasDied(death), true, 'a death on the first frame reads as alive')
+})
+
+check('the hull swells, fades and turns, and each lands on its endpoint', () => {
+  let swell = 0
+  let fade = 1
+  let spin = -1
+
+  for (let i = 0; i <= 100; i++) {
+    const t = i / 100
+
+    assert.ok(hullSwell(t) >= swell - 1e-9, 'the swell went back in')
+    assert.ok(hullFade(t) <= fade + 1e-9, 'the hull became more solid')
+    assert.ok(deathSpin(t) >= spin - 1e-9, 'the wreck turned back')
+    swell = hullSwell(t)
+    fade = hullFade(t)
+    spin = deathSpin(t)
+  }
+  assert.ok(Math.abs(hullSwell(0) - 1) < 1e-9 && Math.abs(hullSwell(1) - DEATH_SWELL) < 1e-9)
+  assert.ok(Math.abs(hullFade(0) - 1) < 1e-9 && Math.abs(hullFade(1)) < 1e-9, 'the wreck never finished fading')
+  assert.ok(Math.abs(deathSpin(1) - DEATH_SPIN_DEGREES) < 1e-9)
+  // Eased opposite ways, which is the whole read: most of the swell is spent early and the fade
+  // holds for a beat. A pair that eased the same way would be a balloon deflating.
+  assert.ok(hullSwell(0.5) > 1 + (DEATH_SWELL - 1) * 0.5, 'the swell is not front-loaded -- it reads as inflating')
+  assert.ok(hullFade(0.5) > 0.5, 'the hull starts vanishing on the frame of impact')
+  console.log(
+    `    half way: ${((hullSwell(0.5) - 1) / (DEATH_SWELL - 1) * 100).toFixed(0)}% of the swell spent, ` +
+      `${(hullFade(0.5) * 100).toFixed(0)}% of the hull left`,
+  )
+})
+
+check('⚠ the flash is over well before the panel arrives', () => {
+  // A frame flash that outlived the wreck would put the result panel behind a coloured frame
+  // nobody asked for -- and it is the *reserved* colour, so it would read as an ongoing threat.
+  assert.ok(DEATH_FLASH_MS < PLAYER_DEATH_MS, `the flash runs ${DEATH_FLASH_MS}ms of a ${PLAYER_DEATH_MS}ms wreck`)
+
+  const death = createPlayerDeath()
+
+  startPlayerDeath(death, 0)
+  assert.equal(deathFlash(death, 0), 1, 'the flash is not loudest on the frame of impact')
+  assert.equal(deathFlash(death, DEATH_FLASH_MS), 0)
+  assert.equal(deathFlash(death, PLAYER_DEATH_MS), 0, 'the panel arrives under a lit frame')
+  assert.equal(deathFlash(createPlayerDeath(), 500), 0, 'a living player flashes')
+  // And the burst is shorter still, so the debris outlives the hull that threw it.
+  assert.equal(hullBurstProgress(death, PLAYER_DEATH_MS), 1)
+  console.log(`    flash ${DEATH_FLASH_MS}ms, hull burst ends inside a ${PLAYER_DEATH_MS}ms wreck`)
 })
 
 console.log('the spring')
@@ -601,5 +858,76 @@ check('nothing is drawn nearer than the cull, where the projection blows up', ()
   assert.equal(slimeFade(0), 0)
   assert.ok(slimeFade(SLIME_NEAR_CULL_Z + 1) > 0, 'the fade does not resume above the cull')
 })
+
+check('⚠ the shield is visible in all three of its moments, and the break outlives the shield', () => {
+  // The defect this is about: a shield was a `◆` on the coin counter, and spending one looked and
+  // sounded exactly like losing a life. See `shield.ts` for the three cues.
+
+  // 1. Carried: the bubble breathes, so it cannot read as a decal painted onto the mascot.
+  let minScale = Infinity
+  let maxScale = -Infinity
+  let minAlpha = Infinity
+  let maxAlpha = -Infinity
+
+  for (let ms = 0; ms < 60000; ms += 17) {
+    minScale = Math.min(minScale, shieldBreathScale(ms))
+    maxScale = Math.max(maxScale, shieldBreathScale(ms))
+    minAlpha = Math.min(minAlpha, shieldBreathAlpha(ms))
+    maxAlpha = Math.max(maxAlpha, shieldBreathAlpha(ms))
+  }
+
+  assert.ok(maxScale - minScale > 0.05, 'the carried bubble does not move, so it reads as part of the sprite')
+  assert.ok(minAlpha > 0.3, `the bubble fades to ${minAlpha.toFixed(2)}, i.e. it disappears while still being carried`)
+
+  // **Two incommensurate periods, so nothing a player sees repeats.** One sine and the eye finds
+  // the period in about three cycles — the same argument `SUN_ANIM` is built on.
+  const beat = (SHIELD_BREATH.sizePeriodMs * SHIELD_BREATH.alphaPeriodMs) / gcd(SHIELD_BREATH.sizePeriodMs, SHIELD_BREATH.alphaPeriodMs)
+
+  assert.ok(beat > 20000, `the two breaths line up every ${(beat / 1000).toFixed(1)}s, which is a mechanism`)
+
+  // 2. Broken: thrown outward and faded, and the two curves ease opposite ways so the burst is
+  // still solid at the size it is worth seeing.
+  assert.equal(shieldPopScale(0), 1)
+  assert.ok(shieldPopScale(1) > 1.5, 'the break barely grows')
+  assert.equal(shieldPopAlpha(1), 0)
+  assert.ok(shieldPopAlpha(0.5) > shieldPopAlpha(1) + 0.2, 'the break has faded out before it is big')
+
+  let previousScale = 0
+  let previousAlpha = Infinity
+
+  for (let t = 0; t <= 1.0001; t += 0.02) {
+    assert.ok(shieldPopScale(t) >= previousScale, 'the break stops growing part way')
+    assert.ok(shieldPopAlpha(t) <= previousAlpha, 'the break brightens part way')
+    previousScale = shieldPopScale(t)
+    previousAlpha = shieldPopAlpha(t)
+  }
+
+  // Half the expansion is spent well before half the window — a burst, not a balloon.
+  assert.ok(
+    shieldPopScale(0.33) - 1 > (shieldPopScale(1) - 1) * 0.6,
+    'the break expands evenly, which reads as a balloon rather than as something coming apart',
+  )
+
+  // 3. **The window is well inside the grace a hit buys**, or a second hit would land while the
+  // first shield was still visibly breaking — the player watching a shield they no longer have.
+  const graceMs = (HIT_INVULNERABLE_Z / MAX_ATTAINABLE_SPEED) * 1000
+
+  assert.ok(
+    SHIELD_POP.durationMs < graceMs,
+    `the break runs ${SHIELD_POP.durationMs}ms against ${graceMs.toFixed(0)}ms of grace at top speed`,
+  )
+  // And the bubble must reach past the mascot, or it is not around anything.
+  assert.ok(SHIELD_BUBBLE_SPAN > 1.1, 'the bubble does not clear the snail it is drawn around')
+
+  console.log(
+    `    carried: scale ${minScale.toFixed(2)}..${maxScale.toFixed(2)} at alpha ${minAlpha.toFixed(2)}..${maxAlpha.toFixed(2)}, ` +
+      `repeating every ${(beat / 1000).toFixed(0)}s; break: ${SHIELD_POP.durationMs}ms to ${shieldPopScale(1).toFixed(2)}x ` +
+      `against ${graceMs.toFixed(0)}ms of grace at ${MAX_ATTAINABLE_SPEED} u/s`,
+  )
+})
+
+function gcd(a, b) {
+  return b === 0 ? a : gcd(b, a % b)
+}
 
 console.log(`${passed} checks passed`)

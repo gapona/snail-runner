@@ -11,6 +11,7 @@
  */
 import { createRng, randomItem, randomRange } from '../race/rng'
 import { biomeForSegment, type Biome } from './biomes'
+import { VARIATION } from './decorVariation'
 import { DECOR, DECOR_TIERS, ROAD_CURVE, ROAD_HILL, ROAD_LENGTH, RUMBLE_LENGTH, SEGMENT_LENGTH } from './constants'
 import { createScreenPoint, wrapZ, type ScreenPoint, type WorldPoint } from './project'
 
@@ -159,6 +160,22 @@ export interface DecorateOptions {
   offsetBias?: number
   /** How many placements back to avoid repeating, per side. See `DECOR.NO_REPEAT_WINDOW`. */
   noRepeatWindow?: number
+  /**
+   * How wide a prop is drawn, in road half-widths, at tier scale 1 — half of its full width.
+   *
+   * **⚠ Without this a prop is placed as though it were a point, and the big ones stand ON the
+   * road.** `minOffset` positions a sprite's *centre* and the sprite is drawn from a bottom-CENTRE
+   * origin, so its inner edge reaches back toward the road by however wide it happens to be.
+   * Measured on the shipped set, every decor PNG is 384px, which at `SPRITE_SCALE` is 3840 world
+   * units — **0.96 half-widths of half-width**, against a `minOffset` of 1.35 and an asphalt edge at
+   * 1.0. So the inner edge of an ordinary verge prop sat at **0.39**, a third of the way across the
+   * carriageway, and a near-tier one at 1.9x scale reached **past the far kerb**. Reported as big
+   * roadside textures climbing onto the road, which is exactly what it was.
+   *
+   * Optional so the pure checks can place points when width is not what they are measuring; a
+   * caller that omits it gets the old point-placement and the old defect.
+   */
+  halfWidthOf?: (key: string) => number
 }
 
 /**
@@ -185,7 +202,19 @@ export function decorateTrack(track: Segment[], keys: readonly string[], options
     maxOffset = DECOR.MAX_OFFSET,
     offsetBias = DECOR.OFFSET_BIAS,
     noRepeatWindow = DECOR.NO_REPEAT_WINDOW,
+    halfWidthOf,
   } = options
+
+  /**
+   * The smallest `|offsetX|` this prop may stand at, so that **its drawn edge** clears `min`.
+   *
+   * The clearance is computed at `VARIATION.scale.max` rather than at the instance's own scale:
+   * `variationFor` is a pure function of the coordinate and could be consulted here, but a bound
+   * that holds for every instance is one nothing downstream has to re-derive — and the difference
+   * is a quarter of a half-width on the widest prop in the set.
+   */
+  const clearFor = (key: string, tierScale: number, min: number): number =>
+    halfWidthOf === undefined ? min : min + halfWidthOf(key) * tierScale * VARIATION.scale.max
   const rng = createRng(seed)
 
   const available = new Set(keys)
@@ -230,7 +259,16 @@ export function decorateTrack(track: Segment[], keys: readonly string[], options
         // **Biased toward the road rather than uniform across the band.** The band is wide enough
         // to fill the sides of the frame, and spreading uniformly across it would thin the near
         // verge — the part the player actually looks at — to a fifth of what it was.
-        offsetX: side * (minOffset + (maxOffset - minOffset) * Math.pow(rng(), offsetBias)),
+        // **The roll is clamped, not shifted.** Adding the clearance to the whole band would move
+        // every prop outward and thin the near verge — the part the player actually looks at, and
+        // the reason `OFFSET_BIAS` exists. Clamping leaves the distribution alone and only refuses
+        // the placements that would have overlapped: a wide prop stands as close as it can get.
+        offsetX:
+          side *
+          Math.max(
+            clearFor(key, DECOR_TIERS.mid.scale, minOffset),
+            minOffset + (maxOffset - minOffset) * Math.pow(rng(), offsetBias),
+          ),
         height: 0,
       })
     }
@@ -259,7 +297,12 @@ export function decorateTrack(track: Segment[], keys: readonly string[], options
         tierScale: spec.scale,
         // Uniform across the tier's own band rather than biased: the bias exists to keep the near
         // verge dense inside a very wide band, and neither of these bands is wide.
-        offsetX: side * (spec.minOffset + (spec.maxOffset - spec.minOffset) * rng()),
+        offsetX:
+          side *
+          Math.max(
+            clearFor(key, spec.scale, spec.minOffset),
+            spec.minOffset + (spec.maxOffset - spec.minOffset) * rng(),
+          ),
         height: 0,
       })
       void tier

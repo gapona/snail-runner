@@ -1,3 +1,4 @@
+import { LOAD_ATTEMPTS, loadBackoffMs } from '../platform/retry'
 import { loadData as ytLoadData, saveData as ytSaveData, logError, logWarning } from '../platform/yt'
 import { migrate } from './migrate'
 import { DEFAULT_SAVE_STATE, SaveState } from './types'
@@ -11,15 +12,59 @@ const SAVE_SIZE_WARN_RATIO = 0.8
  * yet, or a signed-out YouTube user — both valid), corrupt JSON, and an unrecognized
  * schema version all fall back to DEFAULT_SAVE_STATE with a console.warn.
  */
+/**
+ * Whether the save slot has actually been READ this session.
+ *
+ * **⚠ Nothing may be written until this is true, and that is the difference between a retry and
+ * data loss.** `load()` used to catch a `loadData()` rejection and return defaults; the store then
+ * held defaults, and the first `mutate()` wrote them straight over the player's real cloud save.
+ * The SDK's own error table lists `API_UNAVAILABLE` as *retry later*, so a transient failure on a
+ * cold platform was enough to wipe a save — silently, because from the game's side it looks
+ * exactly like a new player.
+ *
+ * A *corrupt* payload or an unrecognised schema still counts as confirmed: the slot was read, it
+ * held something the migrations cannot use, and overwriting that is the intended repair. What is
+ * not confirmed is a read that never happened.
+ */
+let loadConfirmed = false
+
+export function isLoadConfirmed(): boolean {
+  return loadConfirmed
+}
+
+/** Reads the slot, retrying a transient failure. See `LOAD_ATTEMPTS` for why one attempt is wrong. */
+async function readRaw(): Promise<{ raw: string } | null> {
+  for (let attempt = 0; attempt < LOAD_ATTEMPTS; attempt++) {
+    const wait = loadBackoffMs(attempt)
+
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
+
+    try {
+      return { raw: await ytLoadData() }
+    } catch (e) {
+      console.warn(`[save] loadData() failed (attempt ${attempt + 1}/${LOAD_ATTEMPTS})`, e)
+    }
+  }
+
+  return null
+}
+
 export async function load(): Promise<SaveState> {
-  let raw: string
-  try {
-    raw = await ytLoadData()
-  } catch (e) {
-    console.warn('[save] loadData() failed, using defaults', e)
+  const read = await readRaw()
+
+  if (!read) {
+    // **Not confirmed, so nothing will be saved.** The game runs on defaults for this session and
+    // the player's slot is left exactly as it was, which is the only safe answer when the read
+    // failed for reasons that have nothing to do with what is in it.
+    console.error(`[save] could not read the save after ${LOAD_ATTEMPTS} attempts — saving is disabled this session`)
     logError()
+
     return { ...DEFAULT_SAVE_STATE }
   }
+
+  loadConfirmed = true
+
+  const raw = read.raw
 
   if (raw === '') {
     return { ...DEFAULT_SAVE_STATE }
@@ -44,6 +89,14 @@ export async function load(): Promise<SaveState> {
 
 /** Serializes and persists a SaveState. Skips (with a warning) rather than throwing on bad input. */
 export async function save(state: SaveState): Promise<void> {
+  // **The guard the whole `loadConfirmed` mechanism exists for.** Refusing to write is the only
+  // safe answer when the slot was never read: the alternative is defaults over a real save.
+  if (!loadConfirmed) {
+    console.warn('[save] refusing to save: the slot was never read this session')
+
+    return
+  }
+
   const json = JSON.stringify(state)
 
   // isWellFormed() is ES2024; tsconfig's lib covers the type, but this build may end up

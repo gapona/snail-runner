@@ -9,9 +9,15 @@ import { billboardAppear, billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, SPRITE
 import type { Segment } from '../road/track'
 import { createPickupTextures, PICKUP_TEXTURES, pickupTexture } from './pickupArt'
 import { WORLD_LAYER, worldDepth } from './worldDepth'
-import { PICKUP_DRAW_SIZE, type Pickup } from './pickups'
-import { readableScale } from './constants'
-import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowScale } from './shadows'
+import { PICKUP_BOB, PICKUP_POOL_SIZE, PICKUP_SHADOW_LINK, pickupDrawWidth, type Pickup } from './pickups'
+import {
+  SHADOW_DARKEN,
+  SHADOW_FOOTPRINT,
+  shadowAlpha,
+  shadowClipFade,
+  shadowLinkFade,
+  shadowScale,
+} from './shadows'
 
 /**
  * Every pickup on screen, from a fixed pool.
@@ -23,7 +29,7 @@ import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowScale } from './sha
  * Smaller pool: pickups are laid every fourteen segments against the obstacles' eight, and only
  * one at a time.
  */
-export const PICKUP_POOL_SIZE = 24
+export { PICKUP_POOL_SIZE }
 
 interface SlotState {
   image: Phaser.GameObjects.Image
@@ -54,6 +60,14 @@ export class PickupSprites {
   readonly gameObjects: readonly Phaser.GameObjects.GameObject[]
 
   usedLastFrame = 0
+
+  /**
+   * Pickups that passed culling last frame, **including any the pool had no room for.**
+   *
+   * The counter this pool did not have, and the reason it was 24 against a demand of 47 for years:
+   * a pool that stops counting when it stops drawing reports its own size back as the demand.
+   */
+  wantedLastFrame = 0
 
   private readonly slots: SlotState[]
   /** Which shadow belongs to which object this frame, for the DEV mark overlay. */
@@ -96,6 +110,7 @@ export class PickupSprites {
     const previousUsed = this.usedLastFrame
     const capacity = this.slots.length
     let used = 0
+    let wanted = 0
 
     if (import.meta.env.DEV) this.shadowMarks.length = 0
 
@@ -112,21 +127,22 @@ export class PickupSprites {
       const clip = clipY[n]
 
       for (const pickup of here) {
-        if (pickup.taken || used >= capacity) continue
+        if (pickup.taken) continue
 
-        // **The bob is in world units, not screen pixels.** A pixel bob would be a huge motion at
-        // the near end of the road and invisible at the far end; a world bob is the same 40 units
-        // everywhere and shrinks with distance exactly as the sprite does.
-        const bob = Math.sin(now / 260 + pickup.id) * 22
+        // The bob is in world units, not screen pixels -- see `PICKUP_BOB`.
+        const height = pickup.y + Math.sin(now / 260 + pickup.id) * PICKUP_BOB
 
         // **Bigger on a narrow frame, and only a pickup may be** — see `readableScale` for why the
-        // catchment box is what makes that free here and impossible for anything else.
-        const drawn = PICKUP_DRAW_SIZE * readableScale(screenWidth)
+        // catchment box is what makes that free here and impossible for anything else, and
+        // `PICKUP_MAX_ICON_SHARE` for the bound the boost had been missing: unbounded it drew the
+        // icon at 95% of that box on a phone, which is the coin-the-size-of-the-road failure
+        // `PICKUP_DRAW_SIZE` exists to prevent.
+        const drawn = pickupDrawWidth(screenWidth)
         const rect = billboardRectInto(
           this.rect,
           ground,
           pickup.offsetX,
-          pickup.y + bob,
+          height,
           drawn / SPRITE_SCALE,
           drawn / SPRITE_SCALE,
           screenWidth,
@@ -136,24 +152,40 @@ export class PickupSprites {
 
         if (!billboardOnScreen(rect, visible, screenWidth, screenHeight)) continue
 
+        wanted++
+        // Past capacity the loop keeps *counting* and stops drawing, so `wantedLastFrame` stays an
+        // honest measure of demand. The old `used >= capacity` guard sat before the cull and simply
+        // skipped, which is why nobody could see the pool was half the size it needed to be.
+        if (used >= capacity) continue
+
+        // **Only a pickup near the road casts a shadow** -- see `PICKUP_SHADOW_LINK`. An arc chain
+        // is laid along a ramp flight, so its members sit hundreds of units up and their marks
+        // land most of a screen below them, where the pair stops reading as a pair at all.
+        const link = shadowLinkFade(height, PICKUP_SHADOW_LINK.full, PICKUP_SHADOW_LINK.gone)
         // **The shadow is projected, not drawn as a screen-space circle**, and it is projected
         // from the same `ground` point the sprite was — same segment, same `offsetX`, height
         // zero. So on a climb and through a bend it rides the road, because it is the road's own
         // arithmetic that placed it.
-        const shadowRect = billboardRectInto(
-          this.shadowRect,
-          ground,
-          pickup.offsetX,
-          0,
-          PICKUP_DRAW_SIZE / SPRITE_SCALE,
-          PICKUP_DRAW_SIZE / SPRITE_SCALE,
-          screenWidth,
-          screenHeight,
-        )
+        const shadowRect =
+          link > 0
+            ? billboardRectInto(
+                this.shadowRect,
+                ground,
+                pickup.offsetX,
+                0,
+                // The mark takes the icon's *drawn* width, not the authored one: on a narrow
+                // frame the icon is boosted and a shadow left at the base size would be a mark
+                // narrower than the thing casting it.
+                drawn / SPRITE_SCALE,
+                drawn / SPRITE_SCALE,
+                screenWidth,
+                screenHeight,
+              )
+            : null
 
-        this.place(this.slots[used], pickupTexture(pickup), rect, visible, n, shadowRect, pickup.y + bob)
-        if (import.meta.env.DEV) {
-          this.shadowMarks.push({ x: shadowRect.x, y: shadowRect.y, owner: `pickup#${pickup.id}` })
+        this.place(this.slots[used], pickupTexture(pickup), rect, visible, n, shadowRect, height, link, clip)
+        if (import.meta.env.DEV && this.slots[used].shadow.visible) {
+          this.shadowMarks.push({ x: this.slots[used].shadow.x, y: this.slots[used].shadow.y, owner: `pickup#${pickup.id}` })
         }
         used++
       }
@@ -165,6 +197,7 @@ export class PickupSprites {
     }
 
     this.usedLastFrame = used
+    this.wantedLastFrame = wanted
   }
 
   refreshTextures(): void {
@@ -188,20 +221,31 @@ export class PickupSprites {
     rect: { x: number; y: number; w: number; h: number },
     visibleFraction: number,
     distanceIndex: number,
-    shadowRect: { x: number; y: number; w: number; h: number },
+    shadowRect: { x: number; y: number; w: number; h: number } | null,
     height: number,
+    link: number,
+    clip: number,
   ): void {
     const image = slot.image
 
     // Hard-edged ellipse, sized off the same footprint the sprite is drawn at, widening and
     // weakening with height -- see `shadows.ts` for why those two pull against each other.
     const scale = shadowScale(height)
+    const markHeight = shadowRect ? shadowRect.w * SHADOW_FOOTPRINT.height * scale : 0
+    // **The hill clips the mark as well as the object** -- see `shadowClipFade`. Tested at the
+    // ellipse's centre, which is the ground point, because that is what a crest either covers or
+    // does not.
+    const clipped = shadowRect ? shadowClipFade(shadowRect.y, markHeight, clip) : 0
 
-    slot.shadow.setVisible(true)
-    slot.shadow.setPosition(shadowRect.x, shadowRect.y)
-    slot.shadow.setSize(shadowRect.w * SHADOW_FOOTPRINT.width * scale, shadowRect.w * SHADOW_FOOTPRINT.height * scale)
-    slot.shadow.setAlpha(shadowAlpha(height) * SHADOW_DARKEN)
-    slot.shadow.setDepth(worldDepth(distanceIndex, WORLD_LAYER.shadow))
+    if (shadowRect && clipped > 0) {
+      slot.shadow.setVisible(true)
+      slot.shadow.setPosition(shadowRect.x, shadowRect.y)
+      slot.shadow.setSize(shadowRect.w * SHADOW_FOOTPRINT.width * scale, markHeight)
+      slot.shadow.setAlpha(shadowAlpha(height) * SHADOW_DARKEN * link * clipped)
+      slot.shadow.setDepth(worldDepth(distanceIndex, WORLD_LAYER.shadow))
+    } else {
+      slot.shadow.setVisible(false)
+    }
 
     if (slot.key !== key) {
       if (slot.cropped) {

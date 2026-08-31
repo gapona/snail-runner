@@ -13,8 +13,22 @@ import { isSilent } from '../audio/volume'
 import { bindAction } from '../platform/input'
 import { isPlatformPaused, YTEvents } from '../platform/yt'
 import { t } from '../i18n/strings'
+import { mutate } from '../save/store'
 import { bindLayout } from '../ui/layout'
-import { KIT, kitButton, kitSlider, kitTitle, kitToggle, plate, type KitButton, type KitSlider, type KitToggle, type Plate } from '../ui/kit'
+import {
+  KIT,
+  kitButton,
+  kitDivider,
+  kitSlider,
+  kitTitle,
+  kitToggle,
+  plate,
+  type KitButton,
+  type KitDivider,
+  type KitSlider,
+  type KitToggle,
+  type Plate,
+} from '../ui/kit'
 import { uiScale } from '../ui/uiScale'
 
 interface SettingsData {
@@ -47,6 +61,16 @@ const TITLE_HEIGHT = 46
 const SECTION_HEIGHT = 30
 const CHANNEL_HEIGHT = 84
 const FOOTER_HEIGHT = 62
+/**
+ * The row that offers the tutorial again.
+ *
+ * **⚠ Without it the tutorial is a thing that happened to the player once.** It runs on the first
+ * run and writes a flag; a player who skidded through it, or who came to the game before it
+ * existed and was migrated past it on purpose (see `upgradeV11ToV12`), would otherwise have no way
+ * to ask for it. A muted button rather than a primary one: it is the third thing on this screen and
+ * the way out is still the loudest.
+ */
+const REPLAY_HEIGHT = 58
 const SIDE_PADDING = 24
 
 /**
@@ -56,7 +80,8 @@ const SIDE_PADDING = 24
  * readable and the tap targets stop clearing 44px — at which point the honest answer is a panel that
  * overflows a viewport nothing can lay this out in, not one nobody can use.
  */
-const PANEL_UNIT_HEIGHT = TOP_PAD + TITLE_HEIGHT + SECTION_HEIGHT + CHANNEL_HEIGHT * 2 + FOOTER_HEIGHT + BOTTOM_PAD
+const PANEL_UNIT_HEIGHT =
+  TOP_PAD + TITLE_HEIGHT + SECTION_HEIGHT + CHANNEL_HEIGHT * 2 + REPLAY_HEIGHT + FOOTER_HEIGHT + BOTTOM_PAD
 const MIN_SCREEN_MARGIN = 12
 const MIN_HEIGHT_FIT = 0.62
 
@@ -91,6 +116,8 @@ export class Settings extends Phaser.Scene {
   private soundChannel!: Channel
   private musicChannel!: Channel
   private closeButton!: KitButton
+  private replayButton!: KitButton
+  private divider!: KitDivider
 
   constructor() {
     super('Settings')
@@ -129,6 +156,18 @@ export class Settings extends Phaser.Scene {
     // Both channels describe themselves before the first frame, not after the first interaction.
     this.refresh()
 
+    // Between the two channels, so they read as two settings rather than as four rows.
+    this.divider = kitDivider(this)
+    // Clears the flag rather than starting a run: this panel is `launch`ed over whatever opened it,
+    // and starting a scene from here would leave that one alive underneath — the same two-worlds
+    // trap the result screen's Menu button fell into. The next run picks the flag up and teaches.
+    this.replayButton = kitButton(this, t('tutorialReplay'), { muted: true, fontSize: SECTION_FONT_SIZE + 4 })
+    bindAction(this, 'replayTutorial', { pointer: this.replayButton.container, keys: ['T'] }, () => {
+      mutate((state) => {
+        state.tutorialDone = false
+      })
+      this.replayButton.setText(`✓ ${t('tutorialReplay')}`)
+    })
     this.closeButton = kitButton(this, t('close'), { primary: true, fontSize: CLOSE_FONT_SIZE })
     bindAction(this, 'close', { pointer: this.closeButton.container, keys: ['ESC', 'ENTER'] }, () => this.close())
 
@@ -174,13 +213,23 @@ export class Settings extends Phaser.Scene {
 
     let cursor = panelTop + (TOP_PAD + TITLE_HEIGHT + SECTION_HEIGHT) * scale
 
-    for (const channel of [this.soundChannel, this.musicChannel]) {
-      this.layoutChannel(channel, cx, cursor, contentWidth, scale)
-      cursor += CHANNEL_HEIGHT * scale
-    }
+    this.layoutChannel(this.soundChannel, cx, cursor, contentWidth, scale)
+    cursor += CHANNEL_HEIGHT * scale
+    // Midway between the sound slider and the music label — `cursor` is exactly that point,
+    // because a channel's own content ends well above its allotted height.
+    this.divider.draw(cx, cursor + 4 * scale, contentWidth, scale)
+    this.layoutChannel(this.musicChannel, cx, cursor, contentWidth, scale)
+    cursor += CHANNEL_HEIGHT * scale
+
+    this.replayButton.setFontSize((SECTION_FONT_SIZE + 4) * scale)
+    this.replayButton.setMinWidth(contentWidth)
+    this.replayButton.container.setPosition(cx, cursor + (REPLAY_HEIGHT / 2) * scale)
+    cursor += REPLAY_HEIGHT * scale
 
     this.closeButton.setFontSize(CLOSE_FONT_SIZE * scale)
-    this.closeButton.setMinWidth(contentWidth * 0.5)
+    // The full content width, like every other panel's footer button. Half of it read as a control
+    // that had been squeezed rather than as the way out of the screen.
+    this.closeButton.setMinWidth(contentWidth)
     this.closeButton.container.setPosition(cx, panelTop + panelHeight - (BOTTOM_PAD + FOOTER_HEIGHT / 2) * scale)
   }
 
@@ -236,7 +285,13 @@ export class Settings extends Phaser.Scene {
         onToggle(on)
         this.refresh()
       }),
-      slider: kitSlider(this, t('volume'), initialVolume, (volume) => {
+      // **The slider is unlabelled, and losing that label is the point.** Both channels used to
+      // carry a row reading "Volume" under a row reading "Sound" or "Music", so the panel said
+      // `Volume` twice and neither one told the player which channel it belonged to — the answer
+      // was the line above it, which is where the name already was. Dropping it also hands the
+      // track the 30% of the row the label was reserving, which on a phone is the difference
+      // between a rail a thumb can aim at and one it cannot. See `kitSlider`.
+      slider: kitSlider(this, '', initialVolume, (volume) => {
         onVolume(volume)
         this.refresh()
       }),

@@ -8,7 +8,19 @@ import { WORLD_LAYER, worldDepth } from './worldDepth'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowScale } from './shadows'
 import { spinAngle } from './ramp'
 import { PLAYER_BODY_H, PLAYER_WIDTH, PLAYER_Z } from './constants'
-import { createSnailTexture, snailFrameKey, SNAIL_TEXTURE } from './snailArt'
+import { createSnailTexture, snailSkinFrameKey } from './snailArt'
+import { ensureShieldTexture, SHIELD_TEXTURE } from './shieldArt'
+import {
+  SHIELD_BUBBLE_SPAN,
+  shieldBreathAlpha,
+  shieldBreathScale,
+  shieldPopAlpha,
+  shieldPopProgress,
+  shieldPopScale,
+  SHIELD_POP,
+} from './shield'
+import { PICKUP_COLORS } from './artPalette'
+import { DEFAULT_SNAIL_SKIN } from './snailSkins'
 import type { PlayerState } from './playerMotion'
 
 /**
@@ -86,6 +98,8 @@ const GLIDE_UNITS_PER_FRAME = SEGMENT_LENGTH
 export class PlayerView {
   readonly sprite: Phaser.GameObjects.Image
   readonly shadow: Phaser.GameObjects.Ellipse
+  /** The shell drawn round the snail while a shield is carried, and thrown when one breaks. */
+  readonly bubble: Phaser.GameObjects.Image
 
   /** Where the snail was drawn last frame, in screen pixels — for the camera lean and for FX. */
   screenX = 0
@@ -96,6 +110,8 @@ export class PlayerView {
   groundY = 0
 
   private readonly rect = createBillboardRect()
+  /** When the carried bubble was last broken by a hit, in scene ms. `-1` for never. */
+  private brokeAt = -1
   /**
    * The snail's own ground projection, interpolated between the segment's two edges every frame.
    *
@@ -104,8 +120,58 @@ export class PlayerView {
    */
   private readonly ground = createScreenPoint()
 
-  constructor(scene: Phaser.Scene) {
-    createSnailTexture(scene)
+  /**
+   * How much bigger than its collision box this snail is drawn.
+   *
+   * **⚠ 1 everywhere a hit can happen, and the rule that says so is `PLAYER_WIDTH`'s.** The drawn
+   * box is the collision box, because a mascot drawn wider than its body gets hit by things it
+   * visibly cleared and one drawn narrower clips through them. The single exception is the front
+   * screen, which has no obstacles, no pickups and no collision at all: there the mascot is the
+   * subject of the picture rather than a hitbox, and it is drawn bigger on purpose.
+   *
+   * Constructor-only, so it cannot be reached from a render loop that also resolves hits.
+   */
+  private sizeScale: number
+
+  /**
+   * Changes that scale. **Menu-only, for the same reason the option is.**
+   *
+   * A setter rather than a constructor value because the front screen makes the mascot bigger on a
+   * narrow frame — everything on this road is sized off the frame's WIDTH, so on a phone the snail
+   * comes out a fifth of its desktop size, which is right for a hitbox and wrong for the object the
+   * picture is about. Nothing in a run may call this.
+   */
+  setSizeScale(scale: number): void {
+    this.sizeScale = scale
+  }
+
+  /**
+   * Which recolour of the mascot this view draws — see `snailSkins.ts`.
+   *
+   * A field rather than a texture key because the key changes six times a cycle: the glide frame is
+   * derived from distance every render, so the skin has to be the thing that is held and the key
+   * the thing that is computed. Held here rather than read from the save on every frame for the
+   * same reason `getRoadTheme()` is read through a getter and not captured — except in the other
+   * direction: this is a *render* loop, and a save read per frame is a save read 60 times a second.
+   */
+  private skin: string
+
+  /**
+   * Changes it, and rebuilds that skin's frames if this is the first time they have been asked for.
+   *
+   * Exists for the front screen, which is where a skin is chosen: the shop hands its selection back
+   * to `MainMenu`, and the mascot standing on the road *is* the preview. A run never calls this — it
+   * resolves the skin once, at `create()`.
+   */
+  setSkin(scene: Phaser.Scene, skinId: string): void {
+    createSnailTexture(scene, skinId)
+    this.skin = skinId
+  }
+
+  constructor(scene: Phaser.Scene, options: { sizeScale?: number; skin?: string } = {}) {
+    this.skin = options.skin ?? DEFAULT_SNAIL_SKIN
+    createSnailTexture(scene, this.skin)
+    this.sizeScale = options.sizeScale ?? 1
 
     // Below the snail in the display list, and below it in depth: an ellipse drawn over the
     // sprite would read as a hole rather than as a shadow.
@@ -118,15 +184,37 @@ export class PlayerView {
       .setBlendMode(Phaser.BlendModes.MULTIPLY)
       .setDepth(worldDepth(PLAYER_DISTANCE_INDEX, WORLD_LAYER.shadow))
     this.sprite = scene.add
-      .image(0, 0, SNAIL_TEXTURE)
+      .image(0, 0, snailSkinFrameKey(0, this.skin))
       // Bottom centre: a billboard is positioned by the point where it meets the ground.
       .setOrigin(0.5, 1)
       .setDepth(worldDepth(PLAYER_DISTANCE_INDEX, WORLD_LAYER.player))
+
+    ensureShieldTexture(scene)
+    // **Between the player and the pickups**, so the shell's rim draws over the mascot's own edge —
+    // which is what makes it a bubble around the snail rather than a hoop behind it — while a coin
+    // being collected still draws over the bubble. Both are `WORLD_LAYER` tiebreaks under one
+    // segment, so distance still decides first, as it must.
+    this.bubble = scene.add
+      .image(0, 0, SHIELD_TEXTURE)
+      .setTint(PICKUP_COLORS.shield.light)
+      .setVisible(false)
+      .setDepth(worldDepth(PLAYER_DISTANCE_INDEX, (WORLD_LAYER.player + WORLD_LAYER.pickup) / 2))
   }
 
-  /** Both objects, for the camera `ignore()` lists and for teardown. */
+  /**
+   * A hit has just been absorbed: throw the bubble outward and let it go.
+   *
+   * Called by the scene rather than inferred from `shields` falling, because the two are not the
+   * same event — a run can end on the frame a shield breaks, and inferring it from a count would
+   * put the burst on whichever frame the view happened to notice.
+   */
+  popShield(now: number): void {
+    this.brokeAt = now
+  }
+
+  /** Every object, for the camera `ignore()` lists and for teardown. */
   get gameObjects(): Phaser.GameObjects.GameObject[] {
-    return [this.shadow, this.sprite]
+    return [this.shadow, this.sprite, this.bubble]
   }
 
   /**
@@ -145,7 +233,7 @@ export class PlayerView {
     screenHeight: number,
     squash = 1,
     distance = 0,
-    look: { invulnerable: boolean; now: number } = { invulnerable: false, now: 0 },
+    look: { invulnerable: boolean; now: number; shields?: number } = { invulnerable: false, now: 0 },
   ): void {
     const trackLength = trackLengthOf(track.length)
     const worldZ = wrapZ(cameraZ + PLAYER_Z, trackLength)
@@ -158,6 +246,7 @@ export class PlayerView {
     if (ahead >= DRAW_DISTANCE) {
       this.sprite.setVisible(false)
       this.shadow.setVisible(false)
+      this.bubble.setVisible(false)
 
       return
     }
@@ -167,6 +256,7 @@ export class PlayerView {
     if (!Number.isFinite(segment.s1.scale) || segment.s1.scale <= 0) {
       this.sprite.setVisible(false)
       this.shadow.setVisible(false)
+      this.bubble.setVisible(false)
 
       return
     }
@@ -180,6 +270,7 @@ export class PlayerView {
     if (!Number.isFinite(ground.scale) || ground.scale <= 0) {
       this.sprite.setVisible(false)
       this.shadow.setVisible(false)
+      this.bubble.setVisible(false)
 
       return
     }
@@ -191,8 +282,8 @@ export class PlayerView {
       ground,
       player.offsetX,
       0,
-      DRAW_UNITS.width,
-      DRAW_UNITS.height,
+      DRAW_UNITS.width * this.sizeScale,
+      DRAW_UNITS.height * this.sizeScale,
       screenWidth,
       screenHeight,
     )
@@ -227,8 +318,8 @@ export class PlayerView {
       ground,
       player.offsetX,
       player.y,
-      DRAW_UNITS.width,
-      DRAW_UNITS.height,
+      DRAW_UNITS.width * this.sizeScale,
+      DRAW_UNITS.height * this.sizeScale,
       screenWidth,
       screenHeight,
     )
@@ -236,7 +327,7 @@ export class PlayerView {
     // The glide frame. Set before the position for no reason but readability; `setTexture` on the
     // key it already holds is a no-op inside Phaser, so this costs nothing on the five frames out
     // of six where nothing changes.
-    this.sprite.setTexture(snailFrameKey(Math.floor(distance / GLIDE_UNITS_PER_FRAME)))
+    this.sprite.setTexture(snailSkinFrameKey(Math.floor(distance / GLIDE_UNITS_PER_FRAME), this.skin))
     this.sprite.setVisible(true)
     this.sprite.setPosition(this.rect.x, this.rect.y)
     // Squash and stretch is volume-preserving: wider when flatter. Applied here rather than baked
@@ -256,6 +347,39 @@ export class PlayerView {
 
     this.screenX = this.rect.x
     this.screenY = this.rect.y
+    this.drawBubble(look.shields ?? 0, look.now)
+  }
+
+  /**
+   * The shield's shell: carried, or coming apart.
+   *
+   * Positioned on the sprite's own drawn box rather than re-projected, so it cannot disagree with
+   * the mascot about where the mascot is — the same argument `groundX`/`groundY` are recorded for.
+   * Sized off the **width** in both axes: the snail is 1.6 times wider than it is tall, and an
+   * ellipse stretched to that box reads as a shadow standing on its end rather than as a shell.
+   *
+   * The break outlives the shield it belonged to, which is the point: `shields` is already one
+   * lower on the frame the burst starts. See `shield.ts`.
+   */
+  private drawBubble(shields: number, now: number): void {
+    const popping = this.brokeAt >= 0 && now - this.brokeAt < SHIELD_POP.durationMs
+    const size = this.sprite.displayWidth * SHIELD_BUBBLE_SPAN
+
+    if (!popping && shields <= 0) {
+      this.bubble.setVisible(false)
+
+      return
+    }
+
+    const progress = popping ? shieldPopProgress(now - this.brokeAt) : 0
+    const scale = popping ? shieldPopScale(progress) : shieldBreathScale(now)
+    const alpha = popping ? shieldPopAlpha(progress) : shieldBreathAlpha(now)
+
+    this.bubble.setVisible(true)
+    // The snail's centre: its origin is at its feet, so half a drawn height up from there.
+    this.bubble.setPosition(this.sprite.x, this.sprite.y - this.sprite.displayHeight / 2)
+    this.bubble.setDisplaySize(size * scale, size * scale)
+    this.bubble.setAlpha(alpha)
   }
 
   /** The ground height under the snail, for anything that needs the surface it is standing on. */
@@ -270,5 +394,6 @@ export class PlayerView {
   destroy(): void {
     this.sprite.destroy()
     this.shadow.destroy()
+    this.bubble.destroy()
   }
 }

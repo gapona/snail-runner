@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser'
-import { CAMERA_HEIGHT, DECOR_POOL_SIZE, SEGMENT_LENGTH } from '../road/constants'
+import { CAMERA_HEIGHT, DECOR_POOL_SIZE, ROAD_WIDTH, SEGMENT_LENGTH, SPRITE_SCALE } from '../road/constants'
 import { Backdrop } from '../road/Backdrop'
 import { buildLevelCircuit, buildMenuCircuit, buildRunCircuit, type CircuitSpec } from '../road/circuits'
 import { createDecorTextures, DECOR_KEYS } from '../road/decor'
@@ -120,7 +120,19 @@ export class WorldView {
     // deterministically from a seed — see `decorateTrack` on why that matters.
     const decorTextures = createDecorTextures(scene)
 
-    decorateTrack(this.track, DECOR_KEYS, options.decorSeed === undefined ? {} : { seed: options.decorSeed })
+    // **The placer is told how wide each prop is drawn**, or it places them as points and the big
+    // ones stand on the road — see `DecorateOptions.halfWidthOf`. The width comes from the texture
+    // that will actually be drawn, so a re-rendered prop moves its own placement with it.
+    // The same `DecorTexture` records `RoadSprites` draws from, so the width the placer reasons
+    // about is the width that reaches the screen.
+    const decorWidths = new Map(decorTextures.map((texture) => [texture.key, texture.width]))
+    const halfWidthOf = (key: string): number =>
+      ((decorWidths.get(key) ?? 0) * SPRITE_SCALE) / (2 * ROAD_WIDTH)
+
+    decorateTrack(this.track, DECOR_KEYS, {
+      halfWidthOf,
+      ...(options.decorSeed === undefined ? {} : { seed: options.decorSeed }),
+    })
 
     // The flat background fill is what shows behind the parallax layers, so a frame where a
     // layer has not been drawn yet is still the theme's own sky rather than black.

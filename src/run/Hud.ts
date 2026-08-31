@@ -6,6 +6,15 @@ import { toCssColor } from '../ui/theme'
 import { uiScale } from '../ui/uiScale'
 import { HUD_DEPTH } from './hudDepth'
 import { FEVER_EASE_MS, FEVER_MS, RUN_LIVES, SPEED_BASE } from './constants'
+import { PICKUP_COLORS } from './artPalette'
+
+/**
+ * How many shield pips are drawn before the readout switches to a `+`.
+ *
+ * Shields do not cap in `addShield`, and a row of eleven diamonds is a number to count rather than
+ * a shape to glance at — which is the whole reason the lives are pips in the first place.
+ */
+const MAX_SHIELD_PIPS = 5
 import { feverCharge } from './fever'
 import { runScore, type RunState } from './runState'
 
@@ -41,6 +50,18 @@ export class Hud {
   private readonly score: Phaser.GameObjects.Text
   private readonly distance: Phaser.GameObjects.Text
   private readonly lives: Phaser.GameObjects.Text
+  /**
+   * How many shields are being carried, as pips beside the lives.
+   *
+   * **⚠ Its own object because it is its own colour, and its own colour because it is not a life.**
+   * The lives are one `Text` and a `Text` has one colour, so a shield drawn into that string would
+   * be a life-coloured pip standing for something that is spent first and bought separately. It sits
+   * *after* the lives and in the shield pickup's own green, which is the colour the player took it
+   * in — the only colour they have ever been shown for it.
+   *
+   * The whole of this used to be a `◆` glued onto the front of the coin counter. See `shield.ts`.
+   */
+  private readonly shields: Phaser.GameObjects.Text
   private readonly coins: Phaser.GameObjects.Text
   /** The fruit gauge and the Fever meter, drawn together because they are one object's two states. */
   private readonly gauge: Phaser.GameObjects.Graphics
@@ -52,6 +73,8 @@ export class Hud {
   private shownMetres = 0
   /** Where `layout` put the gauge and how big it is, so `update` can redraw without re-deriving it. */
   private gaugeBox = { x: 0, y: 0, w: 0, h: 0 }
+  /** Where the lives row starts, so `update` can lay the shields beside whatever the lives became. */
+  private livesRow = { x: 0, y: 0, gap: 0 }
   /** Where the speed badge sits and how big its chrome is; its width follows the text. */
   private plateAnchor = { x: 0, bottom: 0, height: 0, pad: 0 }
 
@@ -74,6 +97,11 @@ export class Hud {
       .setStroke(toCssColor(KIT.plate), 4)
       .setDepth(HUD_DEPTH)
     this.lives = scene.add.text(0, 0, '', body).setOrigin(0, 0).setStroke(toCssColor(KIT.plate), 4).setDepth(HUD_DEPTH)
+    this.shields = scene.add
+      .text(0, 0, '', { ...body, color: toCssColor(PICKUP_COLORS.shield.light) })
+      .setOrigin(0, 0)
+      .setStroke(toCssColor(KIT.plate), 4)
+      .setDepth(HUD_DEPTH)
     this.coins = scene.add
       .text(0, 0, '', { ...body, color: toCssColor(KIT.coin) })
       .setOrigin(1, 0)
@@ -87,8 +115,34 @@ export class Hud {
       .setDepth(HUD_DEPTH + 1)
   }
 
+  /**
+   * Where a readout the tutorial wants to point at actually is, in screen pixels.
+   *
+   * **The HUD is asked rather than told**, because a card that carried its own coordinates would be
+   * a second opinion about where the leaf is — and the leaf's own box is solved from the frame's
+   * width every `layout`. See `TutorialCard.update`.
+   */
+  highlightRect(target: 'gauge' | 'lives'): { x: number; y: number; w: number; h: number } {
+    if (target === 'gauge') {
+      const { x, y, w, h } = this.gaugeBox
+
+      // The stem reaches back past the leaf's own left edge, so the box is widened to hold it —
+      // and the vertical padding is kept tight, because the leaf sits one margin from the top of
+      // the frame and a generous ring would be drawn with its own top edge off the screen.
+      return { x: x - w * 0.14, y: y - h * 0.62, w: w * 1.2, h: h * 1.24 }
+    }
+
+    // The lives row, and deliberately the whole row rather than the shield pips alone: before the
+    // shield is collected there are no pips, and a ring drawn round an empty spot points at nothing.
+    // The card that uses this says a shield is taken "instead of a life", so the lives are what it
+    // is about anyway.
+    const width = Math.max(this.lives.width + this.shields.width + this.livesRow.gap, 48)
+
+    return { x: this.livesRow.x - 8, y: this.livesRow.y - 6, w: width + 16, h: this.lives.height + 12 }
+  }
+
   get gameObjects(): Phaser.GameObjects.GameObject[] {
-    return [this.score, this.distance, this.lives, this.coins, this.gauge, this.speedPlate, this.speed]
+    return [this.score, this.distance, this.lives, this.shields, this.coins, this.gauge, this.speedPlate, this.speed]
   }
 
   /**
@@ -119,7 +173,14 @@ export class Hud {
     this.lives.setText('●'.repeat(Math.max(0, run.lives)) + '○'.repeat(Math.max(0, RUN_LIVES - run.lives)))
     this.lives.setColor(toCssColor(run.lives <= 1 ? KIT.warning : KIT.rim))
 
-    this.coins.setText(run.coins > 0 || run.shields > 0 ? `${run.shields > 0 ? '◆ ' : ''}🪙 ${run.coins}` : '')
+    // One pip per shield, in the pickup's own green, laid after the lives — a count is a number to
+    // read and this has to survive a glance, which is the same argument the lives themselves are on.
+    this.shields.setText('◆'.repeat(Math.min(run.shields, MAX_SHIELD_PIPS)) + (run.shields > MAX_SHIELD_PIPS ? '+' : ''))
+    // Beside the lives rather than under them — they are read as one row: how much carelessness is
+    // left, and how much of it is already paid for. Placed here because `this.lives.width` is only
+    // a real number once the pips are in it; see `livesRow`.
+    this.shields.setPosition(this.livesRow.x + this.lives.width + this.livesRow.gap, this.livesRow.y)
+    this.coins.setText(run.coins > 0 ? `🪙 ${run.coins}` : '')
 
     // **The speed is a multiple of the run's own floor, not a number of units.** 5760 means nothing;
     // "2.4x" is the same fact in the unit the player actually experiences, and it is the one readout
@@ -216,11 +277,19 @@ export class Hud {
     const margin = 16 * scale
 
     this.score.setFontSize(34 * scale)
-    for (const text of [this.distance, this.lives, this.coins, this.speed]) text.setFontSize(22 * scale)
+    for (const text of [this.distance, this.lives, this.shields, this.coins, this.speed]) text.setFontSize(22 * scale)
 
     anchorTopLeft(this.score, margin, margin)
     this.distance.setPosition(margin, this.score.y + this.score.height + 2 * scale)
     this.lives.setPosition(margin, this.distance.y + this.distance.height + 4 * scale)
+    // **⚠ The shields are placed in `update`, not here, and placing them here drew them ON TOP of
+    // the lives.** They sit beside the lives, so their x follows the lives' own *width* — and
+    // `layout` runs once at scene create, before the first `update` has put any pips in either
+    // string, so that width is zero and both readouts land on the same pixel. It never corrects
+    // itself either: `layout` only runs again on a resize. Same rule, and the same failure, as the
+    // speed badge's chrome one block below: **a thing positioned from another thing's text has to
+    // be positioned where the text is written.** Reported from a screenshot of the corner.
+    this.livesRow = { x: margin, y: this.lives.y, gap: 10 * scale }
 
     // The leaf, top right, sized off the width so it keeps its proportion on any frame.
     const leafW = Math.min(200 * scale, width * 0.24)

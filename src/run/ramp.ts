@@ -92,11 +92,58 @@ export const RAMP_DEPTH = SEGMENT_LENGTH
  * What separates a ramp from an obstacle is its **shape** — a sloped top edge, which nothing else
  * on this road has — and its markings. Neither needs it to be short, and both need it to be big
  * enough to see from far enough away to line up on.
+ *
+ * **It moved with the mascot, and `verify:ramp` is what said it had to.** The two things it is
+ * actually held between are both derived: it must clear `PLAYER_BODY_H` (below the snail it reads
+ * as dirt on the road) and stay under `OBSTACLE_BANDS.blocking.yHigh` (at or above it, it reads as
+ * the one class you cannot jump). Raising the snail 261 -> 340 put 300 on the wrong side of the
+ * first, so this is 390 — the same 1.15x of a body height it always was, now against a body that
+ * is the size it is.
  */
-export const RAMP_HEIGHT = 300
+export const RAMP_HEIGHT = 390
 
 /** How far apart ramps are laid, in world units, before the per-ramp jitter. */
 export const RAMP_SPACING_Z = SEGMENT_LENGTH * 210
+
+/**
+ * How much the walk may scale the gap between two ramps.
+ *
+ * Named rather than written inline because `rampIdStride` has to divide by the *smallest* of them:
+ * the tightest legal spacing is what bounds how many ramps a lap can hold.
+ */
+export const RAMP_SPACING_JITTER = { min: 0.7, max: 1.3 } as const
+
+/**
+ * The first id a lap's ramps may use, so that **two laps never share one.**
+ *
+ * ## ⚠ The defect this exists to fix
+ *
+ * `placeRamps` opened with `let id = 0`, so every lap numbered its ramps from zero — and
+ * `RunScene.layArc` finds a ramp's arc chain by `pickup.arcOf === ramp.id` over *every live pickup*.
+ * The lap is handed over a segment at a time (`lapLayout.ts`), which means **two laps' contents are
+ * on the ground simultaneously, always**. So a ramp matched its own arc *and the next lap's ramp of
+ * the same id*.
+ *
+ * Measured on the shipped placer: **6 of 6 ramp ids collide between consecutive laps, and every one
+ * of them turns a 5-coin chain into a 10-coin one.** `layArc` then lays `mine.length` points along
+ * this ramp's flight — so five coins are teleported in from elsewhere on the track and the player's
+ * own five are re-spaced for a chain twice the length.
+ *
+ * Reported twice, as **the number of coins changing when you take off from a ramp.** That is
+ * literally what it was.
+ *
+ * **It is the third time this project has been bitten by ids that restart.** `placeObstacles` grew
+ * its `firstId` when two difficulty bands each numbered from zero and left 66% of a lap unable to
+ * hit the player; `arcRelaid` became a `WeakSet` of ramp objects rather than a set of ids for the
+ * same reason. The rule has to be stated once where the ids are *made*: **an id is a name, and two
+ * things alive at once may not share one.**
+ *
+ * Derived from the track rather than picked, so it cannot be outgrown: the tightest legal gap is
+ * `RAMP_SPACING_Z * RAMP_SPACING_JITTER.min`, so no lap can hold more ramps than this.
+ */
+export function rampIdStride(trackLength: number): number {
+  return Math.ceil(trackLength / (RAMP_SPACING_Z * RAMP_SPACING_JITTER.min)) + 1
+}
 
 /** How far a ramp sits from the centreline at most, in half-widths. */
 export const RAMP_MAX_OFFSET = ROAD_EDGE - RAMP_HALF_WIDTHS
@@ -179,11 +226,17 @@ export function placeRamps(
 ): Ramp[] {
   const rng = createRng(seed + Math.round(lapOffset / SEGMENT_LENGTH))
   const ramps: Ramp[] = []
-  let id = 0
+  // **Numbered from the lap, never from zero** — see `rampIdStride`. Two laps are on the ground at
+  // once, and a ramp finds its own arc chain by id.
+  let id = Math.round(lapOffset / trackLength) * rampIdStride(trackLength)
 
   const from = lapOffset === 0 ? SEGMENT_LENGTH * 60 : 0
 
-  for (let z = from; z < trackLength; z += RAMP_SPACING_Z * (0.7 + rng() * 0.6)) {
+  for (
+    let z = from;
+    z < trackLength;
+    z += RAMP_SPACING_Z * (RAMP_SPACING_JITTER.min + rng() * (RAMP_SPACING_JITTER.max - RAMP_SPACING_JITTER.min))
+  ) {
     // **Redrawn if it lands on an obstacle, and dropped if it cannot be placed.** A ramp inside a
     // boulder charges the player a life for taking the launch, which is not a decision — the same
     // generate-and-check the obstacle rows and the pickup chains both use, and the same outcome

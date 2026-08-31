@@ -6,6 +6,7 @@
 // `window`. Plain assertions, no framework, via the register-ts-loader.mjs +
 // ts-extensionless-loader.mjs Node-native-TS setup -- same shape as verify-scroll-momentum.mjs.
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 /**
  * The density the decal placer was tuned at, for the checks that exercise it.
@@ -74,6 +75,8 @@ import { BIOMES, BIOME_IDS, biomeById, biomeForSegment, biomeIndexForSegment, bi
 import {
   SUN,
   sunCenterX,
+  sunSize,
+  SUN_MAX_WIDTH_FRACTION,
   SUN_CORE_STOP,
   SUN_CORE_WHITEN,
   SUN_RIM_WHITEN,
@@ -1858,6 +1861,62 @@ check('the near ground is not one stretched segment, at any viewport', () => {
   }
 })
 
+check('⚠ no prop is ever drawn onto the road, however wide it is', () => {
+  // **`minOffset` positions a sprite's CENTRE and the sprite is drawn from a bottom-centre origin**,
+  // so its inner edge reaches back toward the road by however wide it happens to be. Every decor PNG
+  // in the shipped set is 384px, which at `SPRITE_SCALE` is 0.96 half-widths of *half*-width against
+  // a `minOffset` of 1.35 and an asphalt edge at 1.0 — so an ordinary verge prop sat a third of the
+  // way across the carriageway and a near-tier one at 1.9x reached past the far kerb. Reported as
+  // big roadside textures climbing onto the road.
+  //
+  // The widths here are read from the shipped files rather than declared, so a re-rendered prop is
+  // measured as it will actually be drawn.
+  const width = new Map()
+
+  for (const key of DECOR_KEYS_LIVE) {
+    try {
+      width.set(key, readFileSync(`public/assets/decor/${key.replace('decor-', '')}.png`).readUInt32BE(16))
+    } catch {
+      // A slot with no art draws its procedural shape; those are narrow and are not what this is about.
+    }
+  }
+  const halfWidthOf = (key) => ((width.get(key) ?? 0) * SPRITE_SCALE) / (2 * ROAD_WIDTH)
+  const innerEdges = (options) => {
+    const track = buildRunCircuit()
+
+    decorateTrack(track, DECOR_KEYS_LIVE, options)
+
+    const edges = []
+
+    for (const segment of track) {
+      for (const sprite of segment.sprites) {
+        const variation = variationFor(segment.index, Math.sign(sprite.offsetX), sprite.key)
+
+        edges.push(Math.abs(sprite.offsetX) - halfWidthOf(sprite.key) * sprite.tierScale * variation.scale)
+      }
+    }
+
+    return edges
+  }
+
+  const shipped = innerEdges({ halfWidthOf })
+  const worst = Math.min(...shipped)
+
+  assert.ok(worst >= 1, `a prop is drawn to offsetX ${worst.toFixed(2)}, inside the asphalt's own edge at 1`)
+
+  // **The negative control is the placer without the widths**, which is what shipped: it has to
+  // still put props on the road, or this check is measuring a property of the art rather than of
+  // the placement.
+  const points = innerEdges({})
+  const over = points.filter((edge) => edge < 1).length
+
+  assert.ok(over > 0, 'point placement no longer overlaps the road, so this check is measuring nothing')
+  console.log(
+    `    ${shipped.length} props: worst inner edge ${worst.toFixed(2)} against the kerb at 1.00 — ` +
+      `placed as points, ${over} of them (${((over / points.length) * 100).toFixed(1)}%) reach ${Math.min(...points).toFixed(2)}`,
+  )
+})
+
 console.log('the decor tint')
 
 /** The dimmest a prop may end up after both multiplies, as relative luminance. */
@@ -3064,29 +3123,55 @@ check('the sun stays inside the frame at every supported aspect, and out of the 
   // Sized off the frame's HEIGHT: measured off the width it is a pinhead on an ultrawide frame
   // and half the sky on a portrait phone. This check is what makes that claim testable, since the
   // failure only shows at an aspect nobody happened to open.
-  const viewports = [[1920, 1080], [1568, 772], [3440, 1440], [844, 390], [390, 844]]
+  const viewports = [[1920, 1080], [1568, 772], [3440, 1440], [844, 390], [390, 844], [375, 667]]
   let worstTop = 1
   let offFrameWithoutClamp = 0
+  let widestShare = 0
+  let boundedAspects = 0
 
   for (const [width, height] of viewports) {
-    const drawn = height * SUN.size
+    const drawn = sunSize(width, height)
     const left = sunCenterX(width, height) - drawn / 2
     const right = sunCenterX(width, height) + drawn / 2
     const top = height * SUN.y - drawn / 2
     const bottom = height * SUN.y + drawn / 2
 
     assert.ok(left > 0 && right < width, `at ${width}x${height} the sun runs from ${left.toFixed(0)} to ${right.toFixed(0)}`)
-    // Shown to bite: the unclamped fraction is what put the sun off a portrait frame's edge.
-    if (width * SUN.x + drawn / 2 > width) offFrameWithoutClamp += 1
+    // **Shown to bite against the UNBOUNDED size, which is now the only thing that needs it.**
+    // `sunCenterX` was written because a sun sized off the height ran off a portrait frame's edge;
+    // `SUN_MAX_WIDTH_FRACTION` shrinks that sun until it fits on its own, so the clamp no longer
+    // fires on any shipped aspect. It is kept — it is the bound that holds if `SUN.x` ever moves —
+    // and the control is measured against what it was written for, so it is not silently dormant.
+    if (width * SUN.x + (height * SUN.size) / 2 > width) offFrameWithoutClamp += 1
     assert.ok(top > 0, `at ${width}x${height} the sun's top edge is at ${top.toFixed(0)}`)
     // The horizon is where the ground starts; a sun crossing it is a sun behind the road.
     assert.ok(bottom < height * HORIZON_Y, `at ${width}x${height} the sun reaches ${bottom.toFixed(0)} against a horizon at ${(height * HORIZON_Y).toFixed(0)}`)
     worstTop = Math.min(worstTop, top / height)
+
+    // **⚠ And it may not swallow a portrait frame's WIDTH.** Sized off the height alone, `0.3` is
+    // 15% of a 1568px desktop and 53% of a 375px phone — which is how the sun ended up drawn
+    // through the wordmark on an iPhone SE and behind the leaf gauge in a run. See
+    // `SUN_MAX_WIDTH_FRACTION`.
+    widestShare = Math.max(widestShare, drawn / width)
+    if (height * SUN.size > width * SUN_MAX_WIDTH_FRACTION) boundedAspects += 1
   }
 
-  assert.ok(offFrameWithoutClamp > 0, 'no supported aspect needs the clamp, so `sunCenterX` is untested')
+  assert.ok(
+    offFrameWithoutClamp > 0,
+    'no supported aspect would need the clamp even unbounded, so `sunCenterX` is untested',
+  )
+  assert.ok(
+    widestShare <= SUN_MAX_WIDTH_FRACTION + 1e-9,
+    `the sun reaches ${(widestShare * 100).toFixed(0)}% of some frame's width`,
+  )
+  // Shown to bite, like the clamp above it: some supported aspect must actually be bounded by this,
+  // or the ceiling is a constant nothing measures.
+  assert.ok(boundedAspects > 0, 'no supported aspect needs the width bound, so `sunSize` is untested')
   console.log(
-    `    sun spans ${(SUN.size * 100).toFixed(0)}% of frame height; ${offFrameWithoutClamp} of ${viewports.length} aspects would put it off the edge unclamped; closest its top edge comes is ${(worstTop * 100).toFixed(1)}%`,
+    `    sun spans ${(SUN.size * 100).toFixed(0)}% of frame height, at most ${(widestShare * 100).toFixed(0)}% of its width; ` +
+      `${offFrameWithoutClamp} of ${viewports.length} aspects would go off the edge unbounded and unclamped, ` +
+      `${boundedAspects} need the width bound; ` +
+      `closest its top edge comes is ${(worstTop * 100).toFixed(1)}%`,
   )
 })
 

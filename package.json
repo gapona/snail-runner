@@ -13,7 +13,9 @@
     "verify:run-speed": "node --import ./scripts/register-ts-loader.mjs scripts/verify-run-speed.mjs",
     "verify:player": "node --import ./scripts/register-ts-loader.mjs scripts/verify-player.mjs",
     "verify:jump": "node --import ./scripts/register-ts-loader.mjs scripts/verify-jump.mjs",
+    "verify:tutorial": "node --import ./scripts/register-ts-loader.mjs scripts/verify-tutorial.mjs",
     "verify:obstacles": "node --import ./scripts/register-ts-loader.mjs scripts/verify-obstacles.mjs",
+    "verify:critters": "node --import ./scripts/register-ts-loader.mjs scripts/verify-critters.mjs",
     "verify:audio": "node --import ./scripts/register-ts-loader.mjs scripts/verify-audio.mjs",
     "verify:ui": "node --import ./scripts/register-ts-loader.mjs scripts/verify-ui.mjs",
     "verify:mattes": "node scripts/verify-mattes.mjs",
@@ -21,7 +23,10 @@
     "verify:fever": "node --import ./scripts/register-ts-loader.mjs scripts/verify-fever.mjs",
     "verify:formations": "node --import ./scripts/register-ts-loader.mjs scripts/verify-formations.mjs",
     "verify:ramp": "node --import ./scripts/register-ts-loader.mjs scripts/verify-ramp.mjs",
-    "verify:layout": "node --import ./scripts/register-ts-loader.mjs scripts/verify-layout.mjs"
+    "verify:platform": "node --import ./scripts/register-ts-loader.mjs scripts/verify-platform.mjs",
+    "verify:menu": "node --import ./scripts/register-ts-loader.mjs scripts/verify-menu.mjs",
+    "verify:layout": "node --import ./scripts/register-ts-loader.mjs scripts/verify-layout.mjs",
+    "verify:skins": "node --import ./scripts/register-ts-loader.mjs scripts/verify-skins.mjs"
   },
   "dependencies": {
     "phaser": "^4.2.0"

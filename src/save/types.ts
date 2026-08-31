@@ -1,6 +1,6 @@
 import { DEFAULT_MUSIC_VOLUME, DEFAULT_SOUND_VOLUME } from '../audio/volume'
 
-export const SAVE_SCHEMA_VERSION = 10 as const
+export const SAVE_SCHEMA_VERSION = 12 as const
 
 export interface SaveSettings {
   /**
@@ -19,8 +19,8 @@ export interface SaveSettings {
   musicVolume: number
 }
 
-export interface SaveStateV9 {
-  v: 10
+export interface SaveStateV11 {
+  v: 11
   bestScore: number
   /**
    * Furthest wave ever cleared in a single run — the run's own progress record, separate from
@@ -85,6 +85,19 @@ export interface SaveStateV9 {
    * same reason `selectedWeapon` is checked rather than believed.
    */
   weaponLoadout: string[]
+  /**
+   * Which recolour of the mascot the player wears.
+   *
+   * **Ownership is not a field, the choice is** — the same split every other cosmetic here makes.
+   * A bought skin is an ordinary `'unlock'` in `purchases` behind `skinItemId`, sharing that array
+   * with the themes; `verify:skins` asserts the two id spaces cannot claim each other's ids. What
+   * is genuinely new state is which one is worn, and that is what took the schema to 11.
+   *
+   * Never trusted on its own, for the reason `selectedTheme` is not: `resolveSelectedSnail` checks
+   * it against `purchases` and falls back to the free skin, because a save can outlive a skin id
+   * and can be edited by hand.
+   */
+  selectedSnail: string
   /** Shop currency balance — see `src/shop/coins.ts` for the pure earn/spend/afford logic
    * that operates on this field (always via `store.mutate()`), and CLAUDE.md "Shop Layer". */
   coins: number
@@ -94,7 +107,25 @@ export interface SaveStateV9 {
   settings: SaveSettings
 }
 
-export type SaveState = SaveStateV9
+export interface SaveStateV12 extends Omit<SaveStateV11, 'v'> {
+  v: 12
+  /**
+   * Whether the player has already been taught the game — see `run/tutorial.ts`.
+   *
+   * **⚠ A returning save gets `true` and a fresh one gets `false`, and that asymmetry is the whole
+   * decision.** The tutorial is the first four hundred segments of a first run; a player who has
+   * been running this game for weeks is not a first-time player, and dealing them a hand-placed
+   * beginner's road with cards on it would be the upgrade taking their game away for a minute.
+   * `upgradeV11ToV12` therefore writes `true`, which is *not* what the normaliser would default —
+   * the one migration in this ladder that deliberately disagrees with its own default.
+   *
+   * It stays reachable: Settings has a button that clears it, so the tutorial is something a player
+   * can ask for rather than something that happened to them once.
+   */
+  tutorialDone: boolean
+}
+
+export type SaveState = SaveStateV12
 
 /**
  * The `selectedTheme` value meaning "whatever the level says".
@@ -138,14 +169,25 @@ export const DEFAULT_WEAPON_ID = 'lance'
  */
 export const DEFAULT_SHIP_ID_VALUE = 'lance-hull'
 
+/**
+ * The mascot skin a save starts on.
+ *
+ * **Must equal `DEFAULT_SNAIL_SKIN` in `src/run/snailSkins.ts`**, and `verify:skins` asserts it.
+ * Duplicated rather than imported for the reason `DEFAULT_THEME_ID` is: the save layer needs to
+ * know that a skin id is a string, not what skins exist or how one is drawn.
+ */
+export const DEFAULT_SNAIL_ID = 'amber'
+
 export const DEFAULT_SAVE_STATE: SaveState = {
   v: SAVE_SCHEMA_VERSION,
+  tutorialDone: false,
   bestScore: 0,
   bestWave: 0,
   themeProgress: {},
   selectedTheme: AUTO_THEME_ID,
   selectedWeapon: DEFAULT_WEAPON_ID,
   selectedShip: DEFAULT_SHIP_ID_VALUE,
+  selectedSnail: DEFAULT_SNAIL_ID,
   weaponLoadout: [DEFAULT_WEAPON_ID],
   coins: 0,
   purchases: [],

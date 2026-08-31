@@ -16,6 +16,7 @@ import {
   SUN_RAYS,
   SUN_TEXTURE_SIZE,
   sunCenterX,
+  sunSize,
   sunRay,
   sunShimmer,
 } from './constants'
@@ -287,7 +288,7 @@ export class Backdrop {
     this.clouds.setTexture(cloudTextureKey())
     this.sun.setTexture(sunTextureKey())
     this.sunRays.setTexture(sunRaysTextureKey())
-    this.sunSize = height * SUN.size
+    this.sunSize = sunSize(width, height)
     // Clamped rather than placed at the bare fraction: `SUN.x` is a share of the width and
     // `SUN.size` a share of the height, and on a portrait frame those diverge enough to push
     // the sun off the edge. See `sunCenterX`.
@@ -518,7 +519,7 @@ export function skyPlateKey(themeId: string): string {
 }
 
 /** Texture key for sky layer `index` of the active theme. */
-function skyTextureKey(index: number): string {
+export function skyTextureKey(index: number): string {
   return `sky-${getRoadThemeId()}-${index}`
 }
 

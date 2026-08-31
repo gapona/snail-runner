@@ -69,11 +69,18 @@ state space moved.
 
 ### An obstacle is a vertical band, not a flag
 
-One rule instead of three. An obstacle carries `[yLow, yHigh]` in world units, the player's body is
+One rule instead of a flag. An obstacle carries `[yLow, yHigh]` in world units, the player's body is
 `[y, y + PLAYER_BODY_H]`, and a hit is those two intervals overlapping **and** the `offsetX`
 intervals overlapping. Nothing anywhere asks "is this jumpable?" — see `OBSTACLE_BANDS` in
-`src/run/constants.ts` for the three rows that fall out of the arithmetic, and for why the third
-(`overhead`, which punishes being airborne) is mandatory rather than decorative.
+`src/run/constants.ts` for the two rows that fall out of the arithmetic.
+
+**⚠ There were three, and the third was removed after being reported three times.** `overhead`
+(`[362, 560]` — run under it, hit by jumping into it) was the class that punished being airborne,
+and this file argued at length that it was mandatory. What killed it is that **it cannot be drawn**:
+the sprite's canvas *is* the collision band, so a band starting above the snail draws floating with
+nothing beneath it, and legs are unavailable because the player passes underneath at every
+`offsetX`. A fallen log, a banded boom arm and a hazard board hung from a rail were all reported as
+"a thing hanging in the air". See "The obstacles are one family of road barriers".
 
 ### What was cut, and where the rest went
 
@@ -98,9 +105,10 @@ is the same question in both games.
 
 ### Reading the rest of this document
 
-**The runner's own chapters are the fifteen between "## UI Kit" and "## Road Renderer"** — The Run,
-The Snail, The Jump, The Ramp, Obstacles, Draw Order, Pickups, The Handover, Chains, Fever, The
-Slime Trail, The Art, The Difficulty Curve, The End Of A Run, The HUD. "Four Things From One
+**The runner's own chapters are the ones between "## UI Kit" and "## Road Renderer"** — The Run,
+The Snail, The Jump, The Ramp, Obstacles, Bugs That Run At You, Draw Order, Pickups, The Handover, Chains, Fever, The
+Slime Trail, The Art, The Mascot Was Too Small, A Snail You Can Choose, The Difficulty Curve, The
+End Of A Run, The HUD. "Four Things From One
 Screenshot" collects a round of player reports across several of them. Those describe this game.
 
 Below them, everything about the road, the billboards, the biomes, the themes, the interface kit,
@@ -133,7 +141,10 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
 - `npm run verify:run-speed` — the run's own clock: `src/run/runState.ts`'s distance integration is
   frame-rate invariant, and `wrapZ` on a negative `z` returns to the end of the track rather than to
   zero. See "The Run".
-- `npm run verify:player` — `src/run/playerMotion.ts`'s horizontal spring: frame-rate invariance,
+- `npm run verify:player` — the player module, motion **and death**: `playerDeath.ts`'s wreck (the
+  run does not end on the frame the last life goes, a second fatal hit neither restarts it nor ends
+  the run twice, the swell and the fade ease opposite ways, and the flash is over before the panel
+  arrives) alongside `src/run/playerMotion.ts`'s horizontal spring: frame-rate invariance,
   the soft wall at the road's edge, and no drift on a `ROAD_CURVE.HARD` section under a still
   finger. See "The Snail".
 - `npm run verify:jump` — the same module's vertical: air time and apex invariant to frame rate,
@@ -148,19 +159,50 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
   172 degrees off**, the band rule already covers the apex with no invulnerability flag (and 31% of
   the flight is still hittable, measured), and air control is weakened without being switched off.
   See "The Ramp, And Landing On Your Feet".
-- `npm run verify:fever` — `src/run/fever.ts`: the gauge does not drain, the guard outlives the
-  speed, and **in 200 simulated exits over the real placer's output the first obstacle a player can
-  be hit by arrives no sooner than `REACTION_MS`** — shown failing first against the same simulation
-  with the road-clearing removed. See "Fever, And The Second In Which It Ends".
+- `npm run verify:fever` — `src/run/fever.ts`: the gauge does not drain, the chain is paid for in
+  fruit, and **there is no invulnerability at all** — asserted structurally, and paid for by
+  `MAX_ATTAINABLE_SPEED` being exactly `SPEED_CAP * FEVER_SPEED_FACTOR`, so every row on the lap was
+  already spaced against `REACTION_MS` at the speed a Fever travels. Measures the tightest row pair
+  on the real placer at that speed (686ms against a 450ms floor) and carries twice-Fever-speed as the
+  control. See "The Guard Is Gone".
+- `npm run verify:skins` — `src/run/snailSkins.ts`: the mascot's wardrobe, **measured on the real
+  pixels rather than on the table.** Decodes `snail-0.png`, runs the shipped `recolour` over every
+  one of its 15810 opaque pixels, and asserts the two hue families are still where the constants say
+  they are, that no skin puts the snail inside the reserved threat band (shown rejecting a skin
+  rotated onto `THREAT_COLOR`, which paints 55% of the mascot illegal), that every skin keeps twice
+  the scenery's saturation and 85% of the render's own, and that the two shop id spaces cannot claim
+  each other's ids. See "A Snail You Can Choose".
+- `npm run verify:menu` — `src/ui/menuLayout.ts`: the front screen's zones and its entry budget.
+  **Nothing is laid on the vanishing point** (asserted against `HORIZON_Y` itself, not a copy), the
+  bands are ordered and disjoint, every one of them holds a 44px touch target at 320x568, and every
+  step of the entry cascade finishes inside its 400ms budget. See "The Front Screen Is An Attract
+  Mode".
 - `npm run verify:layout` — `src/run/lapLayout.ts`: **nothing already on screen is ever
   rewritten.** Drives a real run over three laps against the real placers and asserts no segment
   inside the visible band ever changes; carries the shipped whole-lap swap as its negative
   control, which rewrites 69 obstacle slots in view. See "Nothing Already On Screen Is Ever
   Rewritten".
+- `npm run verify:tutorial` — `src/run/tutorial.ts`: the first run, which teaches itself. **A card
+  stops the road, so the failure to be afraid of is a pause nobody can get out of** — the driver
+  therefore advances distance only while the run is not paused, and the suite runs a player who does
+  everything, one who does nothing at all, a late starter, and one pressing every control from the
+  first frame. Then the hand-placed road, where exactly one row is jump-only and it is the wall. See
+  "The First Run Teaches Itself".
 - `npm run verify:obstacles` — `src/run/obstacles.ts`: a passable line exists through every
   generated stretch, the three classes produce exactly the expected outcomes on the ground and at
   the apex, and every obstacle is readable for at least `REACTION_MS` at `SPEED_CAP`. See
   "Obstacles".
+- `npm run verify:critters` — `src/run/critters.ts`: the bugs that run at you. **That they run
+  in a straight line is asserted structurally** (`stepCritters` is told nothing that could steer
+  them), the crossing is swept — 0 of 60 encounters missed at 15Hz against a point test that misses
+  31 — and the safety argument is checked from both ends: nothing hits at the apex, no air line is
+  ever lost, and over 1008 row-and-lane combinations the ground line survives 72% while the jump
+  answers the rest, neither ever absent. **The bee's argument is the mirror and is proved from its
+  premise**: 168 jump-only rows across ten laps, none carrying a `blocking` obstacle, so the air is
+  100% clear and a bee can never seal a row the player was forced into. The sizes are asserted
+  against the bounds they are *solved* from rather than against literals, and the drawing is driven
+  under a recording stub — which caught a leg drawn 4.8px off the canvas on its first run. See "Bugs
+  That Run At You".
 - `npm run verify:sightline` — how a billboard comes out from behind a crest: that the crop is
   measured from the top, that it slides rather than steps as the camera moves, and that a taller
   prop clears the ridge earlier than a short one. Reimplements the mesh's own walk under Node,
@@ -222,8 +264,9 @@ Phaser 4 game client bundled with Vite. `tsconfig.json` uses `noEmit: true` — 
     Game" — the argument survived the genre change; only the ship flying across it did not.
   - `RunScene` → **the gameplay scene**. Owns nothing but the wiring: the world (`WorldView`), the
     run's clock (`runState.ts`), the snail (`playerMotion.ts` + `PlayerView`), the obstacles and
-    pickups and their pools, and the HUD. Every rule it applies lives in a `phaser`-free module
-    under `src/run/`. See "The Run", "The Snail", "The Jump", "Obstacles" and "Pickups".
+    pickups and their pools, the bugs (`critters.ts` + `CritterSprites`), and the HUD. Every rule
+    it applies lives in a `phaser`-free module under `src/run/`. See "The Run", "The Snail", "The
+    Jump", "Obstacles", "Bugs That Run At You" and "Pickups".
   - `RunOver` → the result overlay, and **the only place in the game an ad may appear**. See
     "The End Of A Run".
   - `Settings` → overlay scene, built entirely from the `src/ui/theme.ts` widget kit
@@ -619,6 +662,14 @@ this module, which is what makes `npm run verify:run-speed` able to test the gam
   acceleration would either pin the run at the ceiling or never reach it, depending on how long the
   run happened to last. The same curve runs in *both* directions, which is what makes the boost's
   expiry work with no second code path.
+- **⚠ `SPEED_BASE` is 13.8% of the renderer's `MAX_SPEED`, not the 12% it shipped at.** Reported as
+  the run wanting to start faster, and the first seconds did read as sluggish rather than as slow,
+  which is a different thing from the contrast the game is built on. What it costs is the *range*:
+  the climb to `SPEED_CAP` is 2.17x instead of 2.5x. **The ceiling may not move with it** —
+  `SPEED_CAP` is set by the reaction budget and `MAX_ATTAINABLE_SPEED` is what every row of
+  obstacles in the game is spaced against, so raising this end is a feel change and raising that one
+  would be a difficulty change wearing the same clothes. The HUD reads `speed / SPEED_BASE`, so a
+  run still starts at `1.0x` by construction.
 - **The boost is state ticked down inside the fixed step, not a `Date.now()` deadline.** A wall-clock
   deadline expires while a backgrounded tab draws nothing, and gives a 144Hz phone a different number
   of boosted frames than a 60Hz one.
@@ -802,6 +853,489 @@ and `rail/Enemies.ts` had, and for the same reason: the model runs under Node.
   reaches above the apex and `overhead` starts above the snail's back and reaches above the apex plus
   its body. Everything past those was bulk, and bulk was costing the read.
 
+## Bugs That Run At You
+
+`src/run/critters.ts` (pure, `npm run verify:critters`), `critterArt.ts`, `CritterSprites.ts`. Two
+kinds that come down the road at the player and cost a hit on contact: a **beetle** that runs on it,
+and a **bee** that flies over it. **Every hazard in this game until now waited to be arrived at**;
+these are the first that arrive.
+
+They are also the first pair in this game that ask for *opposite* answers — a beetle is jumped, a bee
+is what a jump runs into — which is what makes the jump a decision again rather than a free action.
+
+### They are a population, not a layout, and that is what keeps `lapLayout.ts` honest
+
+An obstacle, a pickup and a ramp all belong to a *piece of road*: laid a lap at a time, filed under
+the segment they stand on, and handed to the live layout only once that segment is behind the
+camera. **All three of those properties are false of something that walks.** A critter crosses a
+segment boundary 2.9 times a second under its own power alone, so a segment index is a lie about
+where it is; it has no lap, being gone within seconds of being made; and it can never be "rewritten
+in view" because it is never written down.
+
+So it is spawned ahead of wherever the camera has got to and retired behind it — the shape the rail
+shooter's `WaveDirector` had, for the same reason. Nothing about `LapLayout` had to learn that bugs
+exist.
+
+- **Spawned at exactly `DRAW_DISTANCE`**, so nothing is ever seen appearing: a critter is born on
+  the last segment the frame draws, where `billboardAppear` is still fading everything in, and walks
+  out of the haze. Any nearer and a creature comes into existence on road the player was looking at,
+  which is the complaint `lapLayout.ts` exists to answer arriving from the one system with no lap to
+  hand over.
+- **The schedule is a distance, never an interval in seconds** — the rule the slime trail, the glide
+  cycle and the whole difficulty curve are already under. A time-spaced population thins out exactly
+  when the run gets fast, i.e. the road would grow *emptier* the better the player was doing.
+  Measured: one bug every 93–99 segments at every speed, three or four alive at a time.
+- **The pool is `MAX_CRITTERS`, derived rather than measured.** Every other pool in the game is
+  sized against an observed peak because its demand is emergent; this one is hard-capped by the
+  model, so the honest ceiling is that cap — and deriving it is what stops the two drifting apart
+  the way `DECOR_POOL_SIZE` and its own measured peak once did.
+- **A skipped spawn is skipped, never deferred.** Holding one back would deliver it the moment a
+  slot freed up, i.e. as a pair arriving together — the one arrangement of two bugs that cannot be
+  answered by choosing a lane.
+
+### ⚠ The bee brings back the class this game deleted, and it is the only object that could
+
+`OBSTACLE_BANDS` carries the argument at length. `overhead` was `[362, 560]` — run under it on the
+ground, hit by jumping into it — and it was **the only thing in the game that punished being
+airborne**. Deleting it means, in that file's own words, that *"a jump taken when none was needed is
+free"*. What killed it was not the mechanic: **it could not be drawn.** The sprite's canvas IS the
+collision band, so a band starting 362 units up draws floating with nothing beneath it, and legs are
+unavailable because the player passes underneath at every `offsetX`. A fallen log, a banded boom arm
+and a hazard board were each reported as "a thing hanging in the air".
+
+**A bee is the object that answers that, and it is the only one.** A flying creature is *supposed* to
+hang in the air — the floating that was a bug for a log is the whole read for a bee. It also gets the
+cue a log never could: **a shadow on the road beneath it**, which is this game's one mark meaning
+*something is above this spot*.
+
+| | beetle | bee |
+|---|---|---|
+| band | `[0, 343]` | `[431, 741]` |
+| answered by | jumping, or a lane | **staying down**, or a lane |
+| share of a jump it touches | 45% clears it | **83% catches you** |
+| size | 1601 x 343, 4.7:1 | 726 x 310, 2.3:1 |
+| speed | 580 u/s | 927 u/s |
+| share of the road | 60% | 35% |
+| how often | 2 in 3 | 1 in 3 |
+
+**Neither is a flag.** `hits` is the same interval overlap for both; which behaviour a kind has falls
+out of where its numbers sit against `PLAYER_BODY_H` and `JUMP_APEX`, exactly as the obstacle classes
+do. `CRITTER_KINDS` is the only place the two differ, and nothing branches on the kind outside it.
+
+#### The safety argument is the mirror of the beetle's, and it is provable
+
+A beetle is answered by the jump. **A bee is what the jump runs into**, so the case that must not
+exist is a row with no ground line — where the player *has* to be airborne — whose air line a bee
+could cover.
+
+That cannot happen, and the proof is in what forces a jump: **only a wall does, every wall is built
+by `drawWall` out of `low` blocks, and a `low` block reaches 230 against an apex of 430 — so it
+obstructs nothing up there.** A bee narrower than the road therefore always leaves a lane.
+
+**What `verify:critters` asserts is the premise, not the conclusion.** Over 598 rows of the real
+placer across ten laps: **168 are jump-only, 0 of them carry a `blocking` obstacle, and the air is
+100% clear on every one** — then it checks the conclusion on all 21 lanes of every one of those rows
+anyway. If the placer ever produces a jump-only row containing a `blocking` obstacle, that row's air
+line is narrow, a bee could sit on it, and the check fails and says so.
+
+- **The daylight is the deleted class's own ratio.** `BEE_CLEARANCE` is 39% of a body height, which
+  is what `overhead` had (362 against a body of 261) — and it is what makes the gap *legible* rather
+  than merely present. 121 units of drawn sky under a bee.
+- **83% of a flight, from the same closed form the beetle's height was solved from**, read the other
+  way round: `sqrt(1 - (yLow - PLAYER_BODY_H) / JUMP_APEX)`. Jumping into a bee's lane is a mistake,
+  not a risk — a hazard that catches a third of a flight is a coin toss and teaches nothing.
+- **The bee is faster and rarer.** Two hazards closing at the same rate are told apart only by their
+  pictures, and the one about to cost a jump should be the one arriving faster.
+
+#### ⚠ It is the one hazard allowed to be loud, and that breaks a rule on purpose
+
+`CRITTER_COLORS` states the rule and the beetle obeys it: colour in this game means *come and get
+it*, so a critter is drawn at 18% saturation and nobody steers toward one. **A bee is the opposite
+kind of object.** It cannot be read from its position on the road, because it is not on the road —
+its whole warning is its own surface. So it wears the one pattern that means *do not touch this*
+outside any game: black and amber banding.
+
+**The cost is real and is measured rather than waved at: amber is the mascot's own shell hue.** What
+keeps them apart is value, which is what survives the distance haze — the band is 181 lightness on
+chitin at 30, against the mascot's shell at 150, and the bee is the only object in the game drawn
+*above* the road.
+
+#### ⚠ Both kinds ship as renders now, and the answer to "why not buy a model" is the aspect
+
+Asked directly: could the bugs be kit models adapted the way the other 3D was, rather than drawn?
+The route is real and this project has measured it — see "On buying roadside props instead of
+generating them". Both local kits were checked first (`kenney_nature-kit`, `food-kit`): **neither has
+an insect.**
+
+**But the finding that rebuilt the barriers applies here and is decisive.** `CritterSprites` stretches
+whatever texture it is handed onto the world box, so a render at another proportion is *distorted in
+every frame* — which is exactly how the kit-sourced obstacles shipped (`obstacle-low-0` at 4.17:1
+against a box of 2.96:1, 41% too wide). **A kit model comes at whatever proportion the kit made it;
+geometry comes at the proportion asked for.** And these two boxes are unusual, because neither was
+chosen for how an insect looks: **4.67:1 and 2.34:1**, one solved from half the road against the jump
+ceiling, the other from a third of the road against the daylight underneath. A real beetle head-on is
+about 2:1. Nothing bought is 4.67:1.
+
+So `dev-assets/cc0-3d/critter_render.py` builds both as geometry and renders them through
+`smooth_render` — the same Blinn-Phong pass that produced the fruit, the coin and the barriers, with
+its light direction, ambient and value scale untouched, and its alpha being triangle coverage so
+there is no plate, no halo and no baked shadow for `strip_plate` to have to find.
+
+**Two things it does that `barrier_render` does not, and both were forced by measurement:**
+
+- **⚠ The pitch is the angle a critter is READ at, not the one it is hit at.** The camera sees a
+  beetle at 26.7 degrees at the moment of contact — and at that pitch the creature's own *depth*
+  dominates its projected height, so a 4.67:1 box is not a shape it can project into at all: solved
+  for, the beetle would have to be 0.2 deep against 4.6 wide, which is a blade rather than an animal.
+  A sprite has one pitch and the one that matters is where the decision is taken, twenty to forty
+  segments out — 9 degrees for a beetle, 4 for a bee, which is also how `barrier_render` arrived at
+  its own 9.
+- **⚠ The height is solved by MEASUREMENT, because the algebra is only right for a box.**
+  `barrier_render` computes `height * cos(pitch) + depth * sin(pitch)`, which is exact for a panel;
+  for a creature the tallest point and the deepest point are different points, and the closed form
+  left **28% of the beetle's collision box as empty air above it** — the model would have been
+  hitting the player with a strip of sky. Two or three renders converge instead. Delivered: **0.4%
+  and 0.0% of padding**, aspect exact, no stretch anywhere.
+
+Two more traps this round, both found by measuring rather than by looking:
+
+- **The canvas aspect is not the aspect that ships.** `smooth_render` returns a canvas with margin;
+  `build-sprites.py` floors the alpha and trims to the alpha box, so what reaches the game is the
+  *content* bounds — canvas 4.68:1 against content 5.18:1 on the first pass. The script trims on the
+  pipeline's own 6% floor before it measures anything.
+- **The palette could not be used as authored.** At `CRITTER_COLORS`' own values the beetle rendered
+  at **lightness 46 with 95% of it below the ink threshold**, against a barrier family at 34–43%: not
+  a dark object but a silhouette, and a silhouette on pale flagstone is the "reads as a hole in the
+  road" failure `RAMP_HEIGHT` records. A rendered form gets its shadow side for free, so the material
+  has to start where the *drawing's highlight* is. Delivered: beetle **67 lightness / 16% saturation
+  / 47% ink**, bee **90 / 35% / 56%** — the beetle still the darkest thing on the road by 53 against
+  `low`, the bee twice its saturation, which is the split the two are designed around.
+
+`verify:critters` asserts the **shipped PNG's** aspect against the live collision box, not just the
+fallback canvas — the drawn version is now only what a failed load falls back to. `verify:mattes`
+grew `public/assets/critter` for the same reason: these are the first binaries to arrive from
+`smooth_render` through `process()`, and both of that check's rules are properties of that pipeline.
+
+### ⚠ The bee is a downloaded CC0 model; the beetle cannot be, and the reason is one number
+
+Asked to stop drawing and take free models off the internet. Done for one of the two, and the split
+between them is the finding.
+
+**`dev-assets/cc0-3d/glb_obj.py` is what unblocked it.** `smooth_render` reads OBJ, which is what
+Kenney ships — and Kenney has no creatures at all. Everything else free and CC0 (Poly Pizza, and the
+Google Poly archive behind it) ships **GLB**, so without a glTF reader the entire free-model world
+was closed to this project and every creature had to be built by hand. It is ~150 lines and handles
+what a static CC0 model actually uses: indexed triangles, node transforms, and `baseColorFactor` as a
+flat Kd. No textures, no skins, no animation — and it says so rather than guessing.
+
+`poly_survey.py` then lists candidates with the two facts that decide one: the **licence**, because
+CC-BY would owe a visible credit line this game has nowhere to put, and the **aspect**, measured from
+the model's own accessor bounds before anything is downloaded twice.
+
+**And the aspect is where the two kinds part company:**
+
+| | box | CC0 models measured | usable |
+|---|---|---|---|
+| bee | 2.34:1 | 1.5, 2.0, **2.28**, 1.3 | **yes — 2.6% off** |
+| beetle | 4.67:1 | 1.1, 1.3, 2.6, 3.1 | no |
+
+A real insect is roughly 1–3:1. The bee's box happens to be a natural insect proportion, so a model
+drops straight in. The beetle's 4.67:1 is not a proportion any creature has — it was **solved** from
+half the road against the jump ceiling — so a model would have to be squashed 35% to fit, which is
+the kit-model distortion this whole route exists to avoid. **A model decides which boxes it can fill;
+it does not get to decide the box.**
+
+So the bee is **"Armabee" by Quaternius, CC0**, from Poly Pizza, and the beetle stays geometry.
+
+- **What is adapted, and why that is the whole job.** The model arrives authored for someone else's
+  lighting — its body `Kd` is **0.011**, which renders very nearly black. This project has the
+  finding from the other direction: bought props measuring 1.29x as bright and 2.66x as saturated as
+  their neighbours jumped forward off the roadside, *and no amount of redrawing fixed it until the
+  numbers moved.* What the model gives that is worth having is the **shape** and the **material
+  split** — body, amber secondary, eyes, wings, already four surfaces. This game's colours are
+  substituted into that split: the modelling is kept and the lighting it was made under is dropped.
+- **The second pose is geometry, not a second download.** Two downloads would be two bees. The wings
+  are swept about their own root — and **⚠ the first version rotated everything above a hinge
+  height, which took part of the thorax with it: the two poses measured 77 and 104 lightness, a
+  27-point swing between consecutive animation frames, which is a flicker rather than a wingbeat.**
+  The model names its own materials, so the wing vertices are knowable exactly and nothing has to be
+  guessed from a height. After: **77 and 76.**
+- Delivered: bee **77 lightness / 32% saturation / 45% ink**, beetle **67 / 16% / 47%** — the split
+  the two are designed around, twice the saturation on the one that must be read off its own surface.
+- **Not checked automatically: that two poses of a kind agree in tone.** The 27-point swing above was
+  caught by running `measure-art.mjs` by hand. A real check needs a PNG decoder in
+  `verify:critters`, and the only one in the repo is inside `verify-mattes.mjs` as a script rather
+  than a module. Worth extracting the next time either is touched.
+
+**What this buys beyond one bee:** the reader and the survey script make every CC0 model on Poly
+Pizza reachable, so a new critter kind is now a download plus a box rather than a modelling session
+— provided the box is chosen to suit a model rather than the other way round.
+
+### Six kinds, five of them downloaded models
+
+| kind | box | aspect | road | speed | answered by | art |
+|---|---|---|---|---|---|---|
+| beetle | 1601 x 343 | 4.67:1 | 60% | 580 | jump / lane | **geometry** |
+| spider | 915 x 300 | 3.05:1 | 40% | 811 | jump / lane | `Spider`, Quaternius |
+| frog | 799 x 343 | 2.33:1 | 37% | 638 | jump / lane | `Frog`, Quaternius |
+| ladybird | 686 x 260 | 2.64:1 | 34% | 493 | jump / lane | `Ladybird`, Exceptional_3D |
+| bee | 707 x 310 | 2.28:1 | 34% | 927 | **stay down** / lane | `Armabee`, Quaternius |
+| wasp | 298 x 310 | 0.96:1 | 23% | 1039 | **stay down** / lane | `Wasp`, Quaternius |
+
+**⚠ What made more than two creatures affordable is an inversion, not a bigger art budget.** The
+beetle's box is *solved* — half the road across, the jump's ceiling tall — and its 4.67:1 is a
+consequence nothing in nature has, which is why no model fits it. Every other kind is the other way
+round: **the game picks the height, from the rule that kind lives under, and the model's own aspect
+decides the width** (`fromModel`). A new creature is then a download plus one number, and both safety
+rules still hold by construction.
+
+`verify:critters` was rewritten to say `every ground kind` and `every flying kind` rather than
+`beetle` and `bee`, so the guarantees are properties of the table and not of two names: 4 ground
+kinds all under the jump's ceiling, 2 flying kinds all above a standing snail, 192 row-and-kind
+combinations with no air line lost, and every kind clearing `REACTION_MS` in a Fever.
+
+- **The flyers are the faster and rarer half**, asserted rather than arranged: the slowest flyer is
+  quicker than the fastest ground kind, because two hazards closing at the same rate are told apart
+  only by their pictures — and **25% of critters fly**, because a road where half of everything
+  forbids jumping is a road with no jump in it.
+- **⚠ The numeric gates passed a COBWEB as a spider.** `EHYNWew6JK` came back CC0, untextured, 1.60:1
+  and 1106 triangles — every column green, and it is a web with no animal in it. The names had to be
+  read. Sixth instance of this project's standing rule, and the first where the thing measured was a
+  3D model rather than a sprite.
+- **⚠ And the spider hit the beetle's silhouette wall from the other direction.** Its model's body is
+  dark and covers most of the frame, so the first remap landed at **lightness 44 with 94% ink** —
+  exactly the "reads as a hole in the road" failure, arriving from a downloaded mesh instead of a
+  built one. **A model's own darkness is not this game's darkness either**, which is the same lesson
+  as its brightness and now has an example on each side.
+
+Delivered tone: beetle 67 / 16%, spider 76 / 21%, ladybird 92 / 30%, frog 86 / 36%, bee 77 / 32%,
+wasp 86 / 39% — the ground kinds muted against the pale road, the flyers louder because they are read
+off their own surface rather than off their position. Twelve frames, 350KB.
+
+### Silhouettes may not collide
+
+Type reads by aspect before it reads by contour, so the kind a jump answers and the kind a jump runs
+into are deliberately different shapes: **4.7:1 against 2.3:1**, asserted as a ratio rather than left
+to the numbers. A beetle is a flat shell with legs sprawled to the canvas edges; a bee is a round
+banded body with wings that swap between two poses — up and down rather than a blur, because two
+extremes read as motion at a distance where an interpolated smear reads as dirt.
+
+**Its wingbeat is deliberately past what any frame rate resolves** — 77 poses a second against the
+beetle's 9.7 — because *a wingbeat the eye can count is a bird.* That is the opposite requirement to
+the gait, and `CRITTER_STEP_UNITS` is per kind for it.
+
+### ⚠ Positions are ABSOLUTE, and that is the whole reason the module is short
+
+Everything else in the run works in track space, where `z` wraps — right for something bolted to the
+road and a trap for two things closing on each other, because "is it behind me yet" becomes a case
+analysis about the seam. A critter's `z` is the run's own unwrapped odometer instead: the player
+stands at `run.distance + PLAYER_Z` and a bug at some larger number that only falls. `z - playerZ`
+is then a plain subtraction that is **correct at the lap seam by construction**, and the track
+position — the only thing the renderer wants — is one `wrapZ` at the moment of drawing.
+`verify:critters` drives an encounter two whole laps in and asserts it resolves exactly once.
+
+### They run in a straight line, and it is asserted structurally
+
+`offsetX` is set when a bug is made and never written again. The check does not watch a number: it
+asserts **`stepCritters` takes three arguments** — a field, where the player is along the road, and
+a delta. No lane, no body, no steering, so there is nothing in scope that *could* home in, and the
+argument added to make one would fail the check first.
+
+That is a fairness decision rather than a shortcut. **A hazard that chases cannot be answered by
+moving, only by out-timing it**, so the player learns to ignore where it is and jump on reflex; one
+that holds its line can be read at range and gone round, which is the decision every obstacle row
+already asks for.
+
+### ⚠ The safety argument is one constant, and it is checked from both ends
+
+**The height is not chosen; it is solved.** A flight is a symmetric parabola, so the share of it
+spent above a height `h` comes out as exactly **`sqrt(1 - h / apex)`** — the duration cancels — and
+inverting that gives the height a wanted window buys. `CRITTER_JUMP_WINDOW` is **0.45 of a flight**, so
+`CRITTER_BAND.yHigh` is `430 x (1 - 0.45²)` = **343**. A jump therefore clears a bug at every lane, and
+jumping costs the player no lateral option, so a stretch that was passable without a bug in it is
+still passable with one — which is what stops this feature quietly breaking the guarantee
+`provePassable` makes about every row the placer ships.
+
+- **The closed form is checked against the tick the game actually runs**, before anything else here
+  is believed: the real flight clears the band for 45% of itself against a solved 45%. Algebra about
+  an idealised parabola that the integrator disagreed with would make every other number in the file
+  a measurement of a fiction — the same reason `verify:formations` reconciles the arc's two forms
+  first.
+- **317ms of window against a human timing precision nearer 60ms**, and against a bug the player has
+  watched approach for between nine and twenty-seven seconds. The jump is planned long before it is
+  taken; this is only the slack in landing it.
+- Measured over a real lap: **48 rows x 3 lanes, no air line lost.** The set of offsets a row blocks
+  at the apex is *identical* with a bug standing anywhere in it, because the band does not reach.
+- **And the check that matters most at this width**: over 1008 row-and-lane combinations, the ground
+  line survives 72%, the jump answers the other 28%, and **neither is ever absent** — asserted on
+  every combination rather than sampled. That 28% is the difficulty the size buys, and it is not
+  meant to be zero: a row the player could have walked through now sometimes has to be jumped.
+- What it costs is stated rather than hidden: **on the ground a bug blocks 60% of the drivable
+  road** — and, measured, that costs the ground line almost nothing, because a bug that wide cannot
+  run near the verge. See the table below.
+- **The residual, stated:** a bug can coincide with the one gap a `blocking` row leaves, which
+  demands threading that gap *while airborne*. That is a real skill demand against several seconds
+  of warning, not an impossible hand — but it is the one alignment where both answers are needed at
+  once, and it is the thing to look at first if bugs are ever reported as unfair.
+
+### The crossing is swept, and the control is what says so
+
+A bug and the player close at up to **6340 units a second against a 200-unit crossing**, so a 15Hz
+frame covers twice the whole of it — and that is the frame a phone drops, i.e. one the player is
+already unhappy about. The gap `z - playerZ` falls monotonically, so the test is whether the
+interval swept this frame reached the overlap band.
+
+**Swept against unswept over 60 sub-frame phases, because a single alignment proves nothing either
+way:**
+
+| | frame closes | swept missed | point test missed |
+|---|---|---|---|
+| 60Hz | 106 units | 0 of 60 | 0 of 60 |
+| 30Hz | 211 units | 0 of 60 | 3 of 60 |
+| 15Hz | 423 units | **0 of 60** | **31 of 60** |
+
+A bug also **stays live for the whole crossing** rather than being settled at its near edge — the
+correction `resolveObstacles` records for rocks, biting harder here because two or three frames of
+overlap is time enough to slide sideways into something that is walking at you.
+
+### ⚠ A critter is projected the way the SNAIL is, not the way an obstacle is
+
+`ObstacleSprites` reads `Segment.s1`, and for a rock that is exact enough to be invisible: the rock
+is up to a segment from the point it is drawn at, and being *always* that far, the error never
+changes. A bug crosses boundaries constantly, so the same read gives it an error that sweeps a whole
+segment and snaps back — the **11.3% pop in size and screen row** `playerProjection.ts` was written
+for. It uses that module's own interpolation, which is what its note already said anything moving
+relative to its segment would need.
+
+`WORLD_LAYER.critter` is 0.35 — above the barriers, below the snail — and it is **a slot of its own
+rather than sharing `obstacle`'s**, because two things at one depth fall back to pool order: stable
+for two rocks, and not stable at all for a creature walking past one.
+
+### ⚠ Four sizes, three of them reported, and each report found a different thing
+
+| | size | reported as |
+|---|---|---|
+| first | 400 x 200 | microscopic |
+| second | 500 x 248 (the mascot's own width) | still needs 2-3x that |
+| third | 1251 x 323 | still small; and *more of them* |
+| **shipped** | **1601 x 343** | 3.2x the mascot across, 1.11x its height |
+
+**The second report is the instructive one: "comparable to the snail" in world units is not
+comparable on screen.** The snail sits at a fixed `PLAYER_Z`; a bug spends nearly all of its visible
+life between 50 and 300 segments out, where the same object draws three to thirty times smaller. A
+hazard has to read while it is *approaching*, not at the instant it arrives.
+
+The first round also had a second defect underneath the first, and it is the one no number could
+see: **the drawing filled two thirds of the box it was scaled onto**, so the visible carapace was a
+quarter of the mascot's area while the constants claimed four fifths of its width. Every check in
+the suite was about the box.
+
+**Neither dimension is a taste decision. Both are solved from the thing that bounds them:**
+
+- **The height is at a hard ceiling and cannot go further.** A flight is a symmetric parabola, so
+  the share of it above a height `h` is exactly **`sqrt(1 - h / apex)`** — the duration cancels —
+  and inverting gives `h = apex(1 - window²)`. `CRITTER_JUMP_WINDOW` is **0.45**, i.e. 317ms of
+  window against a human timing precision nearer 60ms. Below about that a jump stops being a window
+  to aim at and becomes an instant to hit, and the one guarantee the feature rests on — *a jump
+  always answers a bug* — is what goes. **343 is the end of the road for height.**
+- **⚠ The width's old bound turned out to be fiction, and the measurement is the interesting part.**
+  `CRITTER_ROAD_SHARE` was 0.5 with a note claiming a wider bug could close the road. False twice
+  over: the jump answers a bug at *any* width, and a row forcing a lateral gap is met on the ground
+  where the bug is dodged. What is actually true is that **widening a bug barely costs the road at
+  all**, because `CRITTER_MAX_OFFSET` shrinks with it — a wider bug cannot run near the verge, so it
+  straddles the middle and leaves asphalt on both sides:
+
+  | share | width | ground line survives |
+  |---|---|---|
+  | 40% | 901 | 73% |
+  | 50% | 1251 | 72% |
+  | **60%** | **1601** | **72%** |
+  | 70% | 1951 | 71% |
+  | 80% | 2301 | 68% |
+
+  So the road share is **not** what bounds the width. What bounds it is the **aspect**: at 4.7:1 a
+  bug is already flatter than any barrier in the game (`low` is 3.0:1, `blocking` 1.1:1), and this
+  project's own finding is that type reads by aspect before contour. Past here it stops reading as a
+  creature and starts reading as a bar laid across the road. **If a bug is ever reported as looking
+  like a barrier, this is the line that was spent to get the size.**
+
+**⚠ It is taller than `OBSTACLE_BANDS.low` (343 against 230) and taller than the snail, both of
+which earlier versions of this file were written to avoid, and neither matters.** The honest
+statement is an ordering rather than a ratio: `CRITTER_BAND.yHigh < JUMP_APEX < blocking.yHigh`,
+i.e. **a jump clears one of them and not the other.** Mistaking a bug for a low block costs nothing,
+since both are answered by the same action — and the bug being the taller means a jump that clears a
+bug clears a block, never the reverse. Being taller than the mascot costs nothing either: the
+snail's separation was never carried by height, it is carried by being the only saturated thing in
+the frame.
+
+### ⚠ And they were too rare, which was a shape decision made for the wrong object
+
+`CRITTER_GAP_Z` was 60-130 segments — one bug every 3.3 to 7.2 seconds at `SPEED_CAP` — chosen on
+the reasoning that *"meeting one is an event"*. That is the right shape for a boss and the wrong one
+for the only thing on this road that moves: **a hazard the player meets twice a minute is one they
+never learn to read.**
+
+26 to 62 segments is **one every 1.5 to 3.4 seconds at the cap**, so a bug is a condition of the
+road rather than an interruption of it. Measured over five-minute runs at every speed a run reaches:
+**121 bugs over a 1080km run, peak 9 alive**, one every 45 segments. `MAX_CRITTERS` went 12 → 16,
+held under twice that peak by the same rule the pickup pool was just re-sized against.
+
+### The art: two poses, and they are the insect's real gait
+
+A beetle walks on an alternating tripod — front and rear legs one side with the middle leg of the
+other, then the mirror — which is **exactly two poses, so the cheapest animation there is happens to
+be the correct one.** Advanced by the bug's own travel rather than by a clock; unlike the snail's,
+its speed is constant, so its cadence is (9.7 poses a second).
+
+- **Head-on, because that is the only view of it there is.** It runs straight at the camera, so the
+  player never sees its flank — the fact that took the mascot four rounds to discover, arriving free
+  here because this one is drawn rather than generated.
+- **Not themed, unlike the obstacles.** A creature keeps its colours through a change of weather, as
+  the mascot does, so this stays off `applyTheme`'s seam entirely — which is also what keeps
+  `src/road/` untouched.
+- **Separated from the barriers by VALUE**, the one axis the distance haze and the biome tint leave:
+  **57 lightness against sandstone at 134 and timber at 120**, on a warm pale flagstone road. It is
+  the darkest thing the game draws on the road.
+- **And deliberately NOT saturated**, at 18% against the barriers' 19% and the mascot's 70%. Colour
+  in this game means "come and get it"; a vivid bug would be the first thing on the road a player
+  steers *towards*. What makes it noticeable is the one cue nothing else in the frame has — it is
+  the only object moving *against* the road rather than with it.
+- **The eyes are the whole "this is alive" read**, near-neutral and bright: two pale dots on a dark
+  head is what resolves once the legs have gone to a blur.
+- **⚠ The shell is deliberately HALF the canvas, and the legs carry the rest of the silhouette.**
+  Stretching a carapace across a 3.9:1 box draws a bar, and a wide dark bar on this road is a `low`
+  barrier; a dome with six long legs spread from under it is a big insect seen head-on. The hitbox
+  stays honest because a leg is a *visible* thing — a player clipped by one has been clipped by
+  something they can see. **The span check alone would pass a dot surrounded by legs**, so the
+  largest filled shape is measured too: shell 52% x 78% of the canvas.
+- **⚠ The recording stub found a leg drawn 4.8px off the canvas on its first run.**
+  `generateTexture` crops silently, so that ships as a bug with five legs and nothing says so. The
+  drawing is now clamped, and the check drives `createCritterTextures` under Node against a stub
+  that records every coordinate — asserting everything lands inside the canvas *and* that the two
+  poses are not the same picture, which an alternating tripod written the wrong way round would
+  produce and no screenshot would reveal.
+
+### What a bug costs is what a rock costs
+
+`hits` is handed a critter directly — it carries the same four fields an obstacle does — so there is
+one collision model in this game and a bug is a box at the instant it is asked about. The hit goes
+through `takeHit` unchanged: speed, a shield or a life, the grace window, the blink. **A hazard with
+its own private penalty would be a second economy to learn**; what makes a critter different is that
+it comes to you.
+
+- **The step runs whether or not the player can be hit; only the resolve is guarded.** Grace after a
+  hit is a promise about damage, not about the world — a bug that stopped walking because the snail
+  was blinking would be the one object in the frame reacting to the player's invulnerability.
+- **A first run meets no bugs until the tutorial is over.** Its cards stop the world one at a time,
+  and a creature walking into a frozen frame while a card explains something else is two things at
+  once — the objection that made the cards stop the road in the first place.
+- Its own seed (`runSeed ^ 0x1b0d`), on the argument `waveSeed` and `pickupSeed` already make:
+  moving a tree must not rearrange the bugs.
+
+**⚠ Not verified in the running game.** Everything above is measured under Node or is a property of
+the code; no frame of this has been looked at, which by this project's own standing rule is exactly
+where the art and the feel are still unknown.
+
 ## Draw Order
 
 **There is no depth buffer in this renderer.** The whole thing is painter's-order — what is drawn
@@ -839,6 +1373,81 @@ rising monotonically with nearness.
 
 **Anything new that draws in the world gets a `worldDepth` call, per object, per frame.** Anything
 that draws on the *screen* (the HUD) is on `uiCamera` and does not enter this sort at all.
+
+## ⚠ A Ramp Grabbed The Next Lap's Coins
+
+Reported twice — **"when you take off from a ramp the number of coins changes", on mobile.** The
+second report arrived after a fix that turned out to be a different, real bug, which is the shape of
+this whole section: two independent defects behind one sentence, and only the second one is the one
+the player was pointing at.
+
+### The cause: an id that restarts
+
+`placeRamps` opened with `let id = 0`, so **every lap numbered its ramps from zero.**
+`RunScene.layArc` finds a ramp's arc chain by `pickup.arcOf === ramp.id`, over *every live pickup* —
+and the lap is handed over a segment at a time, so **two laps' contents are on the ground at all
+times** (`lapLayout.ts`). A ramp therefore matched its own arc **and the next lap's ramp of the same
+id.**
+
+Measured on the shipped placer: **6 of 6 ramp ids collide between consecutive laps, and every one of
+them turns a 5-coin chain into a 10-coin one.** `layArc` then lays `mine.length` points along *this*
+ramp's flight — so five coins are teleported in from somewhere else on the track, and the player's
+own five are re-spaced for a chain twice as long. It fires at the launch relay, which is exactly
+"when you take off".
+
+**It is the third time this project has been bitten by ids that restart.** `placeObstacles` grew its
+`firstId` after two difficulty bands each numbered from zero and left **66% of a lap unable to hit
+the player**; `arcRelaid` became a `WeakSet` of ramp objects rather than a set of ids for the same
+reason. The rule belongs where the ids are *made*, and is now stated there: **an id is a name, and
+two things alive at once may not share one.**
+
+- `rampIdStride(trackLength)` reserves a block per lap and is **derived rather than picked** — the
+  tightest legal gap is `RAMP_SPACING_Z * RAMP_SPACING_JITTER.min`, so no lap can hold more ramps
+  than that, and the stride cannot be outgrown by a re-tuned spacing.
+- **The tutorial's own ramp was taking an id out of the OBSTACLE counter**, which put it in the
+  hundreds — where lap 15's block would eventually have reached it. It takes the top of lap 0's
+  block now, which the generator provably cannot fill.
+- `verify:ramp` asserts uniqueness over four laps and re-runs `layArc`'s own filter over everything
+  live, **with the old numbering as the control**: 24 distinct ids and 0 foreign coins, against 6 of
+  6 colliding.
+- **⚠ And one existing assertion was asking about the wrong id space.** `verify:tutorial` checked
+  that the tutorial's ramp did not share an id with an *obstacle* — correct while the ramp borrowed
+  that counter, and meaningless once it did not, since nothing ever looks a ramp up by an obstacle
+  id. What `arcOf` collides in is the ramp space, so that is what it checks now.
+
+### ⚠ And the first fix was a different real bug: two pools were half the size they needed to be
+
+Chasing the same report found this, and it is worth keeping even though it was not the cause.
+
+`PICKUP_POOL_SIZE` was **24** against a measured peak of **47** pickups inside the draw distance.
+`OBSTACLE_POOL_SIZE` was **48** against **90** on a saturated lap — its own note did the arithmetic
+("37 rows" at three obstacles a row, which is **111**) and then assumed the far ones would be culled,
+which fails exactly where the road is busiest, because a wall is fourteen obstacles in one row.
+
+A pool is filled **near to far**, so what a short one drops is the far end — which for obstacles *is*
+the reaction budget: a hazard not drawn until it is nearer than `REACTION_MS` is a hazard the player
+was never shown.
+
+**Neither could be seen, because `PickupSprites` had no demand counter at all.** Its capacity test
+sat *before* the on-screen cull and simply skipped:
+
+```js
+if (pickup.taken || used >= capacity) continue   // stops counting when it stops drawing
+```
+
+That is `DECOR_POOL_SIZE`'s own lesson from the other side — *a saturated pool reports its own
+ceiling back as the demand* — and the fix there was "raise the pool first, sweep, then size it".
+
+- **Pickups 24 → 64, obstacles 48 → 112**, and the missing counter added. The obstacle figure covers
+  the row *arithmetic* rather than only the measurement, since a measurement is a sample of seeds
+  and the arithmetic is a bound.
+- **Both constants moved into the pure modules** so a check can reach them: **a pool size declared
+  inside a Phaser module is a pool size no `verify:` script can hold to a measurement.**
+  `verify:formations` and `verify:obstacles` compute the peak from the real placers and assert the
+  pool clears it — and for the pickups, that it is not more than twice it.
+- **The general form, paid for a third time: a pool that stops counting when it runs out cannot tell
+  you it ran out.** Every pool in this project reports demand past its own capacity, or it is not
+  measured at all.
 
 ## Pickups
 
@@ -971,6 +1580,12 @@ PLAYER_WIDTH      = H * aspect   421
 PLAYER_HALF_WIDTHS = W / 2R      0.105, i.e. 10.5% of the road's full width
 ```
 
+**⚠ The height in that table is history — it is 340 now**, and everything else in this subsection is
+current: the derivation, the reason the two axes cannot move apart, and the aspect assertion that
+caught the stretch. It was raised again after the same report arrived from a narrower phone, and the
+other half of that report turned out not to be about the mascot at all. See "The Mascot Was Too
+Small, And The Coin Was Too Big".
+
 `OBSTACLE_BANDS.overhead.yLow` moved 250 → 362 with it, keeping the daylight under an overhead at
 the same **39% of a body height** it had before; the three-class table falls straight out and
 `verify:jump` holds it — grounded clears `low`'s apex test and passes under an overhead, airborne
@@ -978,7 +1593,8 @@ does the opposite, and neither is a flag anywhere. `PICKUP_HEIGHT` went 90 → 1
 body's centre, so the arc chain's own offset is unchanged in meaning.
 
 **Nothing asserted the aspect, which is how it broke.** `verify:jump` does now, and is shown to
-reject the 420x180 pair. On screen the mascot is **35x22 on a phone and 173x107 on a desktop**.
+reject the 420x180 pair. On screen the mascot was **35x22 on a phone and 173x107 on a desktop** at
+that height, and is 44x27 / 224x139 at the one it carries today.
 
 It is a real difficulty change — `hits` adds the half-width to the obstacle's own, so every hitbox is
 about 13% wider — and it is safe rather than merely small, because `provePassable` re-proves every
@@ -1188,6 +1804,49 @@ trampoline exists, and `verify:formations` asserts both halves — nothing leave
 launch, and a launch produces an arc. **An arc over flat road is a chain hanging in the air**, which
 is the failure the whole module is about.
 
+### ⚠ A ramp was two rewards and one pass
+
+Reported by pointing at a frame: a ramp with a chain of coins along the flight **and** another chain
+lying on the road beneath it. The player can be airborne or grounded and not both, so one of the two
+was always unreachable — two rewards in one place, of which one is a promise the game cannot keep.
+
+**It is the third instance of one bug in this walk.** It already advances from the *end* of a chain
+rather than from its start, because advancing by the gap alone overlapped one chain with the next;
+the arc is the same overlap arriving from outside, because **an arc is laid before the walk runs and
+the walk was never told those stretches were taken** — `placeFormations`' own comment says an arc
+"is not subject to the spacing walk below", and nothing carried that fact into the walk.
+
+`flightSpans` is the reservation: the wedge plus the arc it throws. The walk skips a span it starts
+inside, and a chain whose *tail* would reach one is **cut at it** rather than abandoned.
+
+- **Trimming rather than refusing, and the difference was measured.** Refusing the whole chain cost
+  **12% of a lap's ground pickups for 4.6% of the lap reserved** — nearly three times the ground a
+  flight actually covers, because what was expensive was the chain-length of road in front of it
+  that nothing would fit into. Trimming halves it to **6.2%**, which is close to the floor: coins
+  cannot be kept in ground the arc occupies.
+- **A trimmed chain still has to be a chain.** Below the kind's own `CHAIN.min` it stops being a
+  line the player can read at range and becomes a couple of strays, so it is dropped instead — the
+  thing that minimum states itself to prevent.
+- **The wedge is reserved along with the flight.** A coin standing on a ramp is a coin the player is
+  driving *up*, and the launch takes them off it before they reach it.
+- **The check sweeps forty seeds rather than checking one**, because skipping a chain changes every
+  later roll: two laps from the same seed with and without the reservation are two different
+  layouts, and a single-seed count difference is mostly that divergence. It carries the walk with no
+  launches as its control, measured against the spans those launches would have had.
+
+Confirmed on a real lap: **all eight ramps have 0 ground pickups inside their flight**, each with an
+arc of five or six and a ground chain in the forty segments before it — so the pass is take the
+ground line, ride, take the arc, land, take the next. The answer is "both", in the order the road
+deals them.
+
+**⚠ And the tutorial's own ramp came out with no arc at all.** `buildTutorialLap` drops what the
+generator laid inside the tutorial's stretch, which is right for a chain — a chain belongs to a
+piece of road — and wrong for an arc, which belongs to a **ramp**. The tutorial's ramp is at 810m
+inside a 900m band, so its whole chain was filtered away and the card promising "the coins are laid
+along the flight you are about to take" pointed at empty sky. Arcs are now filtered by their launch
+and never by the band; every launch in that list is either the tutorial's own or already past the
+band, so keeping all of them cannot keep one that should have gone.
+
 ### Three defects the suite found in the placer itself
 
 - **A chain that crossed the lap seam.** The scene relays the whole layout on every wrap, so a
@@ -1390,6 +2049,42 @@ The alternative — pinning the horizontal speed through the flight — would ha
 the run's whole speed economy for a second, and would have read as the ramp slowing you down in the
 one moment you are fastest.
 
+#### ⚠ The approach relay ran every frame, across a band that is entirely in view
+
+Reported as coins changing position slightly depending on the speed, and that is exactly what it
+was. The band is `ARC_RELAY_NEAR_Z`..`ARC_RELAY_Z` — **40 to 90 segments ahead against a road drawn
+300 ahead**, so all of it is on screen — and `relayArcs` re-laid the chain on every frame it spent
+in there. The run accelerates every one of those frames, so the chain slid the whole time the player
+was looking at it. Measured live: **79 relays for one ramp**, against 1 now.
+
+The comment on the band said it was "far enough away that nothing is seen moving", which was never
+true of the *band* — only of its far edge. **And `arcRelaid` had been declared for exactly this,
+documented as "once per ramp per lap", and never read**: the third whole piece of authored state
+this project has found doing nothing, after `cooldownMs` and `fanScale`.
+
+**⚠ Laying it once is not enough on its own, and the check said so before the fix shipped.** A chain
+laid for the speed *here* is short by everything the run accelerates through over the next 90
+segments — **4.8 segments of tail at the speed a run starts at** — and that correction then lands at
+the launch, in view. So the one relay is laid for the speed the ramp will be *reached* at:
+`runState.ts`'s `speedAfter` walks the same fixed tick and the same chase `stepRun` uses, about 650
+ticks, once per ramp per lap. A closed form was not used because the chase is closed over *time* and
+this is a question about *distance*, which is transcendental — and a second expression of the same
+curve is a second thing that can drift from it.
+
+Measured over the shipped constants:
+
+| | tail displacement |
+|---|---|
+| re-laid every frame, across the band, in view | up to **3.62 segments** |
+| what one relay at the far edge corrects | up to 6.80 segments |
+| left for the launch, laid for the speed here | 4.82 segments |
+| left for the launch, laid for the predicted speed | **0.00 segments** |
+
+`verify:formations` asserts all four and carries the last pair as its own control, so the prediction
+is shown to be doing something. **The launch relay is unchanged and is still the thing that matters**
+— it is what a Fever entered on the approach, a hit, or a stretch of verge is corrected by, and
+`speedAfter` deliberately assumes none of the three.
+
 `movePickup` keeps the segment index in step when a pickup moves; a pickup moved without it is drawn
 in one place and collected in another, which is the same class of defect as `formations.ts`'s own
 clamp-after-check.
@@ -1404,6 +2099,46 @@ Verified live on `forest`: rode a real ramp at 3600 u/s, `flightV0` 4105 with on
 fruit fill a gauge, the gauge buys six seconds of 1.6x speed with the hitbox switched off and every
 pickup on screen dragged onto the snail's line, and then it has to *stop* — which is the only part
 of this that is difficult.
+
+### ⚠ THE GUARD IS GONE. A FEVER CAN BE CRASHED
+
+**Everything in the two subsections below is history**, and it is kept because the *speed* half of
+the ordering survives and because the argument it lost is worth being able to read.
+
+Fever switched the hitbox off for its whole length, plus the ease after it, plus a fourth phase
+(`holding`) that kept the guard up until the road ahead opened. **Reported twice, from two
+directions**: that a lot of things on the road were passing through the snail without doing
+anything, and that flying under the fruit boost should not make the player immortal. Those are the
+same sentence, and this file was already carrying the argument against itself — it says a hazard
+that passes through the snail without hurting it is the same defect as one that hits from further
+away than it looks, *while* doing exactly that for seven seconds at a time.
+
+**Being hittable at Fever speed is safe by construction rather than by luck.** Every row in the
+game is spaced against `REACTION_MS` at `MAX_ATTAINABLE_SPEED`, and `MAX_ATTAINABLE_SPEED` **is**
+`SPEED_CAP * FEVER_SPEED_FACTOR` — the placer has always laid the road on the assumption that the
+player might be meeting it at Fever speed and would have to answer it. `verify:fever` asserts the
+two constants are the same number, so a Fever can never outrun the spacing it was measured against,
+and measures the tightest row pair on a real lap at that speed: **686ms against a 450ms floor**.
+
+What went with the guard:
+
+- **`holding`, and `roadIsClear` with it.** The phase existed only to keep an invulnerability up
+  until the road opened; an ordering that protects nothing is not an ordering. `FEVER_HOLD_MAX_MS`,
+  `FEVER_CLEAR_MARGIN` and `NEAREST_OBSTACLE_SCAN` are deleted rather than left as constants nothing
+  reads.
+- **`stepFever`'s two return flags.** One marked the tick the ease began on so the scene could clear
+  the road ahead, one the tick the guard came off. It returns the state and nothing else now.
+- **`RunScene.isInvulnerable` has one source** — the grace after a hit, which is a *distance* and
+  exists so that a wall of eight rocks charges the player once. Measured over a 6000-frame run down
+  the centreline: **50 obstacles overlapped, 26 damage events**, i.e. the remaining "free" obstacles
+  are the rest of a row already paid for, and the snail blinks through every one of them.
+
+What stayed: the speed ease and its settle. Sixty percent of the run's speed still has to come off
+over `FEVER_EASE_MS`, and `FEVER_SETTLE_MS` still finishes the ramp early so the run lands on its
+own ceiling rather than a tenth above it — which matters *more* without a guard than with one,
+because the overshoot now hands the player rows spaced for a slower run rather than merely ending an
+invulnerability early. Measured live: peak **5760 u/s** exactly, back to 3647 at the end, and three
+hits taken during a forced Fever.
 
 ### ⚠ The exit is an ordering, and getting it wrong kills the player at the best moment of the run
 
@@ -1574,7 +2309,61 @@ the numbers for the part the player can see, not for the whole trail.
 
 ## The Art
 
-**⚠ EVERYTHING BELOW THIS LINE UNTIL "## The Difficulty Curve" DESCRIBES ART THAT NO LONGER
+**⚠ EVERYTHING BELOW THIS LINE UNTIL "## Two Things The Drawn Box Did That The Model Did Not
+
+Both reported in one message, and they are the same sentence twice: **a sprite is drawn from an
+origin, and the model reasoned about the origin rather than about the sprite.**
+
+### ⚠ A prop is placed by its centre and drawn from its centre, so the wide ones stand on the road
+
+Reported as big roadside textures sometimes climbing onto the asphalt. `DECOR.MIN_OFFSET` is 1.35
+half-widths and the asphalt's edge is 1 — which sounds like clearance, and is not, because that
+number positions a sprite's **centre** while the sprite is drawn from a bottom-CENTRE origin.
+
+Every decor PNG in the shipped set is 384px wide. At `SPRITE_SCALE` that is 3840 world units, i.e.
+**0.96 half-widths of *half*-width**, so an ordinary verge prop's inner edge sat at `1.35 - 0.96 =
+0.39` — a third of the way across the carriageway. A near-tier prop at 1.9x scale and the variation
+system's 1.35x reaches **2.46**, i.e. past the far kerb.
+
+Measured over a real lap: **73 of 890 props (8.2%) were drawn onto the road, the worst reaching
+-0.15** — past the centreline. After: **0**, worst inner edge 1.36.
+
+- **`decorateTrack` is told how wide each prop is drawn** (`DecorateOptions.halfWidthOf`), from the
+  same `DecorTexture` records `RoadSprites` draws with — so a re-rendered prop moves its own
+  placement and nothing has to remember to update a constant.
+- **The roll is clamped, not shifted.** Adding the clearance to the whole band would push every prop
+  outward and thin the near verge — the part the player looks at, and the reason `OFFSET_BIAS`
+  exists. Clamping refuses only the placements that would have overlapped: measured, the share of
+  props within 6 half-widths is unchanged at 40%.
+- The clearance uses `VARIATION.scale.max` rather than the instance's own scale, so the bound holds
+  for every instance and nothing downstream has to re-derive it.
+- `verify:road` asserts no prop's drawn inner edge crosses the kerb, and **carries point placement as
+  its control** — which still puts 8.2% of them on the road, so the check is measuring the placement
+  rather than a property of the art.
+
+### ⚠ The spin turned the sprite and left the collision box upright
+
+Reported as tumbling off a ramp into a tall barrier and taking no damage. `PlayerView` turns the
+sprite about its **bottom-centre** origin, so a tumbling snail hangs below its own feet — at half a
+turn, entirely below them — while `hits` went on testing the upright band `[y, y + PLAYER_BODY_H]`.
+
+**The drawn box stopped being the collision box the moment the ramp's spin was added**, which is the
+one rule this whole file is built on, and nothing said so. Measured over a real ramp flight against a
+`blocking` barrier: the model was hittable for **31%** of the flight while the *drawn* snail
+overlapped for **48%**, at worst **198 world units inside** a barrier the model said it had cleared.
+
+`bodyBand` returns the rotated rectangle's own vertical extent, and at zero rotation it is exactly
+`[y, y + PLAYER_BODY_H]` — so an ordinary jump, `passableLine` and the entire passability proof pass
+no rotation and get the answer they always got. `verify:ramp` asserts both halves and prints the
+31% -> 48% it buys.
+
+**The lateral half-width deliberately does not rotate with it.** A snail turned on its side is drawn
+*narrower* than an upright one, and taking that literally would let a tumble slip through gaps a
+grounded snail cannot — a hitbox that shrinks while the player is airborne is far harder to read than
+one that stays the size of the creature. The vertical extent is the half the spin genuinely breaks,
+because the whole question a barrier asks is how high you are.
+
+## The Difficulty Curve" DESCRIBES ART THAT NO LONGER
 SHIPS.** The whole set — the mascot, the three obstacle classes, the pickups, all nine biomes of
 roadside props and the road's own palette — was regenerated against a glossy casual-mobile brief.
 See **"The Regeneration: A Glossy World"** below for what shipped and why. What is kept here is the
@@ -1835,6 +2624,145 @@ The related half: `text, letters, numbers` had been cut from `COMMON_NEG` on the
 `glyphSuspectPct` was measured meaningless in the parent project and that nothing here asks for a
 sign. Both halves were true and the conclusion was still wrong — a **coin** is the one subject whose
 defining feature is that something is struck into its face. It lives in `PICKUP_NEG` now.
+
+### ⚠ The obstacles are one family of road barriers, and three natural objects are gone
+
+Reported: the things on the road are disliked — **stumps, and textures that hang in the air** — and
+what is liked is a flatter barrier. What shipped was six objects picked out of a CC0 nature kit
+plus one procedural drawing: `low` was a flat slab, a pebble cluster and a turf lid; `blocking` was
+a **tree stump** and a chunk of green cliff; `overhead` was a **fallen log floating on two stubs**.
+
+**Three faults in one, and only the last is about taste.** They are not a family — a stump, a
+boulder and a log share no vocabulary, so nothing about meeting a new one tells the player what it
+will do. They are natural objects standing on a made road. And `overhead` has to be drawn *entirely
+inside its own collision band*, which starts 362 units up, so whatever goes there necessarily
+floats: **a log that floats is a bug; a barrier arm that floats is a barrier arm.**
+
+So all three are now one made object at three heights, built as geometry by
+`dev-assets/cc0-3d/barrier_render.py` and rendered through the same `smooth_render` pass as the
+fruit and the coin:
+
+| class | object | the read |
+|---|---|---|
+| `low` | a low barrier block, flat-topped | hop it |
+| `blocking` | a tall panel — boarded, or a braced frame | go round it |
+| ~~`overhead`~~ | *removed — see below* | |
+
+- **⚠ The aspect IS the collision box, and the shipped kit renders were badly wrong about it.**
+  `ObstacleSprites` stretches whatever texture it is handed onto the obstacle's world box, so a
+  render at another proportion is *distorted in game*: `obstacle-low-0` was **4.17:1 against a box
+  of 2.96:1** — 41% too wide — and `obstacle-blocking-0` was 1.95:1 against 1.10:1. A kit model
+  arrives at whatever proportion the kit made it; geometry arrives at the proportion asked for.
+  `TARGETS` is computed from `OBSTACLE_BANDS` and `OBSTACLE_HALF_WIDTHS`, and the height is *solved*
+  against the pitch so the projected box lands on it. Delivered **2.98 / 3.00 / 3.02, 1.12 / 1.10,
+  3.43** against targets 2.96, 1.10, 3.43.
+- **Yaw 0, not the kit renders' 28.** A barrier across the road is met face-on, which is both the
+  honest view and most of what "flatter" means. Pitch 9, so the top of a block is visible.
+- **⚠ Flat shading is a vertex-duplication trick, not a setting.** `smooth_render` accumulates
+  normals per vertex *index*, so a box built from eight shared corners comes back **inflated** —
+  every corner normal is the average of three faces and the panel turns into a pillow. A vertex per
+  face corner gives each face its own normal. The one curved thing on these objects is the bevel
+  ring round the front face, which is where the specular sits and what stops a flat face reading as
+  a paper cut-out.
+- **⚠ AND THEN THE THIRD CLASS WAS DELETED, AFTER THREE ART ATTEMPTS AND THREE REPORTS.** The
+  redesign gave `overhead` a **vertically banded** boom arm; that came back as "the thing hanging
+  there is still there" — correctly, because vertical divisions are exactly what `blocking` wears,
+  so a boarded upright and a banded bar are **the same picture** and the only thing separating the
+  classes was that one of them was in the air. It became a **hazard board hung from a rail** —
+  diagonal stripes, a frame, a head rail to hang from — and the answer was ЭТО ВИСИТ.
+  - **There is no fourth attempt available, and that is geometry rather than fatigue.** The sprite's
+    canvas is the collision band; the band starts 362 units up; therefore the object is drawn 362
+    units up. Legs cannot be drawn: an `overhead` does not touch a grounded snail at *any*
+    `offsetX`, so a post is one the player drives straight through — the "sprite claims ground the
+    model does not" failure, from the other side.
+  - So the choice was a floating object or no class, the user was given both, and chose no class.
+    See `OBSTACLE_BANDS` for what it cost: nothing now hits an airborne snail alone, so a jump taken
+    when none was needed is free. `blocking` still reaches past the apex, so boulders are still
+    unjumpable and `provePassable` still has real work.
+  - **`provePassable`'s flight loop survives the deletion and is now unreachable**, because with
+    both remaining bands starting at `y = 0` the offsets blocked at the apex are a subset of those
+    blocked on the ground. It is kept — three lines, and load-bearing again the instant a band
+    starts above the road — and `verify:obstacles` asserts *that none does*, so the day one is added
+    the check fails and says the flight proof is live and untested.
+- **⚠ A rectangle inside a rectangle is a doorway**, which is the opposite of what `blocking` means.
+  The framed variant grew a mid rail and a centre upright for that reason alone.
+- **The three variants of `low` differ in the face and never in the height.** `drawWall` lays them
+  edge to edge to build the one row a jump is required for, and a wall is read from its top edge —
+  blocks at three heights are a fence with gaps in it, which invites trying to get *through* the row.
+- **The class value ordering is kept and had to be re-tuned to keep it.** `verify:obstacles` holds
+  the three at least 12 lightness apart because at obstacle size the haze and the biome tint take
+  hue away first. The first pass left the rendered `blocking` at 92 against the arm's 88 — four
+  apart — so the panel's `Kd` went up. Delivered, rendered: **low 143, blocking 117**; in the
+  palette: **134 / 120**.
+- **The procedural fallback was rewritten to match**, which is the lesson the snail's rear-view
+  render and the coin both left: art and fallback must not disagree about what the object is.
+  `PULLED_ART` is empty, and `ObstacleSprites`' shadow branch is kept for the same reason the
+  flight loop is: it is the rule "an obstacle off the road throws a mark on it", it evaluates false
+  today, and the check that every band starts at zero is what stops it going stale unnoticed.
+- Six files, **0–6KB each against 13–26KB** — flat colour quantises to almost nothing.
+
+#### ⚠ And a shadow could be wider than the thing casting it
+
+Found in the same frame. `SHADOW_APEX.spread` reaches 1.75 and `SHADOW_FOOTPRINT.width` was 0.82,
+so the product reached **1.44**: measured in the running game, an `overhead` 266px wide drew a
+**290px** ellipse. That is not a mark under an object, it is a second object — the same failure the
+two previous shadow rounds were about, arrived at from a third direction.
+
+The footprint is **0.62** now (and the height with it, so the ellipse keeps its own proportion).
+The widest a shadow ever gets is **1.08x** its caster — the snail at `JUMP_APEX` — and an
+`overhead` sits at **1.01x**, measured live. What it costs is that a shadow on the ground is 0.62
+of its object's width rather than 0.82, i.e. tucked under it rather than spread around it.
+
+**Nothing in `verify:jump` moved for this, and that is not luck**: `shadowInk` is measured in units
+of the ground shadow, so both terms carry the same footprint and it cancels. That is what makes
+this constant the one safe place to make every shadow in the game smaller at once — and why the
+spread itself was left alone, since the check that holds the apex ellipse at 1.4x the ground one is
+what makes the gauge readable at all.
+
+### ⚠ The coin is geometry, because this checkpoint cannot draw one
+
+Reported as wanting a coin that is gold and rich with nothing around it. The shipped pick was
+`pick_coin_v10`: a **steel bearing at three-quarters** with a grey plug in its bore and its own cast
+shadow baked into the matte. Measured against its own family it was the least saturated thing in
+it — **25% against the fruits' 53-66%** — i.e. the complaint is a number as well as a look.
+
+**All twelve variants are unusable and they fail in exactly the two documented ways.** v1-v3 have a
+glyph struck into the face (a "0", a monogram, a pair of eyes — "this checkpoint draws objects, not
+symbols", and a coin is the one subject whose defining feature is that something is struck into it);
+the other nine are rings, washers and bearings, which is the nearest object the model does have a
+prior for. Four rounds is enough: `dev-assets/cc0-3d/coin_render.py` builds the coin as a **surface
+of revolution — nine profile points and three `Kd` values** — and renders it through
+`smooth_render.render`, the same smooth-normal Blinn-Phong pass that produced the fruit.
+
+- **The artefact is answered by construction rather than by a matte step.** That renderer's alpha is
+  triangle coverage, so there is no plate, no halo and no baked cast shadow for `strip_plate` to
+  have to find — and `strip_plate` is documented as never run on pickups anyway.
+- **⚠ It is a struck disc now, not a ring, and that gives up the set's stated identity rule.**
+  `pickupArt.ts` had the coin as "the only shape with a hole", which is what survives 13px. That was
+  written when the set was three abstract glyphs; the fork's `fruit` became four *rendered* objects,
+  three of them round, so silhouette purity had already gone — and what the hole was still buying is
+  that both the art and the drawing read as a **washer**, which is the whole report. Colour separates
+  a gold disc from a green melon and a purple bunch at every size the game draws them.
+- **Three face treatments were tried and rejected, and each failed by becoming another object**: a
+  domed boss in the field is a **loudspeaker** (circle, ring, dome, in that order, is a speaker
+  before it is a coin); a groove cut in the field is a **target**; a milled rim at 24 and at 40 reeds
+  is a **bottle cap**. What ships is the plainest of them — rounded rim, raised bezel, recessed
+  field — where the dark/light/mid sequence outward from the centre is the only relief, and it is the
+  one part that survives to 13px. All four are kept in `SHAPES` as controls so the comparison can be
+  reproduced rather than taken on trust.
+- **⚠ The gloss is the one place the family's shading is departed from, deliberately.**
+  `smooth_render`'s `SPEC_STRENGTH` is matched to fruit and stone; gold at 0.12 renders as painted
+  wood. It is 0.34→0.42 with a broader highlight for this object only, set on the module and
+  restored in a `finally` so a sheet of eight cannot leak it into the next prop built in the same
+  session. What is *not* touched is the light direction, the ambient and the value scale — the three
+  that decide whether an object belongs to this frame.
+- Delivered: **lightness 141, saturation 81%**, against 25% before, which puts it in the pickups'
+  own family (53-66%) rather than below it. `verify:mattes` green, 10KB.
+- **⚠ The procedural fallback still drew the shared dark backing disc**, which is the second
+  contrast device the round below removed from the *renders* and left here — so the fallback and the
+  art disagreed about whether a pickup has a plate behind it, and the plate is itself the artefact
+  the report is about. Gone, for all three kinds; `drawCoin` is the render's own profile flattened
+  to three rings.
 
 ### ⚠ A pickup now carries nothing behind it, and two contrast devices were removed to get there
 
@@ -2168,6 +3096,283 @@ palette and a passing one the same. The standing rule holds and is now paid for 
 what is not, on a background that hides neither dark paint nor a pale plate.**
 
 
+## The Mascot Was Too Small, And The Coin Was Too Big
+
+Reported from a 375px phone: the snail is too small. Two causes, and only the first is the one
+being pointed at.
+
+### The structural half: everything on this road is sized off the frame's WIDTH
+
+That is what keeps an object the same size relative to the road at every aspect, and it means a
+375px frame is a fifth of a 1920px one. **There is no lever that grows the snail only there**, and
+the three that look like levers are each closed for a reason already written down:
+
+- a **camera zoom** cannot, because the player's own lane already fills 78% of the frame at every
+  aspect, so anything past about 1.25x pushes the snail off the edge at full lock;
+- a **viewport-dependent field of view** cannot, because `PLAYER_Z` is *solved* from `CAMERA_DEPTH`
+  — the snail's world position, and with it every collision time, the arc geometry and the slime
+  trail, would depend on the device;
+- a **viewport-dependent collision width** cannot, because `ROAD_EDGE` would move on a rotation and
+  a lap would have been proved passable against a half-width the run is no longer using;
+- and **drawing it bigger than its box** is the pancake bug in the other direction: the player
+  clips a rock and takes nothing, which reads as a dropped hit.
+
+So the mascot is bigger everywhere. `PLAYER_BODY_H` 261 -> **340**, which is the only size decision
+it has — `PLAYER_WIDTH` and `PLAYER_HALF_WIDTHS` are both solved from it, so the two axes cannot
+drift apart the way they did when a round raised the width alone and shipped a 45% stretch.
+
+| | 375px | 844px | 1920px |
+|---|---|---|---|
+| snail, before | 34x21 | 76x47 | 172x107 |
+| snail, after | **44x27** | 99x61 | 224x139 |
+
+- **The value was swept before it was picked, not after.** `verify:obstacles` was run at 261, 300,
+  320, 340, 350, 360 and 370: **the difficulty table does not move at any of them** — density,
+  jump-only share, rows per 90k and the reaction budget come out identical, because the placer
+  re-proves every row against whatever these numbers are and pays a wider hitbox in rows redrawn
+  rather than in rows nobody can pass. 370 fails, and the thing it fails is the fixture holding the
+  band the deleted `overhead` class occupied (`[362, 560]`), which a grounded body must not reach.
+  **So the ceiling is 361 and it is arithmetic rather than taste.**
+- **It is a real difficulty change and it is stated rather than hidden**: `hits` adds the half-width
+  to the obstacle's own, so every hitbox is about 30% wider laterally.
+- **`RAMP_HEIGHT` moved with it, and the check is what said so.** A ramp is held between two derived
+  bounds — over `PLAYER_BODY_H` (below the snail it reads as dirt on the road) and under
+  `blocking.yHigh` (at it, it reads as the class you cannot jump). Raising the snail put 300 on the
+  wrong side of the first; it is 390, the same 1.15x of a body height it always was.
+- **`PICKUP_HEIGHT` is derived now**, `PLAYER_BODY_H / 2`. It has always *meant* the body's centre —
+  that is what makes `formations.ts`'s arc tolerance symmetric at ±half a body instead of
+  +261/−16 — and typed as `130` it quietly stopped being one the moment the body grew.
+
+### ⚠ Round two: it was still too small, and the lever that was left is free
+
+Reported again at 44px. The structural argument above is unchanged and still closes every door it
+closes — but it names only one of the two ways a world object gets bigger on screen. The other is
+**how near the camera it stands**, and `PLAYER_Z` is solved from `PLAYER_REST_Y_FRACTION`, which was
+`5 / 6` **taken unchanged from the rail shooter's `SHIP_REST_Y_FRACTION`** — a row chosen for a ship
+in a combat frame, kept by a file that said so.
+
+Lowering that row costs **nothing**: the drawn size goes as `1 / PLAYER_Z`, the collision box does
+not move, no lap is re-proved and the difficulty table is untouched. What bounds it is two rules,
+and the row is the lower of them:
+
+- **a finger at the edge of the screen must still be able to ask for the edge of the road.** The
+  nearer the player stands, the more of the frame the road fills, so past a point the screen's own
+  edge maps to an `offsetX` *inside* the asphalt and the verge stops being somewhere a player can
+  choose to go. `STEER_REACH_MARGIN` keeps 10% past `ROAD_EDGE`, giving **0.883**.
+- **⚠ and the road falls away on a descent** — which the first version of this solve missed and a
+  player found in one screenshot. On a downhill the ground at `PLAYER_Z` is below the camera's eye
+  line, so the mascot is drawn lower, and past a point off the bottom of the frame.
+
+The second one is worth stating carefully, because its arithmetic is what made the fix possible:
+the drop is `scale * gradient * PLAYER_Z * height / 2` with `scale = CAMERA_DEPTH / PLAYER_Z`, so
+**the distance cancels**. It is `CAMERA_DEPTH * gradient / 2` — a property of the steepest hill and
+the field of view, identical wherever the player stands. Standing the snail nearer therefore does
+not make the drop worse; it only reduces the room left underneath it.
+
+| | 375px frame | worst feet row | fully hidden |
+|---|---|---|---|
+| 5/6 row, old hills | 44px | 100.9% | 0.0% of the lap |
+| 0.883 row, old hills | 54px | 105.9% | **3.1%** — the report |
+| 0.883 row, new hills | 54px | **97.1%** | 0.0% |
+
+**⚠ A softer version of the rule was tried and rejected on a frame.** Allowing the feet a little
+past the bottom edge — reasoning that the mascot is drawn *upward* from them, so half a snail is
+still a snail — passed its own check at 43% hidden and produced a sliver of shell along the bottom
+of the screen, which is the report again in a smaller size. The bound is strict: the feet stay on
+the frame. There is no fraction of "can the player see the thing they are steering" worth trading.
+
+So what actually bought the size is the third lever, and it is in the track: **the run's own hills
+are half what they were** (see `buildRunCircuit`), which took the drop from 17.6% of the frame to
+8.8% and handed the binding role back to the steering rule. Between the two rounds the mascot went
+**34px -> 54px on a 375px frame**, 172px -> 278px at 1920, and the collision box moved once.
+
+### ⚠ Round three: too big on a desktop, and the two reports bracket one number
+
+Reported the other way: on the PC web build the mascot is too large. It is the **same fraction of
+the road at every viewport** — that is what scaling billboards by frame *width* buys — so this is
+not a conflict about devices, it is the single fraction having overshot. The two reports bracket it:
+
+| | 375px frame | 1920px frame | verdict |
+|---|---|---|---|
+| round one | 44px | 224px | too small |
+| round two | 54px | 277px | too big |
+| **shipped** | **48px** | **244px** | the middle of both bands |
+
+`PLAYER_BODY_H` gives the size back rather than the rest row, and deliberately: it is the half that
+costs **lane width**, so handing it back buys the difficulty back too. 340 -> 310 takes the mean gap
+a row leaves from **1.65 to 1.89 snail widths** — most of the way back to the 2.40 the mascot started
+at, which matters more than usual in a round that has also just made Fever hittable.
+
+**What a landscape frame really shows, stated because it is the honest reading of the report.**
+Every object on this road is sized off the frame's *width*, so a short wide frame is where the
+mascot is the largest share of the **height**: 17.1% at 1920x889 against 4.5% at 375x667. That
+asymmetry is a property of the projection, not of a constant — normalising it would need a
+viewport-dependent `PLAYER_Z`, which is a device-dependent world position and closed for the reasons
+`PLAYER_BODY_H` lists.
+
+### ⚠ The front screen's mascot was a function of the run's hitbox
+
+`MASCOT.scale` was a bare `3.4` multiplying whatever the run's mascot happened to be, so **the hero
+snail grew 61% as a side effect of making the in-run snail readable on a phone** — 20% of a desktop
+frame to 32% of one, with nobody deciding it. It is `MASCOT.widthFraction` now and the multiplier is
+solved from it, so the front screen keeps its composition through any future change to the run's
+size. Back to 20% of the frame's width on a desktop and 38% on a phone, which is where it was.
+
+### ⚠ And the row cannot sit on a segment boundary, which is a third rule nobody had written down
+
+There is no depth buffer: everything sorts on `worldDepth(distanceIndex, layer)` with the layer as a
+**sub-segment tiebreak**. So how far the snail stands into its *own* segment is what decides whether
+an obstacle on that segment — whose near edge is behind the snail, and which must therefore paint
+over it — actually wins. The legal window is `(WORLD_LAYER.player - WORLD_LAYER.obstacle,
+1 - (WORLD_LAYER.pickup - WORLD_LAYER.player))` = **(0.1, 0.9)**.
+
+At the rail shooter's inherited row the snail stood 9.83 segments out — inside the window by luck,
+and a tenth from its top edge. Solving the row from the steering and descent rules put it at
+**8.077**, i.e. 0.077 into its segment and outside the window, and `verify:obstacles` failed with *an
+obstacle the snail has passed draws behind it* — which is exactly what it would have been on screen.
+
+`PLAYER_SEGMENT_PHASE` snaps `PLAYER_Z` **up** to the next quarter-segment, which can only move the
+player further from the camera and therefore cannot break either bound: it spends a little of the
+size the bounds allow on the depth order coming out right. 8.25 segments, 25% into its own.
+
+### ⚠ The other half: `readableScale` had re-created the bug the constant beside it documents
+
+`PICKUP_DRAW_SIZE` is authored at exactly **half** its catchment, and its own docstring says why:
+the first version drew the icon at the *whole* of it and put a 640-unit coin on the road, "four
+snails wide, and it read as a piece of scenery that had landed in the wrong game". The narrow-frame
+boost then multiplied that by up to 1.9 with **nothing bounding the product**.
+
+Measured on a 375px frame, before:
+
+| | world units | % of its own catchment | on screen | against the mascot |
+|---|---|---|---|---|
+| pickup at 375px | 608 | **95%** | 49px | **1.44x** |
+| pickup at 1280px+ | 320 | 50% | 87px | 0.58x |
+
+So on a phone the collectibles were the largest moving objects on the road and the character the
+player steers was the smallest — which is the frame the report was pointing at, whichever half of it
+the player named.
+
+`PICKUP_MAX_ICON_SHARE` is **two thirds** of the catchment and `pickupDrawWidth(screenWidth)` is the
+one place the boost is applied, so the bound cannot be honoured in one call site and forgotten in
+the next. The boost keeps most of its range — 26px becomes 34px on a phone rather than 49px — and
+the rule that may not bend is unchanged: the box is only ever *more* generous than the icon.
+
+**The cap lives in `pickups.ts` rather than inside `readableScale`**, because it is a statement about
+the catchment and the catchment is that file's. `readableScale` stays generic; the front screen still
+uses it on the mascot, where there is no collision and no catchment to be measured against.
+
+Delivered, at every width: **the mascot is the largest thing on the road.** Confirmed in the running
+game at 375x667 — snail 44x27, widest pickup at the snail's own row 34px, zero errors.
+
+- The pickup's **shadow takes the icon's drawn width** now rather than the authored one. It was
+  reading `PICKUP_DRAW_SIZE` while the icon was boosted, i.e. a mark narrower than the thing casting
+  it — the same class of defect as `SHADOW_FOOTPRINT` reaching 1.44x, from the other side.
+
+## A Snail You Can Choose
+
+`src/run/snailSkins.ts` (pure, `npm run verify:skins`), `snailArt.ts`, `shop/snailCatalog.ts`, save
+**v11**. Five recolours of the mascot, sold beside the themes.
+
+### A skin is a recolour of the one render, not a second render
+
+Six frames per skin is 130KB of PNG each and — much worse — six more drawings of a creature whose
+identity is the entire product. The shell's spiral, the two stalks and the wave along the foot are
+what a player reads as "the snail"; redrawing them per skin is five chances to draw a different
+animal. What may differ without touching identity is colour, and colour is free: **the whole feature
+adds zero bytes to the bundle.**
+
+### The transform is a rigid hue rotation per family, in OKLCh
+
+Every pixel keeps its own lightness and its own offset from its family's mean hue, so the render's
+shading, its ink and its specular survive exactly; what moves is where the family sits on the wheel.
+Two things fall out of that and neither needed a special case:
+
+- **the ink and the highlight recolour themselves by not being colours.** Both sit below
+  `THREAT_MIN_CHROMA`, where a hue angle is numerical noise — the same escape the threat reservation
+  grants — so rotating them is a no-op.
+- **the shell and the foot move independently.** Measured over the shipped render's 15810 opaque
+  pixels, the legible ones fall into exactly two clusters with **20.1 degrees of empty wheel between
+  them**: 46.0–91.5 (9186 px, centroid the upper half of the sprite) and 111.6–139.4 (5890 px,
+  centroid the lower half). Shell and foot. `SNAIL_HUE_SPLIT` sits in the gap, and `verify:skins`
+  asserts the gap is still there rather than trusting the number.
+
+`SNAIL_BASE_HUES` are those clusters' own means, which is what lets the free skin be the shipped
+render **bit for bit** — asserted, so a save that predates skins changes nothing at all.
+
+### Three constraints on a hue, and one of them nobody would have guessed
+
+- **The reservation.** A family rotated to `T` occupies `[T + spread.min, T + spread.max]`, which
+  leaves the shell `[69, 323.5]` and the foot `[68.3, 340.5]`. **The mascot may not wear the danger
+  colour**: a player sold a red snail has been sold the thing they are meant to be dodging.
+- **Distinguishability.** Shell hues at least 40 degrees apart — the shipped five clear it by 47.
+  Shell rather than foot because the shell is 61% of the legible pixels and the thing a player names
+  the skin by.
+- **⚠ The gamut, which was swept rather than assumed.** sRGB is much narrower in magenta than in
+  cyan at this render's lightnesses, so part of every rotation is eaten by the clamp: `rose` at a
+  shell of 318 came back holding **81%** of the render's saturation against **131%** for `teal`.
+  Measured across 296..323 the cost falls off steeply — 318 is 82%, 311 is 85%, 302 is 91% — so
+  `rose` sits at 302 and `indigo` moved 262 -> 255 to keep the 40 degrees in front of it.
+
+**⚠ And none of that may be checked on the input.** A rotation at constant chroma routinely leaves
+sRGB and the clamp back moves the hue again — `threat_guard.py` learned that the expensive way, its
+first pass leaving 1327 "corrected" pixels still illegal. `verify:skins` therefore runs the shipped
+`recolour` over the shipped PNG and measures the **output**, which is the only place the clamp's
+answer exists. It carries the negative control this project insists on: a shell rotated onto
+`THREAT_COLOR` paints **55%** of the mascot illegal and is rejected.
+
+| skin | shell / foot | price | closest legible pixel to the threat hue | saturation kept |
+|---|---|---|---|---|
+| amber | 62.1 / 127 | free | 23.0 deg | 100% |
+| fern | 118 / 150 | 300 | 76.2 | 102% |
+| teal | 180 / 205 | 600 | 137.1 | 131% |
+| indigo | 255 / 285 | 900 | 85.2 | 107% |
+| rose | 302 / 330 | 1200 | 40.4 | 91% |
+
+### What it costs at runtime, and why the free skin costs nothing
+
+`snailSkinFrameKey` returns the **base key unchanged** for the default skin, which is load-bearing
+rather than tidy: those keys are what `Preloader` loads from disk and what the procedural fallback
+draws into, so a player who has bought nothing pays exactly what they paid before skins existed — no
+canvas, no pixel pass, no second copy of six textures.
+
+A skin's six frames are built from whatever the base keys hold, through the texture manager rather
+than the file system, so **the same code works over the shipped PNGs and over the procedural
+fallback** and neither path needs to know skins exist. `build-sprites.py` quantises to 64 colours, so
+one cache across the six frames turns 187k OKLab round trips into about 64. Measured in the running
+game: **50ms to build all five skins**, once per skin per session.
+
+### The shop learned nothing, and the front screen is the preview
+
+The rows are `themeCatalog.ts`'s shape exactly — pure `'unlock'`, `selectable`, the free one listed
+first — because they sell the same kind of thing. Two id spaces now share `purchases`, and
+`verify:skins` asserts neither can parse the other's ids.
+
+- **The free skin is a row from the start**, and that is not tidiness: `themeCatalog.ts` records what
+  filtering the free rows out cost there — buying one paid theme took the free ones away
+  permanently, because the list had quietly stopped being a list of purchases and become the only
+  place a look can be *chosen*. The same trap was one line away here.
+- **What previews a skin is the mascot standing on the front screen.** The shop's rows are a glyph
+  and a name; `MainMenu.selectItem` calls `PlayerView.setSkin` before it writes the save, so the
+  confirmation is the creature behind the panel changing. That is also why `PlayerView` holds a skin
+  rather than a texture key — the glide frame is derived from distance every render, so the skin has
+  to be the thing that is held and the key the thing that is computed.
+- **A run resolves its skin once, at `create()`**, never per frame: `render` runs sixty times a
+  second and the save is not a thing to consult at that rate.
+- Save **v11** adds `selectedSnail`. `upgradeV10ToV11` writes what the normaliser would have
+  defaulted and **grants nothing** — a returning player comes back on the snail they have always
+  had, which is the shipped render exactly.
+
+### Harness note, and a way to lose a save
+
+**⚠ A module imported from an injected `<script type="module">` is a different instance from the
+one `main.ts` wired up**, which this file already documents for `audio.ts` — and for `save/store.ts`
+the consequence is worse than a no-op. The second instance starts from `DEFAULT_SAVE_STATE`, and its
+`mutate` **persists that**, overwriting the real save with defaults. Recovered by dispatching
+`pagehide` on the page, which makes `bindAutosave` flush the *live* instance's still-correct
+in-memory state back over it. There is no way to reach the live store from outside; drive the game
+through its scenes instead.
+
 ## The Difficulty Curve
 
 `src/run/difficulty.ts` — a pure function of **distance, never of time**. A time-driven curve
@@ -2205,6 +3410,280 @@ because there is nothing left to step to.
 The biomes do the rest for free: the run circuit cycles through eight of them along the track, so a
 long run *looks* like progress without the difficulty having to carry that job as well.
 
+## The First Run Teaches Itself
+
+`src/run/tutorial.ts` (pure, `npm run verify:tutorial`), `TutorialCard.ts`, save **v12**, and one
+branch in `RunScene.buildLap`.
+
+The game had seven things a player has to know — steer, jump, what a wall means, what cannot be
+jumped at all, what fruit is for, what a shield does, what a ramp is for — and **no way of saying
+any of them**. A player who does not know `blocking` cannot be jumped learns it by dying; one who
+does not know the leaf is a Fever gauge never finds out at all.
+
+### Three rules, each of which could have gone the other way
+
+1. **The tutorial IS the first run.** Not a mode with its own scene, its own loop and its own way
+   out: those are two games to keep working, and the second one is the one nobody tests. What a
+   tutorial run has is a hand-placed opening stretch and a card in the frame; when the last card
+   clears it carries straight on into the ordinary placer with no seam and nothing to dismiss.
+2. **⚠ A card stops the road, and this reverses what shipped first.** The first version explained
+   things while the run kept moving, on the argument that a runner which stops to explain itself has
+   stopped being a runner. That is a good argument about a *game* and the wrong one about a *first
+   minute*: it asks the player to read a sentence, understand it and act on it while the thing it is
+   about is already arriving — three jobs at once, for somebody who has none of them yet. Reported,
+   and the fix is the plain reading of the report: **show, then do, then go.**
+
+   **The snail is not frozen with it**, and that half is what makes this teach anything. The world
+   stops; `stepPlayer` does not. So the two control lessons are performed *inside* their own pause,
+   with nothing coming — the player drags the snail across a still road and watches it move, taps
+   and watches it jump — and the card clears because they did the thing, not because they dismissed
+   it. The six explanations are the other shape: what they ask for can only be done in motion, so
+   they are cleared by an acknowledgement and the road then delivers the object.
+
+   `tutorialPaused` is the whole rule in one function, so the scene cannot hold half of it, and it
+   deliberately does not cover the snail.
+3. **A card says what the thing is FOR, not which button to press.** "Tap to jump" is a control the
+   player forgets; "a wall has no gap, so the jump is the way through" is a reason, and a reason is
+   what they can apply to the next wall the game deals them without being told again.
+
+   **⚠ But a card that names something on screen has to POINT at it.** "Fills the leaf" is a
+   sentence about an object the player has never been told the name of, in a corner they have no
+   reason to be looking at — reported as exactly that. So a step may carry a `TutorialHighlight`,
+   and while its card is up the readout is ringed and a line runs from the card's near edge to the
+   ring. Two of the eight cards name one: `fruit` points at the gauge and `shield` at the lives.
+   `verify:tutorial` asserts that pairing in both directions, because **a ring on a card that names
+   nothing is worse than no ring** — it would point at a readout the sentence is not about, which is
+   a wrong answer rather than a missing one.
+
+   - **The ring pulses, and that is what makes it a pointer rather than a border.** A static
+     rectangle round a HUD element reads as part of the HUD; the player has no reason to think it is
+     new, and this has about two seconds in which to say "that thing, in the corner".
+   - **Where each readout is comes from `Hud.highlightRect`, not from the card.** Those boxes are
+     solved from the frame's own width every `layout`, so a card carrying coordinates would be a
+     second opinion about where the leaf is.
+   - **The shield card rings the whole lives row rather than the shield pips.** Before the shield is
+     collected there are no pips, and a ring round an empty spot points at nothing — and the card
+     says a shield is taken "instead of a life", so the lives are what it is about anyway.
+
+### The band, and why the tutorial owns a stretch of road rather than annotating one
+
+Eight lessons over **450 segments — about 54 seconds at the speed a run starts at**, each subject 55
+segments past the last against a 45-segment lead, so a card is never up while the previous card's
+object is still arriving and the player is never reading about two things at once.
+
+That spacing is the whole reason the road is hand-placed. The ordinary placer is tuned by
+`difficulty.ts` to keep a player busy — density, the wall share, the unjumpable share — and every
+one of those knobs is wrong for a first minute; it also cannot be *told* to deal a wall next, which
+is most of what a tutorial needs. The order is not arbitrary either: steering first because it is
+the control already under the finger, the low rock after the jump so the jump has a reason before it
+has a use, and the wall after the low rock, because "the row with no gap" is only legible to
+somebody who has already seen a row with one.
+
+- **The generated lap is filtered, not shortened.** The placers reason about a lap as a unit — the
+  row spacing, the passability proof and `sideAwayFrom` all do — so asking for "a lap starting at
+  450 segments" would be asking for a different thing than the lap they were written to produce.
+  Dropping what falls inside the band leaves the rest exactly as it would have been, which is what
+  makes the handover seamless: the road past `TUTORIAL_LENGTH_Z` is the road this run was always
+  going to have.
+- **Ids continue from the generated set rather than restarting.** `RunScene.resolvedOnLap` is keyed
+  by obstacle id and two obstacles sharing one are one obstacle to the collision — the defect that
+  once left 66% of a lap unable to hit the player, and a hand-placed band is a fresh chance to
+  reintroduce it. Asserted.
+- **The card is top-centre**, which is the only band a run leaves empty: the HUD claims both top
+  corners and the bottom left, the near ground is the mascot's, and the middle of the frame is the
+  road the player is reading obstacles out of. It sits above `HORIZON_Y`, so it is over sky and
+  covers nothing.
+- **It is allowed a plate, unlike the front screen** — which has just had its own strip removed for
+  reading as a slab across the road. The difference is that this one is temporary, is over sky
+  rather than over the picture's subject, and carries two lines that have to be read at speed.
+
+### What the check holds, and the three defects it found
+
+**Once a card can stop the road, the failure to be afraid of is a pause nobody can get out of** —
+and the player who triggers it is by definition the one who did not understand the card. So
+`verify:tutorial` drives the state machine the way the scene does, **advancing distance only while
+the run is not paused**: a driver that walked distance regardless would be testing a game that does
+not exist, and would pass every deadlock in the list below.
+
+It runs a player who does what each card asks (all eight lessons, in order, once each, **every one
+of them stopping the road**), one who does **nothing at all** (holds forever on `steer`, exactly as
+designed, and the road does not move a unit under them), a late starter (still sees all eight), and
+one **pressing everything from the first frame**. It also asserts the hand-placed road: every row
+has a line through it, **exactly one row is jump-only and it is the wall**, the tall barrier really
+cannot be jumped and really can be gone around, the low rock is the opposite on both counts, nothing
+is laid inside an obstacle, and all three pickup kinds are dealt — the tutorial is the only place a
+first-time player is *guaranteed* to meet a shield.
+
+Three real defects came out of writing it, and the third came out of driving the running game:
+
+- **⚠ A card could be answered by something done before it existed.** The signals were
+  `jumped: boolean` — "has this player ever left the ground" — so somebody who taps once out of
+  curiosity while the *steering* card is up arrives at the jump card with it already satisfied: the
+  card that teaches the jump appears and clears in the same frame and teaches nothing. Every signal
+  is a cumulative count now, and `TutorialState` takes a **baseline when the card arms**, so what
+  answers a card is what happened since it came up. The baseline lives in the state rather than as a
+  reset in the scene, because a rule kept in two places is a rule that will be applied in one of
+  them. The check carries the unbaselined form as its control: **2 of the 8 cards clear themselves
+  on sight.**
+- **⚠ Guarding the whole step on "is the card visible" deadlocked the tutorial on its first
+  explanation.** A `read` card stops being visible once its object is behind the player — which is
+  exactly the condition it *advances* on — so the guard froze the machine and the run never left the
+  first rock. Only arming waits for visibility now.
+- **⚠ The cards ran over the ordinary road, because `LapLayout` builds lap 0 inside its own
+  constructor.** The tutorial state was created where the rest of the scene's views are — after the
+  world, beside the HUD — and was still `null` when `buildLap(0)` ran, so a tutorial run was dealt
+  the generated road and the cards explained a wall that was not there. Invisible to every check,
+  because both halves are correct on their own; found by driving a real run and reading the lap
+  back — **a wall at 26m against a band whose first object is a rock at 260m.** The state is
+  created at the top of `create` now; the card, being a view, is still built with the views.
+
+A card leads its subject by **5435ms at the start of a run and 2500ms at the cap**, against a 450ms
+`REACTION_MS` floor — and that lead is now the distance the road covers *after* the card is
+answered, which is the whole point of it.
+
+### Save v12, and the one migration that disagrees with its own default
+
+`tutorialDone` is `false` in `DEFAULT_SAVE_STATE` and **`upgradeV11ToV12` writes `true`** — the only
+step in the ladder that deliberately does not write what the normaliser would. Every other upgrade
+fills a new field with its default, because a field nobody has had an opinion about should read as
+though they never did. This one is the opposite: `false` means "has never played", and a save
+arriving at v12 is by definition from somebody who has. Defaulting it would deal every existing
+player a beginner's road on their next run.
+
+It stays reachable: **Settings has a muted `Tutorial` row that clears the flag**, so the tutorial is
+something a player can ask for rather than something that happened to them once. It clears the flag
+rather than starting a run — that panel is `launch`ed over whatever opened it, and starting a scene
+from there would leave that one alive underneath, which is the two-worlds trap the result screen's
+Menu button fell into.
+
+**The flag is written the moment the last card clears, not at the end of the run.** A player who has
+been taught has been taught; banking it at `endRun` would teach the same lesson twice to anybody
+whose first attempt was a short one. A run that *dies* part-way through keeps the tutorial for next
+time, which is the same rule read from the other side.
+
+Verified live, with the road's own odometer as the evidence: the `Steer` card is up at **0m and the
+run is still at 0m after two seconds of doing nothing**; steering clears it and the road runs to
+25m; the `Jump` card stops it at 50m and a tap clears it **with the snail off the ground**; the
+`Low rock` card stops it at 170m, **two more seconds change nothing**, and a tap clears it with the
+snail **still grounded** — the press was spent on the card, not on a hop. The road then rolls on to
+265m with the card still up, so the sentence and the rock at 260m are on screen together. The lap
+read back is the band exactly: coins at 56–116m, one rock at 260, a wall of 8 at 370, a barrier at
+480, fruit at 590–606, the shield at 700, the ramp at 810, and the generated road from 940 — one
+segment past `TUTORIAL_LENGTH_Z`. Zero errors.
+
+## The Shield You Can See
+
+`src/run/shield.ts` (pure, `npm run verify:player`), `shieldArt.ts`, `PlayerView`, `Hud` and one
+branch in `RunScene.takeHit`.
+
+**⚠ Reported as "the shield's effect cannot be seen at all", and it was invisible in all three of
+the moments it exists in.** It is the rarest pickup on the road and worth more points than anything
+else, and the whole of its presence in the frame was a `◆` glued onto the front of the coin counter:
+
+| moment | what the frame said |
+|---|---|
+| taking one | the ordinary pickup blip, three semitones down |
+| holding one | a `◆` in the corner, in the coin readout's own colour |
+| spending one | **nothing** — the same shake, the same impact, the same blink as losing a life |
+
+**The third is the one that matters.** A shield's entire product is "the next mistake is free", and
+a mistake presented as an expensive one has not been made free in the only place the player can
+check. So there are three cues rather than one bigger one, because each answers a different
+question, and no one of them can answer another's:
+
+- **A bubble around the snail** says *you are carrying one*, in the place the player is already
+  looking. It is a ring and not a fill — `shieldArt.ts` is transparent through the middle — because
+  a wash over the mascot spends the one separation this game protects: the snail is the only
+  saturated thing in the frame, which is the same cost `FEVER_WASH_ALPHA` was pulled back for.
+- **Pips beside the lives** say *how many*, which a bubble cannot. Their own `Text` object, because
+  a `Text` has one colour and a shield drawn into the lives string would be a life-coloured pip
+  standing for something that is spent first and bought separately. In the pickup's own green — the
+  only colour the player has ever been shown for it — and capped at `MAX_SHIELD_PIPS` with a `+`,
+  since `addShield` does not cap and eleven diamonds is a number to count rather than a shape.
+  - **⚠ And they shipped drawn ON TOP of the lives.** They sit beside the lives, so their x follows
+    the lives' own *width* — and `layout` runs once at scene create, before the first `update` has
+    put a pip in either string, so that width is zero and both readouts land on the same pixel. It
+    never corrects itself either, because `layout` only runs again on a resize. Reported from a
+    screenshot of the corner. They are positioned in `update` now, which is the rule the speed
+    badge's chrome already states one block below in the same file: **a thing positioned from
+    another thing's text has to be positioned where that text is written.**
+- **A break** says *that is what just happened to it*: the ring thrown outward as it fades, in the
+  shield's green rather than the threat red, over a shorter shake and a tonal sound instead of the
+  set's one noise burst.
+
+### The three constants, and the one the check corrected
+
+- **The bubble breathes on two incommensurate periods** (1700 and 2600ms, lining up every 44s), for
+  `SUN_ANIM`'s reason: a ring that does not move reads as a decal painted onto the sprite, and one
+  on a single sine reads as a mechanism inside about three cycles.
+- **The break's size and alpha ease opposite ways** — expansion front-loaded, alpha holding then
+  going — which is what makes it a burst rather than a balloon. The pair is the same arrangement the
+  shadow's own two terms record from the other side: curves that fall together multiply to nothing
+  at exactly the moment the thing is big enough to see.
+- **⚠ `SHIELD_POP.durationMs` shipped at 380 and the check rejected it at once.** The break has to
+  finish inside the grace a hit buys, and `HIT_INVULNERABLE_Z` is a *distance*: about a second at
+  the speed a run starts at and **248ms at `MAX_ATTAINABLE_SPEED`**. At 380 a second hit would land
+  while the first shield was still visibly breaking — the player watching a shield they no longer
+  have, at exactly the moment they need to know they have none. 220ms, measured against the fast end
+  rather than the comfortable one.
+
+### The hit branches, and it is asked before the hit is applied
+
+`takeHit` returns a state with the shield already spent, so whether one absorbed the blow is only
+knowable from the state that went in. Measured live: **carrying, alpha 0.58 at 319px around a 245px
+snail; the hit takes `shields` 1 -> 0 and leaves `lives` at 3; the break runs 319 -> 578px while
+alpha goes 0.62 -> 0.02 and is gone by 251ms; an unshielded hit then takes a life and draws no
+bubble.** Zero errors.
+
+**The speed still goes either way**, which is the rule `takeHit` has always stated: a shield is
+spent instead of a *life*, never instead of the speed. Absorbing everything would make it the only
+pickup worth having.
+
+## The Crash
+
+`src/run/playerDeath.ts` (pure, `npm run verify:player`) and `RunScene.crash`/`renderWreck`. A
+second between the last life going and the result panel, and the run stops in it.
+
+**⚠ The module was already here, already right, and had never been called.** It was written for the
+rail shooter, whose own version of this defect is written up in its docstring — the shot that took
+the last shield called `finishRun` on the same frame, so the panel appeared over a ship that was
+still flying. The fork inherited the file and shipped the identical defect: `takeHit` went straight
+to `scene.pause()` and `RunOver`, so the snail was mid-stride, the road was still scrolling, and the
+screen reporting the crash arrived over a frame in which no crash had been drawn. Reported the same
+way, and what was missing was three guards and a set of curves rather than a design.
+
+- **The world stops, and that is most of the effect.** `update` skips the run's step, the player's
+  step, the slime and every collision while the wreck plays. Measured live: `run.z` froze at 24713
+  for the whole window and the road with it. A crash that carried on scrolling would read as the
+  game having failed to notice.
+- **The snail comes apart the way everything else does** — swell, fade, turn — because the player's
+  own mascot dying in the game's own idiom is the point rather than a separate one. The two curves
+  are eased **opposite ways**: most of the swell is spent in the first third so it reads as a burst,
+  and the fade holds for a beat so the snail is still solid on the frame the player is looking at it
+  to find out what happened. Asserted, along with each landing on its endpoint.
+- **The turn is progress-driven**, for the reason `spinAngle` is: `progress` reaches exactly 1 at
+  the end of the window by definition, so no frame rate can leave the wreck part-way through.
+- **The flash is the reserved threat colour**, and this is the runner's one exemption from the
+  reservation — `THREAT_COLOR` means "something out there has landed on you", which is exactly what
+  has happened. It is on `uiCamera`, for the reason the rail shooter's damage frame was: a
+  full-bleed rectangle on a shaking camera drags its own edges into view. **`DEATH_FLASH_MS` is
+  well under `PLAYER_DEATH_MS` and `verify:player` holds the two against each other**, because a
+  flash that outlived the wreck would put the result panel behind a coloured frame nobody asked for.
+- **A second fatal hit neither restarts the wreck nor ends the run twice** — `startPlayerDeath`
+  reports whether it was the call that started it, and `isInvulnerable` gains the dead case so a
+  rock arriving mid-wreck cannot take a life the run no longer has.
+- **The crash sound moved out of `RunOver.create`.** It belongs to the event, not to the screen that
+  turns up a second later reporting it.
+- **⚠ And the wreck is asked for again at the draw, not reused from the top of the frame.** The
+  killing hit happens *inside* `update`, in `resolveObstacles`, so a `dying` flag captured before it
+  is false on the very frame the snail crashes — which left the first frame showing the
+  invulnerability blink instead of a solid snail, and the flash at zero on the one frame it exists
+  to be loudest. Caught by tracing the first eight frames rather than by watching it.
+
+Measured live at 375x667: the flash opens at its full 0.3 on the impact frame and is gone by 320ms,
+the hull goes 1.00 -> 0.93 -> 0.59 -> 0 while turning 0 -> 210 degrees, the shadow goes with it, the
+road does not move, `RunScene` holds for ~60 frames and only then does `RunOver` appear. Zero errors.
+
 ## The End Of A Run
 
 `src/scenes/RunOver.ts`, launched over the paused run — the same overlay shape `Settings` and `Shop`
@@ -2213,6 +3692,20 @@ use, and registered in `platform/lifecycle.ts`'s `OVERLAY_SCENES` for the same r
 - **Paused, not stopped.** The panel is drawn over a frozen road rather than over black: the world is
   what the player was just in, and cutting to an empty background makes the run feel deleted rather
   than finished.
+- **⚠ And because it is paused, the scene that leaves has to say so — `Menu` hung the game.** Both
+  buttons read `this.scene.stop()` and then `start(...)`, which works for `Again` **by accident**:
+  it names `RunScene`, and `start` on a paused scene shuts it down and boots it again. `Menu` names
+  a different scene, so the run stayed alive underneath — and `MainMenu` then builds its own
+  `WorldView`, which regenerates every themed texture while the paused run's `Mesh2D` is still
+  holding them. The render loop throws `Cannot read properties of undefined (reading 'glTexture')`
+  on the next frame and the page freezes on whatever it last drew, which is exactly how it was
+  reported: the button does not return to the menu, and everything hangs.
+  - **That is `applyTheme`'s documented precondition, reached from a third direction** — this file
+    already records it for `scene.start('RunScene')` over a live `MainMenu`, and again for the shop
+    being opened twice. **Two worlds may never be alive at once.**
+  - `toMenu` stops `RunScene` by name. Verified live: `MainMenu` active, `RunScene` neither active
+    nor paused, zero errors, the front screen fully drawn — and **the old ordering is kept as the
+    control and still throws**, so the diagnosis is a measurement rather than a reading of the code.
 - **The score and the coins are banked first, before anything else can go wrong.** They are the only
   things a run produces, and an ad or a scene change between earning and saving them is a run played
   for nothing.
@@ -2484,6 +3977,22 @@ racing camera.
     cancels and releasing one immediately yields the other with no re-press. **"Engaged" means a
     key is down, not that the axis is non-zero** — otherwise holding left+right cancels to zero
     and the ship drifts home while the player is still holding the controls.
+- **⚠ A screen-wide tap fires on the PRESS for a mouse and on the RELEASE for a finger**, and the
+  split is `bindSteering`'s own rule read from the other side. The runner's jump is bound with
+  `screenTap`, which originally waited for a press-and-release inside `TAP_SLOP_PX` on both devices
+  so the jump could share a pointer with steering. That is right for a finger — every touch steer
+  *starts* with a press, so only the release can tell a jump from a dodge — and wrong for a mouse,
+  which steers by hovering and whose button therefore means one thing only.
+  - Reported as the left button responding worse than the space bar, and that understates it: the
+    release also had to land within the slop of the press, and **on a desktop the mouse is moving,
+    because moving it is how the snail is steered.** So a click taken mid-dodge — the moment a jump
+    is most wanted — did not arrive late, it did not arrive at all.
+  - Verified live by emitting both pointer kinds into the real scene: a mouse press alone jumps, a
+    click that travels 300px between press and release jumps, a finger press alone does not, a
+    finger tap does, a finger drag does not, and neither device fires twice for one gesture.
+  - **`platform/input.ts` imports `phaser` as a value, so none of that can be a `verify:` check** —
+    the same reason `TAP_SLOP_PX` lives in `ui/scrollList.ts`. It is confirmed in the running game
+    or not at all.
 - **Touch and mouse are deliberately different.** A finger only points while it is down, so
   lifting it releases the ship back to rest — which is also the drag gesture chunk 7 builds
   lock-on on. A mouse keeps pointing where it was left, so hovering steers. **Chunk 9 caveat:**
@@ -3359,6 +4868,185 @@ constant, the ship shrinks and is clamped out of that band, and it gets a shadow
   prints the number, so the next person to move `CAMERA_HEIGHT`, the FOV or `HORIZON_Y` sees what
   it did.
 
+## The Front Screen Is An Attract Mode
+
+**⚠ The section below this one, "The Menu Is The Game", is the round this replaces.** Its central
+argument survives and is stronger than ever — the menu renders the real `WorldView` rather than a
+picture of one — but four of the things it describes are gone: the measured scrim under the title,
+the `ContrastProbe` that solved it, the 0.55 speed fraction, and the three same-weight buttons in a
+row. Read it for why the world is real; read this for what is on top of it.
+
+`src/scenes/MainMenu.ts`, `src/ui/menuLayout.ts` (pure, `npm run verify:menu`).
+
+### It is the game running, not a still of it
+
+The same `WorldView` the play scene builds, on the menu's own circuit, **at the run's own
+`SPEED_BASE`** — plus the real `PlayerView` standing on the road. Biomes change, the verge streams,
+the mascot glides through its six-frame cycle. What it does not have is the run: no obstacles, no
+pickups, no collision, no HUD. Zero new art, and it is the only thing on the screen that sells the
+speed and the character at once.
+
+- **The speed went from 0.55 of `SPEED_BASE` to all of it.** The fraction existed so the frame would
+  sit still under a block of text in the middle of the picture; with the text out of the middle
+  there is nothing for the motion to fight, and an attract mode running slower than the game is
+  advertising the wrong game.
+- **`MASCOT.zScale` is what keeps the mascot out of the buttons, and it is a composition tool rather
+  than a cheat.** The snail's row is fixed by `PLAYER_Z`: at the run's own distance its feet land at
+  **0.80 of the frame**, which is inside the button band, and scaling does not move that — a
+  bottom-centre origin grows a sprite *upwards* from the same row. Standing it further up the road
+  raises the row (the offset from the horizon goes as `1/z`) and shrinks it; `scale` buys the size
+  back. Net: the same big mascot, a band higher.
+- **`PlayerView.sizeScale` is the one place the drawn box may exceed the collision box**, and the
+  menu is the only caller. The rule it bends is `PLAYER_WIDTH`'s, and the reason it may is that
+  there is no collision here at all. It also borrows `readableScale`: everything on this road is
+  sized off the frame's **width**, so on a 320px phone the snail comes out a fifth of its desktop
+  size — right for a hitbox, wrong for the subject of a picture.
+- **⚠ There is no blink and no eye turn, and that is an art fact rather than an omission.** The
+  shipped mascot is a **rear view** — shell to the camera, head and both stalks going away, which is
+  the pick that fixed the model's drift to profile. There are no eyes facing the player. What the
+  idle cycle has instead is the one scalar `squash.ts` already owns plus a rotation: a breath, a
+  sway and a rarer glance-back, on three periods with no common multiple under a minute.
+
+### The composition keeps off the vanishing point
+
+Every line in the frame converges at `HORIZON_Y` — the road's edges, the rumble stripes, the centre
+marking, the verge — so a block of text there is read against more edges than anywhere else on
+screen. `verify:menu` asserts it against the projection's own constant rather than a copy: the title
+band ends at **0.36** and the button band starts at **0.80**, against a horizon at **0.62**.
+
+- The title takes the empty upper band, which is the largest of the three and is asserted to stay
+  that way: it is the only part of a run's frame that is reliably empty.
+- **The strip under the buttons is the one plate that survived, and it is fixed rather than
+  measured.** The near ground is pale flagstone under `day`, dark under `night`, and a different
+  colour again at every biome seam. A constant dark band is legible on all of them and never has to
+  be re-solved. **⚠ Drawn with `SCRIM_TEXTURE`, not a `fillRect`** — the first version was a filled
+  rectangle and read as a grey slab laid across the road, which is the one thing the redesign is
+  trying not to look like.
+
+### The hierarchy was upside down
+
+Play was a **16%-alpha outline** and the two secondaries were near-opaque plates. Now Play is the
+only solid shape on the screen — `kitButton`'s new `solid` option: the accent as a fill, a dark
+label, and a hard offset shadow it sinks onto when pressed — and Shop and Settings are unlabelled
+glyphs in the far corner at `CORNER_ALPHA`. The record and the coin balance sit directly under the
+button, in the coin colour, because the reason to come back belongs where the eye already is.
+
+- `PLAY_WIDTH` is a **share of the frame between a floor and a ceiling**, not a fixed number: 264px
+  is two thirds of a 320px phone and an eighth of a desktop, i.e. the same object reading as "the
+  thing to press" on one and as a chip on the other. Delivered **211 / 380 / 380px**.
+- The shop's badge is lit only when some specific row **would succeed if tapped today** — affordable
+  and unowned. A badge that is always on is a badge nobody reads.
+- The icons are **glyphs, not textures**: the game already sets emoji in `valueBadge` and the ad
+  button, so a secondary control needs no new asset — which is the constraint this round is under.
+
+### The plate is gone, and the guarantee got stronger
+
+`ui/contrastProbe.ts` is **deleted**. It read the framebuffer once per scene entry, per resize and
+per theme change to solve how dark a plate under the title had to be — and what it bought was a grey
+smear behind the wordmark on every bright theme. A **thick dark outline** is the same guarantee
+obtained differently: the letter is dark-edged against *whatever* is behind it, so the contrast
+stops being a property of the sky and there is nothing left to measure. `ui/scrim.ts` stays: it is
+pure, it still owns `CONTRAST_TARGET`, and `verify:ui` reads it.
+
+- `TITLE_INK` states the stroke and the shadow as **fractions of the face**, because the title
+  shrinks to fit — a 14px stroke on a 112px face is a logo, and the same 14px on the 37px the
+  narrowest frame gets is a blob.
+
+### ⚠ And the last plate went too: the strip under the buttons
+
+The subsection above says the plate is gone and it was half true — the *title's* plate went, and the
+button row kept a soft dark band under it (`BUTTON_STRIP`). It was argued for on exactly the grounds
+that argument rejects: the near ground is pale flagstone under `day`, dark under `night` and a
+different colour again at every biome seam, so a constant band is legible on all of them and never
+has to be re-solved. Reported by pointing at it, and it is what it always was — **a dark slab lying
+across the road, in a picture whose whole subject is the road.**
+
+What replaced it is the rule this screen had already reached for the wordmark. **The Play button
+needed nothing**: it is the one solid shape on the screen. So the record line — the only thing the
+strip was actually protecting — carries `RECORD_INK`, a stroke and a shadow stated as fractions of
+its own face, and the guarantee stops being a property of what is behind it.
+
+**The standing form of this, now paid for three times on one screen** (the measured scrim, the
+bright rim round the pickups, this): *a contrast device is judged on a frame, not on the argument
+for it, and the argument is always good.*
+
+### ⚠ The sun was drawn through the wordmark on a phone
+
+Reported from an iPhone SE. `SUN.y` is 0.2 of the frame's height and `SUN.size` 0.3 of it, so the
+sun occupies **0.05..0.35** — very nearly the whole of the title band (0.13..0.36). On a landscape
+frame the two never meet, because the title is left-aligned and the sun sits at 0.76 of the width;
+on a portrait one the title is scaled to 88% of the width and runs straight underneath it.
+
+Two things move, and only together are they enough:
+
+- **`sunSize` bounds the sun by the frame's WIDTH**, which is the real defect and not only a menu
+  problem: `SUN.size` is a share of the *height*, so the same constant is 15% of a 1568px desktop
+  and **53% of a 375px phone**. That asymmetry is the projection's, not the constant's — it is the
+  same arithmetic that made the mascot too small on a phone, arrived at from the other end. In a run
+  the same sun sits behind the leaf gauge. Sizing off the height stays right (measured off the width
+  it would be a pinhead on an ultrawide frame), so `SUN_MAX_WIDTH_FRACTION` is a ceiling on it,
+  exactly as `sunCenterX` is a clamp rather than a smaller `SUN.x`. A desktop sun is unchanged to
+  the pixel; two of the six checked aspects are bounded by it.
+- **`titleRow` pushes the wordmark down under what is left**, conditional on the two actually
+  overlapping horizontally — a desktop title would otherwise be shoved to the bottom of its band to
+  avoid a sun it is nowhere near — and clamped inside the band, because the band is what keeps the
+  title off the vanishing point and out of the HUD's rows.
+
+`verify:menu` measures the clearance at every supported aspect (**4 of 6 frames need the push and
+the tightest clears by 2.3px**) and carries the unbounded sun as its control, which leaves the title
+no room at all on any of the six. **⚠ `sunCenterX`'s own control had to be re-pointed in the same
+pass**: the width bound shrinks the sun until it fits unaided, so the clamp no longer fires on any
+shipped aspect and `verify:road` now measures it against the unbounded size it was written for
+rather than silently passing on a check that can no longer fail.
+
+### The font
+
+**Titan One**, OFL, latin subset, **10.7KB**, shipped as a local file — Playables is offline-only and
+its CSP blocks `fonts.googleapis.com`, which is what `ui/font.ts`'s `FontFace` path exists for.
+Picked by setting the wordmark in all three candidates at the shipped size under a 14px stroke: Baloo
+2 ExtraBold and Fredoka SemiBold both read as interface type at that weight, and Titan One is the
+only one of the three that still reads as a logo. Orbitron was ruled out by the brief and would have
+been anyway — it is technical and this game is not.
+
+### Two bugs the rebuild produced, both worth keeping
+
+- **⚠ The entry cascade may only move alpha.** The title used to rise 14px into place, with the
+  tween's `to` captured from `this.title.y` when `playEntry` ran. A resize inside those 260ms — a
+  phone rotating at launch — then had `layout` put the title on the new band's row and the tween put
+  it straight back on the old one: **measured at 224px on a 568-tall frame whose title row is 139**.
+  Alpha has no such target, so the rise is gone rather than fixed.
+- **⚠ `Container.getBounds()` is the union of its CHILDREN**, and a kit button's box is drawn by a
+  `Graphics`, which contributes nothing to that union. The first DEV hook therefore reported the
+  *label's* size — a 76px "Play" and two icons under the touch floor, none of which is what is on
+  screen or what is tappable. `boxOf` reports the real box.
+
+### Acceptance
+
+- **Every element inside the frame at 320x568, 1080x1920 and 1920x1080**, measured through the DEV
+  hook rather than looked at: title, Play, record, both icons and the mascot, plus the mascot clear
+  of the button band and Play below the horizon at all three.
+- **Touch targets 52 / 65 / 65px for Play and 44 / 50 / 50px for the icons** — the 44px floor is the
+  kit's own and it binds at 320x568, which is the point of accepting there.
+- **Play is interactive on the frame the menu arrives**, with a 380x65 hit area, *while its alpha is
+  still 0* — the cascade moves alpha and nothing else, and the measurement says so.
+- **The entry is 260 / 330 / 360ms against a 400ms budget**, asserted in `verify:menu` rather than
+  timed in a browser: the harness's hand-stepped clock and the tween manager's do not agree closely
+  enough to time 400ms through it, and the configuration is the honest thing to hold anyway.
+- A 21-second attract capture through a biome seam: the verge goes ochre → green → grey and the
+  props change with it, while the title, the button and the strip do not move.
+
+### Harness notes, both new
+
+- **A viewport sweep works by resizing the CANVAS PARENT, not by `scale.resize`.** `RESIZE` mode
+  re-reads the parent every few frames and reverts anything set on the manager; setting `#app`'s CSS
+  size and calling `scale.refresh()` holds. It also lets the game be laid out **larger than the
+  browser window** — 1080x1920 in a 945-tall window — which is the only way to accept a portrait
+  phone here.
+- **A frame larger than the window cannot be screenshotted, and `renderer.snapshot` is the way
+  round it.** The browser screenshot captures the viewport; the snapshot captures the canvas. Handing
+  the resulting data URL back through a DOM attribute is refused as exfiltration, so the frames are
+  `fetch`-POSTed to a throwaway local sink instead.
+
 ## The Menu Is The Game
 
 `MainMenu` renders the world through the same `WorldView` the play scene does, with an interface
@@ -3805,6 +5493,45 @@ the same kit, and one `setTheme()` call at boot repoints everything still on `ui
   combat pass below it draws only the loading screen and the brand — in the local palette, via that
   one `setTheme` call. Everything the player sees during a run or in a menu is `ui/kit.ts` now. A
   game rebuilding more of its interface should extend the kit rather than reintroduce neon.
+
+### The three overlays, and what a panel is made of
+
+Reported by pointing at the result screen, the settings panel and the shop together: improve the
+design. Four things were wrong across all three, and each is a rule the kit was missing rather than
+a screen that needed nudging.
+
+- **⚠ The kit had two button tiers and every panel needs three.** A screen with two actions says
+  which is which by making one primary; a screen with three cannot. The result panel was an
+  accent-outlined `Again` and two identical buttons, so `Double coins` and `Menu` were separated by
+  their labels and nothing else. `kitButton` has a `muted` tier again — `ui/theme.ts`'s `neonButton`
+  had it and the restyle lost it — and it is **dimmer rather than smaller**, because a tertiary
+  action still has to clear 44px, so the weight comes out of the ink and not out of the box.
+  `Again` is the kit's `solid`, which is the one control on a screen allowed to read as a filled
+  button; `Menu` is muted, because it is the way *out* of the loop the rest of the screen exists to
+  restart.
+- **Buttons are the content width, and the hierarchy is carried by weight.** Auto-sizing three
+  buttons to their own labels and centring them makes a ragged column that reads as three
+  alternatives. One column also takes the stack's width off the length of a translation — the shop's
+  tab strip was the last thing on any of these screens still sized by its own words, and it is two
+  equal shares of the row column now.
+- **`kitDivider`, so a panel can say where one job ends.** The result screen is a readout and a set
+  of actions; spacing alone made it four things at even intervals. **⚠ The first version was one
+  pixel at 0.16 alpha and was invisible on a real frame** — a rule has to be seen to group anything,
+  and a divider nobody can see is whitespace with a draw call.
+- **⚠ The settings panel said `Volume` twice and neither one said which channel.** The name is on
+  the line above, which is where it already was; the slider is unlabelled now, which also hands the
+  track the 30% of the row the label was reserving — on a phone that is the difference between a
+  rail a thumb can aim at and one it cannot. `kitSlider` reserves nothing for an empty label.
+- **⚠ And the result screen needed the height fit every fixed stack in this project has needed.**
+  It was laid out in sevenths of a fixed 360px panel; measured from its own text it wants **422px on
+  a 390-tall landscape phone**, i.e. the Menu button hanging off the plate — which is the same
+  defect this screen shipped once before, from the other direction. `uiScale` scales on *width*, so
+  the fit is a second pass against the axis it never looks at, floored at `MIN_HEIGHT_FIT` for the
+  reason `Settings` states.
+
+**Measured on all three panels at three frames** — 375x667, 844x390 and 1920x889 — every button and
+tab at or over the 44px touch floor, nothing outside the frame, and on the landscape phone the
+result panel spans 34..367 of 390. Zero errors.
 
 ### The combat layer on the kit
 
@@ -5028,6 +6755,126 @@ below. Everything the game plays is **generated at boot**, not shipped.
     with the sound flag on and are unaffected by the music flag; `detune` reaches the manager;
     and 20 rapid `playMusic` -> faded `stopMusic` -> scene restart cycles leave the
     `PAUSE`/`RESUME`/`AUDIO_ENABLED_CHANGE` listener counts flat at 4/3/1.
+
+### ⚠ Three sounds are recordings now, and the picks were made by measurement
+
+Asked for: real free SFX for the coin, for damage, and for the fruit pickup. Both are **CC0 from kenney.nl**, which is the
+one licence this project accepts beside self-generated, and both have a row in `AUDIO-SOURCES.md` —
+the rule that had been broken 54 times in the art layer and is not going to be broken here.
+
+**It is a deliberate exception to "every sound is generated", not a drift away from it.** The rest of
+the set is still rendered at boot and the argument holds: a tone from arithmetic is self-generated by
+construction, so there is nothing to license and nothing in `dist/`. What arithmetic cannot do is
+sound like an *object*. A triangle wave is a fine jump and a fine milestone — those are abstract
+events — and a poor coin, a poor impact and a poor reward, because those are things the ear has
+heard before. Five rendered, three shipped, 20KB.
+
+**Nobody involved could listen to them**, so `dev-assets/audio/measure.py` reports what an ear would
+judge as numbers: length, brightness, tonality, and **how much of the sound sits above 500Hz**, which
+is where a phone speaker starts reproducing anything at all. That last column decided both picks and
+rejected the obvious candidates outright:
+
+```
+candidate                   ms   centroid   tonal   >500Hz
+impactSoft_medium_000      115      126Hz    1.00     0.00   <- the obvious "damage" thud
+impactWood_medium_000      116      236Hz    0.77     0.00
+impactGeneric_light_000     64      915Hz    0.84     0.39
+phaserDown1                338     1213Hz    0.76     0.76   <- shipped as SFX.HIT
+glass_001                  174     1959Hz    0.99     1.00
+powerUp2                   175     3072Hz    0.83     1.00   <- shipped as SFX.STREAK
+```
+
+**A soft body thud puts every one of its joules under a phone's rolloff.** It is the sound a damage
+cue is "supposed" to be and on the device most people play on it is silence, which is the one thing a
+damage cue may not be. That column is why both obvious impacts lost.
+
+### ⚠ The first pair passed every number and was reported as wrong
+
+They were `glass_001` and `impactGeneric_light_000`. Both cleared the table above; what no column in
+it carried is **genre**. A single struck partial at 99% tonality is the sound of *hitting metal*, not
+of money, and a 64ms tick reads as thin — reported as exactly that: brighter, juicier, more arcade.
+
+This is the audio version of a lesson this file already records five times about art: **measure what
+is measurable and look — or here, listen — for what is not.** The difference is that nobody in the
+loop can listen, so the answer was to find the properties that *do* carry genre and measure those:
+
+- **Direction, which is what an arcade actually uses to say good and bad.** The coin rises and the
+  damage falls. That opposition is stronger and far more universal than the timbre rule this file
+  used to state ("the only noise burst in the set"), and it survives a phone speaker, a busy frame
+  and a player who has never seen the game before.
+- **Brightness at the sound's own base**, rather than somewhere in its spectrum: 3060Hz against
+  1959Hz, all of it above the phone's rolloff.
+
+### The fruit had a constraint the other two did not: it must not be the coin
+
+`SFX.PICKUP` plays in the same seconds as the coin, so "bright, rising, arcade" is necessary and
+nowhere near sufficient — it has to be *told apart*, which is a confusion test. This project already
+runs one of those on the pickups' own silhouettes at 24px; the audio version is a 24-band
+log-frequency profile of each candidate, cosine-compared against the coin **at both ends of its
+ladder** and against the impact.
+
+**The scale is set by a reference measured the same way: the coin against itself pitched up its own
+14 semitones scores 0.18.** So anything near that is about as different as one sound gets from a
+transposition of itself.
+
+```
+candidate      ms   vs coin@0   vs coin@+14st   vs hit   worst
+powerUp10     350        0.20            0.16     0.28    0.28
+powerUp7      277        0.29            0.20     0.31    0.31   <- shipped
+powerUp5      233        0.24            0.38     0.28    0.38
+pepSound5     403        0.24            0.03     0.44    0.44
+```
+
+`powerUp10` separates slightly better and is 73ms longer, which a fruit cannot afford: chains run
+three to five, so every millisecond is one the next fruit stacks on top of.
+
+**⚠ And wiring it exposed a comment that had been describing a feature the code did not have.** The
+old spec said the pickup's kinds were "the same sample at three pitches (`detune`), so the player can
+tell what they took without looking away from the road" — and `RunScene` returned a flat `0` for
+everything that was not a coin, so a fruit and a shield were the same sound. `PICKUP_DETUNE_CENTS`
+makes the claim true: a shield sits three semitones below a fruit, which is the interval the streak
+ladder used to use precisely because it is the smallest one a player counts without training.
+
+### ⚠ And a brighter coin cost the ladder a semitone a step
+
+The coin has a constraint nothing else does: it is played through `streakDetuneCents`' eight-step
+ladder, so it has to survive being pitched *up*. At three semitones a step that is 21 semitones —
+the eighth coin at **3.36x** the pitch of the first, which is affordable for a 392Hz triangle and a
+shriek for a bright arcade blip.
+
+```
+per step   span   step 7 of the shipped coin
+     3st    21st   9521Hz   a shriek
+     2st    14st   6650Hz   where the OLD coin's top step already sat (6464Hz)
+```
+
+So `STREAK_SEMITONES_PER_STEP` is 2. **Nothing on the ladder is shriller than it was**, the first
+coin — much the most common one — is 56% brighter, and eight whole tones is still eight countable
+steps. The span is 14 of the 24 semitones the two-octave ceiling allows, i.e. more headroom than the
+old arrangement had, not less. **It is still one sample detuned, not eight files**, which is what
+expressing the ladder in cents has always bought.
+- **⚠ Both were levelled before they shipped.** Every generated sound bakes its own gain and the set
+  runs 0.24–0.55, so a recording at full scale arrives about twice as loud as everything around it.
+  Each is scaled to the peak of the tone it replaces — 0.42 for the coin, 0.55 for the impact — so
+  the mix the rest of the set was tuned against is unchanged. Delivered 0.42 and 0.53.
+- **⚠ And the level took three passes before it took one.** Mono, then volume, then a correction
+  when the stereo downmix turned out to have clipped and landed 27% hot. Both files are built from
+  the pack's own bytes in a single decode/scale/encode now, which is two generations of Vorbis
+  artefacts fewer. The source packs are 3.4MB of zips and are **not** in the repo; `measure.py` is,
+  because the picks were made with it and the next one should be too.
+- `verify:audio` asserts every declared key is **rendered or shipped, exactly one** — a key in both
+  loads twice into one cache entry and a key in neither is a `playSfx` that throws at the moment it
+  is wanted — and that every shipped path is actually on disk, because nothing else in the build
+  looks at those strings and a typo is a game that never leaves the loading screen.
+
+**What was verified, and the one thing that cannot be.** The tab is hidden, so Chrome keeps the
+`AudioContext` suspended through the loading screen and Phaser's own decode never completes — the
+cache comes back empty whatever is in it. Resuming the context by hand and calling
+`sound.decodeAudio(key, buffer)` gets past that, and the whole chain then runs: **all three keys land
+in the cache, all three `play()` without error, the streak ladder plays all eight steps at 0 -> 1400
+cents, and the scene's own mapping returns fruit 0 / shield -300.** Zero errors. **Whether they sound right together still needs a human with speakers**,
+exactly as this file has always said about anything audible — which is precisely how the first pair
+came to ship and be reported.
 
 ## Audio Layer
 
@@ -6414,6 +8261,87 @@ says the fix has to be the colour of the surface itself.
   boulder gets a dark ellipse across its foot. Delivered live at 1920x889: shadow width **94 / 114 /
   147** and alpha **0.189 / 0.156 / 0.102** at heights 0 / 120 / 320.
 
+#### ⚠ A mark far from its object is not a shadow, and only a pickup near the road casts one
+
+Reported as the shadow of a thing being visible where the thing is not. Every rule in `shadows.ts`
+varies how the ellipse *looks* with height; **nothing had ever asked how far from its object the
+ellipse ends up**, and that is the whole defect.
+
+**Diagnosed with the overlay that exists for exactly this, not by guessing.** `window.__marks.on()`
+labels every dark patch with the renderer that emitted it, and over **38 344 drawn shadows there
+were 0 orphans** — every mark had a live owner, so no pool had outlived its objects and the
+`SlotState`-owns-its-own-shadow design was never in question. What the same sweep found instead,
+measuring the gap between a mark and its object in the object's own drawn heights:
+
+| caster | gap, in its own drawn heights |
+|---|---|
+| pickups on the ground line | 0.17 – 0.23 |
+| overhead obstacles | 0.90 |
+| **pickups on a ramp arc** | **up to 2.06** |
+
+The worst case drew a coin 416px wide with a **597px ellipse 847px below it on a 945px frame** — the
+coin at the top of the screen, its mark at the bottom, nothing linking them.
+
+- **`formations.ts` lays an arc along the ramp's own flight**, so its members sit 800–1330 units up.
+  `shadowScale`/`shadowAlpha` clamp their lift at `JUMP_APEX` (430), so every one of them got the
+  maximum spread — **1.44x the coin's own width** — and then simply kept getting further away.
+- **The fix is `PICKUP_SHADOW_LINK`, and it is `PickupSprites`' decision rather than `shadows.ts`'.**
+  `ObstacleSprites` has always made the same kind of call for itself — only an `overhead` casts,
+  because a mark under something already touching the road is a rim nobody can read — and pickups
+  had no such rule at all. Full strength to the ground line plus its whole bob (152u, so a bob can
+  never make a pickup blink), gone by one icon-height off the road (`PICKUP_DRAW_SIZE`, 320u),
+  smoothstepped between so two neighbours in one chain never disagree visibly.
+- **The threshold is not delicate**: the *lowest* member of the shortest ramp arc sits at 5/9 of
+  `RAMP_APEX` plus `PICKUP_HEIGHT` = **1030u**, three times past `gone`. `verify:jump` computes that
+  from `flightDuration`/`flightHeight` rather than typing it in, so a re-tuned ramp moves the
+  assertion with it, and carries a band that never reaches as its control (it leaves the same coin
+  marking the road at **0.92**).
+- **⚠ It is a question about height, not a flag and not a test for `kind`** — height is the thing
+  that actually breaks the read, so anything laid at any height later is answered correctly without
+  that placer having to know a shadow exists.
+- **The snail keeps its shadow through a whole ramp flight, and no geometric rule separates the two
+  cases** — the snail at ramp apex is 4.6 of its own body heights above its mark and an arc coin is
+  4.2, so a shared threshold cannot tell them apart. What separates them is that the snail is the
+  one object the player is already tracking: its mark is paired by the tracking rather than by the
+  distance, and a coin in an arc is one of several identical small things nobody is following, whose
+  airborne-ness the shape of the chain and the ramp beneath it already say.
+- Re-measured live over **33 035 draws: the worst gap is now 0.90** (the overhead), every pickup is
+  back inside 0.17–0.23, and the 3 409 draws that used to sit past 1.0 are gone. 0 orphans.
+
+#### ⚠ And the hill was clipping the object and not its mark
+
+The same report came back pointing at a *rise*: climbing, you see the shadow at the foot of
+something you cannot see yet. That is a second, independent cause, and it is the one the phrase
+names exactly.
+
+`billboardVisibleFraction`/`clipY` were applied to the **sprite and to the sprite only**. Both pools
+cropped the object against the crest, culled it when it was fully behind, and then drew its ellipse
+straight through the hillside at full strength. **A hill hides a billboard from the bottom up**, so
+the object's top emerges *first* and the ground beneath it emerges *last* — the mark is precisely
+the part that should still be hidden, and it was the only part never clipped at all.
+
+Measured live over **63 758 on-screen shadow draws**: **6 271 (10.6%) drawn with their ground point
+behind a crest**, and **1 171 (1.8%) drawn while the object above them was under 35% visible**.
+Worst case an `overhead` at **1% visible** with a 59px ellipse **21px past the clip line**. A chain
+of coins coming over a ridge measured sprite visibility 1.00 / 0.94 / 0.76 / 0.60 up the row with
+every one of their shadows at full strength.
+
+- **⚠ The test is the mark's CENTRE against `clipY`, never its extent — the first version of this
+  check was wrong and reported the whole game as broken.** `RoadMesh` records `clipY[n]` *before*
+  the cull, so on flat road it is exactly segment `n`'s own ground row; an ellipse centred on the
+  ground straddles it by construction, and an extent test scores **every mark in the game at 0.50**.
+  It measured `clip === shadow.y` to the pixel on flat ground, which is what gave it away.
+- Faded rather than cropped, because a `Shape` has no crop component. The band is the ellipse's own
+  half-height — a few pixels — so all the fade buys over a hard cut is that the mark does not pop as
+  the ridge crosses it.
+- Re-measured after: **0 marks drawn while their object is under 35% visible** (was 1 171), and the
+  worst overhang is **5px at an alpha that rounds to zero**, against 21px at full strength.
+- **The snail's own shadow is deliberately not clipped, and neither is the snail.** Measured, its
+  ground point sits past `clipY[10]` in 17.6% of frames by at most **7px**, and its *sprite* base is
+  past the same line in 93% of those — i.e. it is the interpolation between the base segment's two
+  edges, not occlusion. The camera rides `PLAYER_Z` behind the snail; hiding the player's own avatar
+  behind a rise is not a thing this renderer should start doing.
+
 ### The clouds
 
 `CLOUD_LAYER` in `road/constants.ts`, `ensureCloudTexture` and `layoutClouds` in `Backdrop.ts`.
@@ -7321,6 +9249,112 @@ index.
 
 App bugs:
 
+- **A ramp offered two chains and one pass** — coins along the flight and coins on the ground under
+  it, of which the player could only ever take one. The arc is laid before the spacing walk runs and
+  the walk was never told those stretches were taken. — "A ramp was two rewards and one pass"
+- **The tutorial's own ramp had no arc**, because the band filter that drops generated content from
+  the tutorial's stretch dropped the arc belonging to the tutorial's own ramp — so the card
+  promising coins along the flight pointed at empty sky. — same section
+- **The shield pips were drawn on top of the lives**, because `layout` placed them from the lives'
+  text width and runs before any pip has been written into it. — "The Shield You Can See"
+- **A tutorial card named the leaf gauge and did not point at it** — a sentence about an object the
+  player has never been told the name of, in a corner they have no reason to look at. — "The First
+  Run Teaches Itself"
+- **A tutorial card could be answered by something the player did before it existed** — one curious
+  tap during the steering lesson satisfied the jump lesson, so the card that teaches the jump
+  appeared and cleared in the same frame. — "What the check holds, and the three defects it found"
+- **The tutorial's cards ran over the ordinary generated road**, because `LapLayout` builds lap 0
+  inside its own constructor and the tutorial state was created after it — so the cards explained a
+  wall that was not there. — same section
+- **A shield was invisible in all three moments it exists in** — taking one, holding one and
+  spending one — and spending one looked and sounded exactly like losing a life. Reported as the
+  shield's effect not being visible at all. — "The Shield You Can See"
+- The front screen's **button strip** was a dark band lying across the road, which is the one thing
+  the redesign it belonged to was trying not to look like. — "And the last plate went too"
+- **The sun was drawn through the wordmark on an iPhone SE**: `SUN.size` is a share of the frame's
+  *height*, which is 15% of a desktop's width and **53% of a 375px phone's**. — "The sun was drawn
+  through the wordmark on a phone"
+
+- The result screen's **Menu** button left the paused `RunScene` alive and started `MainMenu` over
+  it, so two `WorldView`s existed at once and the renderer threw on `glTexture` a frame later —
+  reported as the button not returning to the menu and the game hanging. `Again` survived only
+  because `start` on a paused scene restarts that same scene. — "The End Of A Run"
+- **The ramp's arc chain was re-laid every frame across a band 40–90 segments out**, which is
+  entirely inside a road drawn 300 ahead, so the coins slid continuously while the player watched
+  them — 79 relays for one ramp, measured live. `arcRelaid` had been declared and documented for
+  exactly this and never read. — "The approach relay ran every frame"
+- **`playSfx` threw on a sound whose key was not decoded yet**, and it is called from inside
+  `RunScene.crash` — so a run ending before the audio cache filled would have taken the wreck, the
+  result panel and the render loop with it. Guarded, and reported once per key rather than once per
+  play. Found because the automation harness reproduces it by construction: a hidden tab keeps the
+  `AudioContext` suspended, so Phaser never finishes decoding.
+
+- **Fever switched the hitbox off**, so a large share of every lap's obstacles passed through the
+  snail doing nothing — reported twice, once as "unjumpable things that deal no damage" and once as
+  "the fruit boost should not make you immortal". Removing it is safe by construction: every row is
+  spaced against `REACTION_MS` at exactly Fever speed. — "The Guard Is Gone"
+- **The runner never drew the player's own death**, so the result panel arrived over a snail
+  mid-stride on a road still scrolling. `playerDeath.ts` was inherited from the rail shooter — where
+  the same defect had already been reported and fixed — and never called. — "The Crash"
+- **The result panel was laid out in sevenths of a fixed-height plate**, so its content and its
+  panel were sized by different things — 422px of content inside a 366px plate on a landscape phone,
+  with the last button hanging off the bottom. The same screen shipped that defect once before,
+  from the other direction. — "The three overlays"
+- **The settings panel labelled both sliders `Volume`**, which named neither channel and spent 30%
+  of each row saying so. — same section
+- **Decor was placed by its centre and drawn from its centre**, so 8.2% of a lap's props were drawn
+  onto the asphalt and the worst reached past the centreline. `MIN_OFFSET` looked like clearance and
+  was not. — "Two Things The Drawn Box Did That The Model Did Not"
+- **The ramp's spin turned the sprite and left the collision band upright**, so a tumbling snail was
+  drawn inside a barrier for 17% of a flight while the model said it had cleared it. — same section
+- **The jump fired on the mouse button's release**, so a click was late by however long the button
+  was held — and, because the slop test also applied to a mouse, a click made while steering (i.e.
+  while the cursor is moving, which on a desktop is most of the time) was dropped entirely. Reported
+  as the left button responding worse than the space bar. — "Input Actions"
+- **The front screen's mascot was `3.4 x whatever the run's mascot is`**, so making the in-run snail
+  readable on a phone grew the hero snail on the menu by 61% — 20% of a desktop frame to 32% — with
+  nobody deciding it. Stated as a fraction of the frame now, with the multiplier solved from it.
+- **The player's row must not land on a segment boundary**, because the depth sort's tiebreak is a
+  sub-segment offset: at 0.077 into its own segment an obstacle the snail had already passed drew
+  *behind* it. Never written down; the inherited row was inside the legal window by luck. Now snapped
+  to a quarter-segment. — "Round three"
+- **The mascot went off the bottom of the frame on a descent** — 3.1% of the lap fully hidden after
+  the rest row was lowered to make it bigger, and 0.0% but still clipped before that. The drop is
+  `CAMERA_DEPTH * gradient / 2` and does not depend on how far ahead the player stands, so the only
+  fix is a gentler circuit. — "Round two: it was still too small"
+- **`TrackBuilder.build()`'s closing section became the steepest thing on the lap** the moment the
+  hills were softened: it runs the road back to height zero over `4` segments per height unit
+  however steep that makes it, so a net of `+20` was 4000 units of drop over 80 segments — gradient
+  0.393, almost exactly what had just been taken out of the hills. Fixed by composing the arms to
+  sum to zero, so there is no closing section and the steepest thing on the lap is a hill somebody
+  chose. — `buildRunCircuit`
+- **Two `verify:obstacles` fixtures hardcoded `[362, 560]`** — the removed `overhead` class's own
+  band, written when the body was 261 tall. Growing the mascot past 362 made a *grounded* snail
+  reach into them, so raising `PLAYER_BODY_H` failed a check about flags-versus-bands for a reason
+  that had nothing to do with either. Both derive their band from `PLAYER_BODY_H` now, as does the
+  draw-order check that hardcoded segments 9 and 10 around a snail 9.83 segments out.
+- The narrow-frame pickup boost had no upper bound, so on a 375px phone a coin was drawn at **95% of
+  its own catchment — 608 world units, 49 screen pixels against the mascot's 34** — which is the
+  coin-the-size-of-the-road failure `PICKUP_DRAW_SIZE`'s own docstring says it was written to
+  prevent, re-created by a constant added later in a different file. Reported as the snail being too
+  small on mobile, which it also was. — "The Mascot Was Too Small, And The Coin Was Too Big"
+- `PICKUP_HEIGHT` was typed as `130` while meaning "half of `PLAYER_BODY_H`", so it silently stopped
+  being the body's centre the moment the body grew — and the arc chain's collection tolerance is
+  symmetric only because it *is* the centre. Derived now. — same section
+- A pickup's shadow was drawn at the authored icon size while the icon itself was boosted on a
+  narrow frame: a mark narrower than the thing casting it. — same section
+- Shadows were never clipped by the hill in front of them: `billboardVisibleFraction`/`clipY` went
+  to the sprite only, so a crest cropped the object and its mark drew straight through the
+  hillside — **6 271 of 63 758 on-screen draws (10.6%)**, and **1 171 (1.8%)** with the object above
+  them under 35% visible. Reported as seeing the shadow of a thing you cannot see yet while
+  climbing. — "And the hill was clipping the object and not its mark"
+- Airborne pickups cast a shadow up to **1.44x their own width, 847px below them on a 945px frame** —
+  `formations.ts` lays an arc along the ramp's flight while `shadowScale`/`shadowAlpha` clamp at
+  `JUMP_APEX`, so every arc coin got the maximum spread and then kept receding from its own mark.
+  Reported as the shadow of a thing being visible where the thing is not; measured to be **0 pool
+  orphans in 38 344 draws**, i.e. a distance problem and not a desync. — "A mark far from its object
+  is not a shadow"
+
 - The upgrade ladder sold `shape` at step II, which put `scatter`'s fourth projectile within reach
   for 1900 coins and made `ripple` at 2000 unbuyable; and with `power` sold to every gun a fully
   upgraded `lance` out-damaged a fresh `needle` costing twice as much. Both caught by the same
@@ -7625,6 +9659,11 @@ Testing-only gotchas (not app bugs — see "Audio Layer" for both):
 - A raw dynamic `import()` of an app module from an external test script is a *different* module instance
   than the one `main.ts` statically imports; singletons initialized only by `main.ts` (like `audio.ts`'s
   `soundManager`) need `init()` called again on that instance, or they silently no-op.
+  - **⚠ For `save/store.ts` that is not a no-op, it is data loss.** The second instance starts from
+    `DEFAULT_SAVE_STATE` and its `mutate` *persists* that, overwriting the real save with defaults —
+    seen once, live. Recovered by dispatching `pagehide` on the page, which makes `bindAutosave`
+    flush the live instance's still-correct in-memory state back over it. There is no way to reach
+    the live store from outside: drive the game through its scenes instead.
 - WebAudio's `mute`/`volume` are `AudioParam` automation — reading them back synchronously in the same
   tick after setting them can return the stale value in headless Chromium; wait ~100–300ms before
   asserting on it.

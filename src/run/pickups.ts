@@ -41,9 +41,9 @@
  * weights and all — puts a pickup on the side the obstacles are *not*, out near the verge, so
  * taking it means leaving the line that was working and paying for it if you overshoot.
  */
-import { SEGMENT_LENGTH } from '../road/constants'
+import { ROAD_WIDTH, SEGMENT_LENGTH } from '../road/constants'
 import { wrapZ } from '../road/project'
-import { PLAYER_BODY_H, PLAYER_HALF_WIDTHS, ROAD_EDGE } from './constants'
+import { PLAYER_BODY_H, PLAYER_HALF_WIDTHS, readableScale, ROAD_EDGE } from './constants'
 import type { Obstacle } from './obstacles'
 
 export type PickupKind = 'fruit' | 'shield' | 'coin'
@@ -70,8 +70,15 @@ export const PICKUP_WEIGHTS: Record<PickupKind, number> = {
  * Inside the snail's own body band (`[0, PLAYER_BODY_H]`), so it is collected by *driving through
  * it* and not by jumping — a pickup that needed a jump would fight the obstacle model, which
  * spends the jump on something else.
+ *
+ * **Derived, because it means the body's CENTRE and nothing else.** `formations.ts` lays an arc at
+ * `flightHeight + PICKUP_HEIGHT` precisely so an airborne chain sits where a ground pickup sits
+ * relative to a grounded snail, which makes the collection tolerance symmetric at
+ * `±PLAYER_BODY_H / 2` instead of `+PLAYER_BODY_H / −PICKUP_REACH_UNDERFOOT`. Typed as a number it
+ * was 130 against a body of 261 and stayed 130 when the body grew — a centre that had quietly
+ * stopped being one.
  */
-export const PICKUP_HEIGHT = 130
+export const PICKUP_HEIGHT = PLAYER_BODY_H / 2
 
 /**
  * How wide a pickup's collection box is, in half-widths.
@@ -101,6 +108,99 @@ export const PICKUP_HALF_WIDTHS = 0.16
  * mascot keeps its separation by being the only saturated object in the frame instead.
  */
 export const PICKUP_DRAW_SIZE = 320
+
+/**
+ * How wide the collection box is, in world units — the same fact `PICKUP_HALF_WIDTHS` states, in
+ * the units the icon is drawn in.
+ */
+export const PICKUP_CATCHMENT = PICKUP_HALF_WIDTHS * 2 * ROAD_WIDTH
+
+/**
+ * The most of its own catchment an icon may be drawn as.
+ *
+ * **⚠ `readableScale` had quietly re-created the failure `PICKUP_DRAW_SIZE` documents.** That
+ * constant is authored at exactly half the catchment because the first version drew the icon at the
+ * *whole* of it and put a 640-unit coin on the road — "four snails wide, and it read as a piece of
+ * scenery that had landed in the wrong game". The narrow-frame boost then multiplied it by up to
+ * 1.9 with nothing bounding the product: measured on a 375px phone, a coin was drawn at **608 units
+ * — 95% of its catchment, and 44% wider than the mascot** — which is what a player was looking at
+ * when they reported the snail as too small. On the same frame the icon was 49 screen pixels
+ * against the snail's 34.
+ *
+ * Two thirds leaves the boost most of its range (up to 1.33x, so 26px becomes 34px on a phone
+ * rather than 49px) while keeping the one rule that may not bend: the box is only ever MORE
+ * generous than the icon, never less. The cap lives here rather than inside `readableScale` because
+ * it is a statement about the catchment, and the catchment is this file's.
+ */
+export const PICKUP_MAX_ICON_SHARE = 2 / 3
+
+/**
+ * How wide the icon is actually drawn on a frame this wide, in world units.
+ *
+ * The narrow-frame boost, bounded by the catchment — see `PICKUP_MAX_ICON_SHARE`. Everything that
+ * draws a pickup goes through this rather than through `PICKUP_DRAW_SIZE * readableScale(...)`, so
+ * the bound cannot be applied in one place and forgotten in the next.
+ */
+/**
+ * How many pickups may be drawn at once.
+ *
+ * **⚠ This was 24 against a measured peak of 47, and the pool had no demand counter at all** — so
+ * for as long as pickups have existed roughly half of them were competing for slots and nothing in
+ * the game could say so. `ObstacleSprites` counts past its capacity precisely so `wantedLastFrame`
+ * stays honest; `PickupSprites` did not, which is the failure `DECOR_POOL_SIZE` already recorded in
+ * the other direction: *a saturated pool reports its own ceiling rather than the demand.*
+ *
+ * **What it looked like from outside was coins changing number when you took off from a ramp.** The
+ * pool is filled near to far, so which pickups get the scarce slots is a function of their order —
+ * and `layArc` re-lays the whole chain at the moment of launch, moving every coin into a different
+ * segment. Nothing was gained or lost; the *drawn set* was reshuffled, in view, on the one frame the
+ * player is looking straight at it.
+ *
+ * **And it was reported on mobile because that is where it is worst.** `pickupDrawWidth` boosts the
+ * icon by up to a third on a narrow frame, so distant coins that were sub-pixel on a desktop pass
+ * `billboardOnScreen` there and take slots the near ones needed.
+ *
+ * 64 against a peak of 47 measured over five real laps — comfortably clear, and under the 2x
+ * ceiling the decal pool's own check states, so the number still has to answer to a measurement.
+ * It lives here rather than in `PickupSprites` so that `verify:formations` can hold it against one:
+ * a pool size inside a Phaser module is a pool size no check can reach.
+ */
+export const PICKUP_POOL_SIZE = 64
+
+export function pickupDrawWidth(screenWidth: number): number {
+  return Math.min(PICKUP_DRAW_SIZE * readableScale(screenWidth), PICKUP_CATCHMENT * PICKUP_MAX_ICON_SHARE)
+}
+
+/**
+ * How far a pickup rises and falls as it floats, in world units.
+ *
+ * In world units rather than screen pixels: a pixel bob would be a huge motion at the near end of
+ * the road and invisible at the far end, where a world bob is the same distance everywhere and
+ * shrinks with distance exactly as the icon does.
+ */
+export const PICKUP_BOB = 22
+
+/**
+ * The height band over which a pickup stops casting a shadow.
+ *
+ * **⚠ Only a pickup near the road casts one, and this is the rule that says so.**
+ * `ObstacleSprites` has always made the same kind of decision for itself -- only an `overhead`
+ * casts, because a mark under something already touching the road is a rim nobody can read -- and
+ * pickups had no such rule, so an arc chain laid along a ramp flight put a row of ellipses on the
+ * road with their coins more than a screen-height above them. See `shadowLinkFade` for what that
+ * measured.
+ *
+ * `full` is the ordinary ground line plus its whole bob, so nothing laid on the road ever dims.
+ * `gone` is one icon-height off the road: once a pickup is further from its own mark than the icon
+ * is tall, the two are more than an object apart and stop reading as a pair. The lowest point of a
+ * ramp arc sits at 5/9 of `RAMP_APEX` plus `PICKUP_HEIGHT` -- 797 units -- so the whole of an arc
+ * is past `gone`, and the threshold is not a delicate call.
+ *
+ * Not a flag on the pickup and not a test for `kind`: the question is how high it is, which is the
+ * thing that actually breaks the read, and it answers correctly for anything laid at any height
+ * later without that placer having to know a shadow exists.
+ */
+export const PICKUP_SHADOW_LINK = { full: PICKUP_HEIGHT + PICKUP_BOB, gone: PICKUP_DRAW_SIZE } as const
 
 /** How far apart pickups are laid, in world units. */
 export const PICKUP_SPACING_Z = SEGMENT_LENGTH * 14

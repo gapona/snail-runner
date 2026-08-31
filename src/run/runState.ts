@@ -103,15 +103,6 @@ export interface RunStepOptions {
    * whose size depends on the frame rate.
    */
   drag?: number
-  /**
-   * Whether the road ahead is clear enough to drop the Fever guard. Defaults to `true`.
-   *
-   * **Passed in rather than worked out here**, because "how far is the nearest obstacle" is a
-   * question about the layout and this module has never been told the layout exists — the same
-   * split that keeps `stepRun` testable under Node. See `roadIsClear` and `fever.ts`'s exit
-   * ordering for why the guard waits on the road at all.
-   */
-  roadClear?: boolean
 }
 
 /** A run at the start line, at `SPEED_BASE`, having travelled nothing. */
@@ -201,6 +192,38 @@ export function runSeconds(state: RunState): number {
 }
 
 /**
+ * What the speed will be after `distance` more world units of ordinary running.
+ *
+ * **The one thing on the road that has to be laid for a speed it is not being laid at.** A ramp's
+ * arc chain sits at `speed * t`, so it can only be right if it is built from the speed the flight
+ * will actually be flown at — and `RunScene.relayArcs` builds it while the ramp is still 90
+ * segments away. Laid from the speed *now*, the chain is short by everything the run accelerates
+ * through on the way there, and the correction then lands at the launch where the player is looking
+ * straight at it: measured, **4.8 segments of the tail at the speed a run starts at**.
+ *
+ * Walked with the same fixed tick and the same chase `stepRun` uses rather than solved: the closed
+ * form is over *time* and this is a question about *distance*, which is transcendental — and a
+ * second expression of the same curve is a second thing that can drift from it. About 650 ticks for
+ * the shipped relay distance, once per ramp per lap.
+ *
+ * **It assumes an ordinary approach — no Fever, no hit, no verge.** All three are corrected at the
+ * launch, which is the one instant the flight's speed is a fact rather than a prediction, and is
+ * why that relay exists at all.
+ */
+export function speedAfter(speed: number, distance: number): number {
+  const dt = FIXED_STEP_MS / 1000
+  let v = speed
+  let travelled = 0
+
+  while (travelled < distance) {
+    v += (SPEED_CAP - v) * SPEED_ACCEL * dt
+    travelled += v * dt
+  }
+
+  return v
+}
+
+/**
  * Advances the run by `dtMs` of wall-clock time and returns a new state.
  *
  * **The speed is a saturating chase, not a ramp**: `v += (cap - v) * SPEED_ACCEL * dt`. Constant
@@ -226,7 +249,7 @@ export function stepRun(state: RunState, dtMs: number, options: RunStepOptions):
   const remainder = runFixedSteps(state.stepRemainderMs, dtMs, (dtSec) => {
     // Fever is ticked in the same tick it raises the ceiling in, so the last tick of a Fever is
     // still boosted and the first tick after it is not — no off-by-one frame either way.
-    fever = stepFever(fever, dtSec * 1000, options.roadClear ?? true).state
+    fever = stepFever(fever, dtSec * 1000)
 
     const factor = feverSpeedFactor(fever)
     const cap = base * factor

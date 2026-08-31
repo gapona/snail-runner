@@ -108,6 +108,9 @@ export function plate(scene: Phaser.Scene, depth = 0): Plate {
 }
 
 /** A button. One shape, three states: normal, primary, disabled. */
+/** How far a solid button's shadow sits below it, in unscaled pixels. */
+const SOLID_SHADOW = 5
+
 export interface KitButton {
   readonly container: Phaser.GameObjects.Container
   readonly label: Phaser.GameObjects.Text
@@ -123,7 +126,7 @@ export interface KitButton {
 export function kitButton(
   scene: Phaser.Scene,
   text: string,
-  options?: { primary?: boolean; fontSize?: number; fontFamily?: string },
+  options?: { primary?: boolean; muted?: boolean; fontSize?: number; fontFamily?: string; solid?: boolean },
 ): KitButton {
   const label = scene.add
     .text(0, 0, text, {
@@ -136,6 +139,30 @@ export function kitButton(
   const container = scene.add.container(0, 0, [background, label])
 
   let primary = options?.primary ?? false
+  /**
+   * A filled button rather than an outlined one, with a hard drop shadow under it.
+   *
+   * **⚠ The kit's `primary` is a 16%-alpha wash, and that is a hierarchy the front screen had
+   * upside down**: Play was the most transparent thing on the menu while Shop and Settings were
+   * near-opaque plates. `solid` is the one control on a screen that should read as a *button*
+   * rather than as a frame — the label goes dark because the fill is the accent, and the shadow is
+   * a second rounded rect offset down rather than a blur, because `Graphics` has no blur and the
+   * game's whole idiom is hard-edged anyway.
+   */
+  const solid = options?.solid ?? false
+  /**
+   * The third tier, and the kit had only two.
+   *
+   * **A screen with two actions can say which is which by making one of them primary; a screen with
+   * three cannot.** The result panel is the case: `Again`, `Double coins` and `Menu` were an
+   * accent-outlined button and two identical ones, so the only thing separating the last two was
+   * their labels. `ui/theme.ts`'s `neonButton` had exactly this option and the kit lost it in the
+   * restyle.
+   *
+   * It is dimmer rather than smaller: a tertiary action still has to clear the 44px touch floor, so
+   * the weight has to come out of the ink and not out of the box.
+   */
+  const muted = options?.muted ?? false
   let enabled = true
   let hovered = false
   let pressed = false
@@ -149,21 +176,41 @@ export function kitButton(
     width = Math.max(label.width + BUTTON.padX * 2 * scale, MIN_TOUCH, minWidth)
     height = Math.max(label.height + BUTTON.padY * 2 * scale, MIN_TOUCH)
 
-    const accent = !enabled ? KIT.disabled : primary ? KIT.active : KIT.rim
+    const accent = !enabled ? KIT.disabled : primary ? KIT.active : muted ? KIT.muted : KIT.rim
     const fill = primary && enabled ? KIT.active : KIT.plate
-    const fillAlpha = primary && enabled ? (pressed ? 0.34 : hovered ? 0.24 : 0.16) : pressed ? 0.9 : 0.72
+    const fillAlpha = primary && enabled ? (pressed ? 0.34 : hovered ? 0.24 : 0.16) : muted ? (pressed ? 0.6 : 0.32) : pressed ? 0.9 : 0.72
     const halfW = width / 2
     const halfH = height / 2
+    const radius = BUTTON.radius * scale
 
     background.clear()
-    background.fillStyle(fill, fillAlpha)
-    background.fillRoundedRect(-halfW, -halfH, width, height, BUTTON.radius * scale)
-    background.lineStyle(Math.max(1.5, 2 * scale), accent, enabled ? (hovered || pressed ? 1 : 0.8) : 0.5)
-    background.strokeRoundedRect(-halfW, -halfH, width, height, BUTTON.radius * scale)
+
+    if (solid && enabled) {
+      const drop = SOLID_SHADOW * scale
+      // Pressed sinks onto its own shadow, which is the whole travel a flat button has.
+      const sink = pressed ? drop : 0
+
+      background.fillStyle(KIT.plate, 0.85)
+      background.fillRoundedRect(-halfW, -halfH + drop, width, height, radius)
+      background.fillStyle(KIT.active, hovered ? 1 : 0.94)
+      background.fillRoundedRect(-halfW, -halfH + sink, width, height, radius)
+      background.lineStyle(Math.max(1.5, 2 * scale), KIT.plate, 0.55)
+      background.strokeRoundedRect(-halfW, -halfH + sink, width, height, radius)
+      label.setY(sink)
+    } else {
+      background.fillStyle(fill, fillAlpha)
+      background.fillRoundedRect(-halfW, -halfH, width, height, radius)
+      background.lineStyle(
+        Math.max(1.5, 2 * scale),
+        accent,
+        enabled ? (hovered || pressed ? 1 : muted ? 0.45 : 0.8) : 0.5,
+      )
+      background.strokeRoundedRect(-halfW, -halfH, width, height, radius)
+    }
 
     // The primary button carries one extra mark rather than a different shape: a diamond at each
     // end, which is the shields' own glyph and the kit's way of saying "this is the one".
-    if (primary && enabled) {
+    if (primary && enabled && !solid) {
       background.fillStyle(KIT.active, 0.9)
       for (const x of [-halfW + 10 * scale, halfW - 10 * scale]) {
         const size = 4 * scale
@@ -173,7 +220,7 @@ export function kitButton(
       }
     }
 
-    label.setColor(css(enabled ? KIT.rim : KIT.muted))
+    label.setColor(css(!enabled ? KIT.muted : solid ? KIT.plate : muted && !hovered ? KIT.muted : KIT.rim))
     container.setSize(width, height)
 
     // Both hit-area traps, in the one branch the whole kit shares: a `Container`'s origin is fixed
@@ -365,7 +412,11 @@ export function kitSlider(
       label.setFontSize(18 * scale)
       readout.setFontSize(18 * scale)
 
-      const labelWidth = Math.max(width * 0.3, label.width + 8 * scale)
+      // **An empty label reserves nothing, and that is what lets a slider be a whole row.** The
+      // settings panel names its channel on the line above, so a second "Volume" beside the track
+      // said nothing and cost 30% of the row — on a phone that is the difference between a rail a
+      // thumb can aim at and one it cannot.
+      const labelWidth = labelText === '' ? 0 : Math.max(width * 0.3, label.width + 8 * scale)
       const readoutWidth = Math.max(width * 0.14, readout.width + 8 * scale)
 
       label.setPosition(centreX - width / 2, y)
@@ -575,6 +626,40 @@ export type RowState = 'buy' | 'locked' | 'owned' | 'selected'
  * label is a shop the player has to read word by word; the diamond marks the one in use, the rim
  * brightens the ones they can act on, and the rest recede.
  */
+/**
+ * A hairline rule, for grouping a panel's content.
+ *
+ * **A panel with two jobs needs to say where one ends**, and the alternative — spacing alone — is
+ * what made the result screen read as four things floating at even intervals rather than as a
+ * readout and a set of actions. Stateless like `plate`: it is drawn at the point it is given every
+ * `layout()`, so it owns no position of its own.
+ */
+export interface KitDivider {
+  readonly graphics: Phaser.GameObjects.Graphics
+  draw(centreX: number, y: number, width: number, scale: number): void
+}
+
+export function kitDivider(scene: Phaser.Scene, depth = 0): KitDivider {
+  const graphics = scene.add.graphics().setDepth(depth)
+
+  return {
+    graphics,
+    draw(centreX, y, width, scale) {
+      const line = Math.max(1.5, 1.5 * scale)
+
+      graphics.clear()
+      // Two lines rather than one: the kit's whole idiom is a lit edge over a dark one, and a
+      // single stroke on a dark plate reads as a scratch. **⚠ At one pixel and 0.16 alpha the first
+      // version was invisible on a real frame** — a rule has to be seen to group anything, and a
+      // divider nobody can see is whitespace with a draw call.
+      graphics.fillStyle(KIT.plate, 0.95)
+      graphics.fillRect(centreX - width / 2, y, width, line)
+      graphics.fillStyle(KIT.rim, 0.35)
+      graphics.fillRect(centreX - width / 2, y - line, width, line)
+    },
+  }
+}
+
 export interface KitRow {
   readonly container: Phaser.GameObjects.Container
   readonly height: number

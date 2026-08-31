@@ -10,7 +10,7 @@
  * row of obstacles is visible behind them as a clean line — which is a kind of feedback a runner
  * usually has no way to give.
  *
- * **It is also the speed gauge.** `SPEED_BASE` to `SPEED_CAP` is a factor of 2.5, and the ground
+ * **It is also the speed gauge.** `SPEED_BASE` to `SPEED_CAP` is a factor of 2.2, and the ground
  * texture alone does not sell that; a trail that gets wider and brighter as the run accelerates
  * does, and it does it *in the world* rather than as a number in the corner. The plan called this
  * "slime as the visual trace of acceleration" and it is the one HUD element that is not in the HUD.

@@ -16,7 +16,10 @@
 import assert from 'node:assert/strict'
 import {
   ARC_REFERENCE_SPEED,
+  ARC_RELAY_NEAR_Z,
+  ARC_RELAY_Z,
   CHAIN,
+  flightSpans,
   CHAIN_ATTEMPTS,
   chainPoints,
   chainSpacingZ,
@@ -24,9 +27,11 @@ import {
   placeFormations,
   WAVE,
 } from '../src/run/formations.ts'
-import { PICKUP_HEIGHT, PICKUP_OFFSET, PICKUP_REACH_UNDERFOOT, reaches } from '../src/run/pickups.ts'
+import {
+  PICKUP_POOL_SIZE, PICKUP_HEIGHT, PICKUP_OFFSET, PICKUP_REACH_UNDERFOOT, reaches } from '../src/run/pickups.ts'
 import { createPlayerState, flightDuration, flightHeight, jump, stepPlayer } from '../src/run/playerMotion.ts'
 import { placeRunObstacles } from '../src/run/obstacles.ts'
+import { speedAfter } from '../src/run/runState.ts'
 import {
   JUMP_AIR_MS,
   JUMP_LAUNCH_V,
@@ -35,7 +40,9 @@ import {
   SPEED_BASE,
   SPEED_CAP,
 } from '../src/run/constants.ts'
+import { DRAW_DISTANCE, SEGMENT_LENGTH } from '../src/road/constants.ts'
 import { createRng } from '../src/race/rng.ts'
+import { placeRamps, RAMP_LAUNCH_V } from '../src/run/ramp.ts'
 
 let passed = 0
 
@@ -383,6 +390,206 @@ check('arcs are laid only where there is a launch', () => {
 
   assert.ok(withLaunch.some((p) => p.y > PICKUP_HEIGHT), 'a launch produced no arc')
   console.log(`    no launches: ${without.length} pickups, all grounded; one launch: ${withLaunch.length}`)
+})
+
+check('⚠ the arc is relaid once, far out, and for the speed the ramp will be reached at', () => {
+  // `RunScene.relayArcs` re-lays a ramp's chain for the speed the run is doing, in a band 40 to 90
+  // segments ahead. Its own comment said the band is "far enough away that nothing is seen moving"
+  // -- and the road is drawn 300 segments ahead, so ALL of it is in view. Running it every frame
+  // therefore slid the chain continuously, the whole time the player was looking at it, because the
+  // run accelerates every frame. Reported as coins changing position with the speed.
+  //
+  // The scene cannot be driven from here -- it imports phaser -- so the quantities are computed
+  // from `speedAfter`, which is the run's own integration, and the same `flightDuration` the chain
+  // is laid with.
+  const flight = flightDuration(JUMP_LAUNCH_V)
+  const band = ARC_RELAY_Z - ARC_RELAY_NEAR_Z
+  // The chain's far end sits at `speed * flightDuration`, so a difference in the speed it was laid
+  // for is a displacement of its tail.
+  const segments = (dv) => (Math.abs(dv) * flight) / SEGMENT_LENGTH
+
+  let worstSlide = 0
+  let worstPlacement = 0
+  let worstResidual = 0
+
+  for (const start of [SPEED_BASE, SPEED_BASE * 1.4, SPEED_CAP * 0.8]) {
+    const atRamp = speedAfter(start, ARC_RELAY_Z)
+
+    // What shipped: re-laid every frame across the band, so the tail tracked the speed the whole way.
+    worstSlide = Math.max(worstSlide, segments(speedAfter(start, band) - start))
+    // What one relay is for: the chain as the placer left it, at `ARC_REFERENCE_SPEED`.
+    worstPlacement = Math.max(worstPlacement, segments(ARC_REFERENCE_SPEED - start))
+    // What the launch is left to correct, now that the one relay predicts forward to the ramp.
+    worstResidual = Math.max(worstResidual, segments(atRamp - speedAfter(start, ARC_RELAY_Z)))
+  }
+
+  assert.ok(
+    worstSlide > 1,
+    `re-laying every frame moved the tail only ${worstSlide.toFixed(2)} segments, so this is measuring nothing`,
+  )
+  assert.ok(
+    worstPlacement > worstSlide,
+    'the correction the one relay makes is smaller than the sliding it replaces, so it should not be made far out',
+  )
+  // Predicting forward is what makes ONE relay enough: laid for the speed here it would be short by
+  // everything the run accelerates through on the way, and that correction would land at the launch.
+  assert.ok(
+    worstResidual < 0.01,
+    `the launch is left to move the tail ${worstResidual.toFixed(2)} segments, i.e. the prediction is not being used`,
+  )
+
+  const naive = Math.max(
+    ...[SPEED_BASE, SPEED_BASE * 1.4, SPEED_CAP * 0.8].map((v) => segments(speedAfter(v, ARC_RELAY_Z) - v)),
+  )
+
+  assert.ok(naive > 1, 'laying for the speed here costs nothing, so the prediction is measuring nothing')
+  console.log(
+    `    band ${(band / SEGMENT_LENGTH).toFixed(0)} segments, all inside a 300-segment draw distance: ` +
+      `re-laid every frame the tail slid up to ${worstSlide.toFixed(2)} segments in view. Laid once at the far edge ` +
+      `it corrects up to ${worstPlacement.toFixed(2)}, and predicting to the ramp leaves the launch ` +
+      `${worstResidual.toFixed(2)} against ${naive.toFixed(2)} without the prediction`,
+  )
+})
+
+check('⚠ nothing is laid on the ground under a flight, so a ramp is not two rewards and one pass', () => {
+  // **Reported from the frame it produces:** a ramp with a chain of coins along the flight and
+  // another chain lying on the road beneath it. The player can be airborne or grounded and not
+  // both, so one of the two was always unreachable — two rewards in one place, of which one is a
+  // promise the game cannot keep.
+  //
+  // The cause is the third instance of one bug in this walk. It already advances from the END of a
+  // chain rather than from its start, because advancing by the gap alone overlapped one chain with
+  // the next; the arc is the same overlap from outside, because an arc is laid *before* the walk
+  // runs and the walk was never told those stretches were taken.
+  const obstacles = placeRunObstacles(1234, TRACK, 0)
+  const launches = [
+    { id: 1, z: SEGMENT_LENGTH * 200, offsetX: 0, launchV: JUMP_LAUNCH_V * 2 },
+    { id: 2, z: SEGMENT_LENGTH * 600, offsetX: 0.4, launchV: JUMP_LAUNCH_V * 2 },
+    { id: 3, z: SEGMENT_LENGTH * 1000, offsetX: -0.35, launchV: JUMP_LAUNCH_V * 2 },
+  ]
+  const lay = (withLaunches, seed) =>
+    placeFormations({
+      rng: createRng(seed),
+      fromZ: 0,
+      toZ: TRACK,
+      trackLength: TRACK,
+      obstacles,
+      launches: withLaunches,
+    })
+
+  // The spans come from the module rather than being recomputed here: a second expression of where
+  // a flight ends is a second thing that can disagree with the placer about it.
+  const spans = flightSpans(launches)
+  const underFlight = (pickups) =>
+    pickups.filter(
+      (pickup) => pickup.arcOf === undefined && spans.some((span) => pickup.z >= span.fromZ && pickup.z <= span.toZ),
+    )
+
+  // **Swept over forty seeds rather than checked on one**, because skipping a chain changes every
+  // later roll: two laps from the same seed with and without the reservation are two different
+  // layouts, and a single-seed count difference is mostly that divergence rather than the cost.
+  let stranded = 0
+  let control = 0
+  let withReservation = 0
+  let without = 0
+
+  for (let seed = 1; seed <= 40; seed++) {
+    const shipped = lay(launches, seed).filter((pickup) => pickup.arcOf === undefined)
+    const bare = lay([], seed)
+
+    stranded += underFlight(shipped).length
+    control += underFlight(bare).length
+    withReservation += shipped.length
+    without += bare.length
+  }
+
+  assert.equal(stranded, 0, `${stranded} ground pickups still lie under a flight`)
+
+  // **The negative control is the same walk with no launches**, measured against the spans those
+  // launches would have had. It has to still strand something, or this is measuring a seed.
+  assert.ok(control > 0, 'the walk lays nothing under those spans even without the reservation')
+
+  // **And the answer is "both", not "fewer".** A chain whose tail would reach a flight is CUT at
+  // it rather than abandoned, so the ground in front of a ramp keeps its coins — refusing the whole
+  // chain instead cost 12% of a lap's pickups for 4.6% of the lap reserved, i.e. nearly three times
+  // the ground the flight actually covers.
+  const reserved = spans.reduce((total, span) => total + (span.toZ - span.fromZ), 0) / TRACK
+  const lost = 1 - withReservation / without
+
+  assert.ok(
+    lost < reserved * 1.6,
+    `the reservation costs ${(lost * 100).toFixed(1)}% of the lap's ground pickups for ${(reserved * 100).toFixed(1)}% of its ground`,
+  )
+  console.log(
+    `    ${(control / 40).toFixed(1)} ground pickups a lap used to lie under the ${spans.length} flights and 0 do now; ` +
+      `${(reserved * 100).toFixed(1)}% of the lap reserved costs ${(lost * 100).toFixed(1)}% of its ground pickups`,
+  )
+})
+
+
+/**
+ * The most of `items` that ever fall inside the draw distance at once, over a whole lap.
+ *
+ * **An upper bound on what a pool is asked for, not the pool's real demand** — the renderer culls
+ * what projects off screen before it takes a slot, and reproducing that needs the mesh's own walk.
+ * The bound is the right thing to size against anyway: it is what the pool must survive on the
+ * frame where nothing happens to be culled.
+ */
+function peakInView(items, trackLength) {
+  const count = Math.round(trackLength / SEGMENT_LENGTH)
+  const perSegment = new Array(count).fill(0)
+
+  for (const item of items) perSegment[Math.floor(item.z / SEGMENT_LENGTH) % count]++
+
+  let window = 0
+
+  for (let i = 0; i < DRAW_DISTANCE; i++) window += perSegment[i]
+
+  let peak = window
+
+  for (let base = 1; base < count; base++) {
+    window += perSegment[(base + DRAW_DISTANCE - 1) % count] - perSegment[base - 1]
+    if (window > peak) peak = window
+  }
+
+  return peak
+}
+
+console.log('the pool is sized against what the placer actually produces')
+
+check('every pickup a lap lays can be drawn at once', () => {
+  // **⚠ The pool was 24 against a peak of 47 and had no demand counter at all**, so for as long as
+  // pickups have existed roughly half of them were competing for slots and nothing could say so.
+  // It is filled near to far, so *which* ones get the slots is a function of their order along the
+  // road — and `layArc` re-lays a whole chain at the moment of launch, moving every coin into a
+  // different segment. Reported as **the number of coins changing when you take off from a ramp**,
+  // and that is exactly what it was: nothing gained or lost, the drawn set reshuffled in view.
+  //
+  // Worse on a phone, which is where it was reported: `pickupDrawWidth` boosts the icon by up to a
+  // third on a narrow frame, so distant coins that are sub-pixel on a desktop pass the on-screen
+  // cull there and take slots the near ones needed.
+  let worst = 0
+
+  for (const seed of [1, 4242, 777, 31337, 9001]) {
+    const obstacles = placeRunObstacles(seed, TRACK)
+    const ramps = placeRamps(seed ^ 0x2a17, TRACK, 0, obstacles)
+    const pickups = placeFormations({
+      rng: createRng(seed ^ 0x5eed),
+      fromZ: SEGMENT_LENGTH * 20,
+      toZ: TRACK,
+      trackLength: TRACK,
+      obstacles,
+      launches: ramps.map((ramp) => ({ id: ramp.id, z: ramp.z, offsetX: ramp.offsetX, launchV: RAMP_LAUNCH_V })),
+    })
+
+    worst = Math.max(worst, peakInView(pickups, TRACK))
+  }
+
+  assert.ok(PICKUP_POOL_SIZE > worst, `the pool is ${PICKUP_POOL_SIZE} against a peak demand of ${worst}`)
+  // The other end, which is the rule the decal pool's own check states: a pool far past its demand
+  // is a number nobody has to justify, and it stops being answerable to a measurement.
+  assert.ok(PICKUP_POOL_SIZE < worst * 2, `the pool is ${PICKUP_POOL_SIZE} against a demand of only ${worst}`)
+  console.log(`    pool ${PICKUP_POOL_SIZE} against a peak of ${worst} in the draw distance, over five laps`)
 })
 
 console.log(`${passed} checks passed`)

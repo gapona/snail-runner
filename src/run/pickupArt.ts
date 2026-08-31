@@ -13,7 +13,7 @@
  *
  * - `fruit` — a round berry with a leaf. The only shape with something growing off it.
  * - `shield` — a rounded plate. The only closed symmetrical outline.
- * - `coin` — a ring. The only shape with a hole in it.
+ * - `coin` — a struck gold disc. The only metal, and the only warm one.
  *
  * **Fruit ships as four rendered PNGs and falls back to one drawing.** The four are grapes, a
  * banana, a melon and a pear — different objects rather than four colours of the same one, so a
@@ -99,14 +99,14 @@ function drawPickup(scene: Phaser.Scene, kind: PickupKind, key: string): void {
     const ink = Math.max(2, size * INK_WEIGHT)
     const colors = PICKUP_COLORS[kind]
 
-    // **One shared backing under all three.** A pickup has to separate from a road that is grey,
-    // grass that is green and sand that is pale, and the eight biomes make every one of those the
-    // background at some point. A soft dark disc does that everywhere with one shape, where three
-    // per-biome variants would be three things to keep in step.
-    g.fillStyle(0x0d1410, 0.22)
-    g.fillCircle(s(0.5), s(0.52), s(0.47))
-    g.fillStyle(0x0d1410, 0.16)
-    g.fillCircle(s(0.5), s(0.54), s(0.42))
+    // **⚠ The shared backing disc is gone, and it was the last copy of a device the shipped art
+    // dropped a round ago.** It was argued for correctly -- a pickup has to separate from grey
+    // road, green grass and pale sand alike, and the nine biomes make every one of those the
+    // background at some point -- and it was reported the first time it was seen on a real frame:
+    // at the size a pickup is read, a plate under the icon IS most of what is there. `build-sprites`
+    // removed it from the renders and left it here, so the fallback and the art disagreed about
+    // whether a pickup has something behind it. What carries the separation is what the object
+    // already has: its own contour, its saturation, and the ellipse on the ground under it.
 
     if (kind === 'fruit') drawFruit(g, s, ink, colors)
     else if (kind === 'shield') drawShield(g, s, ink, colors)
@@ -195,30 +195,38 @@ function drawShield(g: Phaser.GameObjects.Graphics, s: Scale, ink: number, color
 }
 
 /**
- * A ring seen face-on.
+ * A struck gold coin seen face-on: a rounded rim, a raised bezel, a recessed field.
  *
- * **The hole is the entire read.** It is the only shape in the game with a gap in its middle, which
- * is what survives being 13px on a phone — so the ring is drawn thick and the hole generously wide
- * rather than as a coin with a detail punched in it.
+ * **⚠ This was a ring with a hole through it, and the hole was the set's identity rule.** The
+ * argument was good — the only shape in the game with a gap in its middle is what survives being
+ * 13px on a phone — and it was written when the set was three abstract glyphs. The fork's `fruit`
+ * became four *rendered* objects, three of them round, so silhouette purity had already gone; what
+ * the hole was still buying was that both the art and the drawing read as a **washer**, which is
+ * exactly how the shipped render was reported. Colour separates a gold disc from a green melon and
+ * a purple bunch at every size, and `dev-assets/cc0-3d/coin_render.py` carries the sheet the two
+ * were compared on.
+ *
+ * Three rings rather than a flat fill, and they are the render's own profile flattened: deepest
+ * gold at the rim, the lightest on the raised bezel, the field between them. That
+ * dark/light/mid sequence outward from the centre is what the eye reads as struck metal instead of
+ * as a yellow circle, and it is the one part of the object that survives to 13px.
  */
 function drawCoin(g: Phaser.GameObjects.Graphics, s: Scale, ink: number, colors: Colors): void {
-  const outer = s(0.36)
-  const inner = s(0.15)
+  const outer = s(0.42)
 
   g.fillStyle(INK, 1)
   g.fillCircle(s(0.5), s(0.5), outer + ink * 0.5)
-  g.fillStyle(colors.mid, 1)
-  g.fillCircle(s(0.5), s(0.5), outer)
-  // A lit crescent, up and to the left, where the light in this game comes from.
-  g.fillStyle(colors.light, 1)
-  g.fillCircle(s(0.47), s(0.46), outer * 0.82)
-  g.fillStyle(colors.mid, 1)
-  g.fillCircle(s(0.53), s(0.55), outer * 0.72)
-
-  // The hole, punched by drawing the backing colour through it rather than by an erase — Graphics
-  // has no cut-out, and the backing disc under every pickup is what makes this work.
-  g.fillStyle(INK, 1)
-  g.fillCircle(s(0.5), s(0.5), inner + ink * 0.5)
   g.fillStyle(colors.dark, 1)
-  g.fillCircle(s(0.5), s(0.5), inner)
+  g.fillCircle(s(0.5), s(0.5), outer)
+  g.fillStyle(colors.light, 1)
+  g.fillCircle(s(0.5), s(0.5), outer * 0.86)
+  g.fillStyle(colors.mid, 1)
+  g.fillCircle(s(0.5), s(0.5), outer * 0.7)
+
+  // A lit crescent across the field, up and to the left, where the light in this game comes from.
+  // It spills a little onto the bezel, which is the same colour, so the overlap cannot show.
+  g.fillStyle(colors.light, 1)
+  g.fillCircle(s(0.47), s(0.46), outer * 0.62)
+  g.fillStyle(colors.mid, 1)
+  g.fillCircle(s(0.53), s(0.55), outer * 0.6)
 }

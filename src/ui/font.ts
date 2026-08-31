@@ -26,6 +26,25 @@ export interface DisplayFontOptions {
 const FALLBACK_STACK = 'Arial, sans-serif'
 
 let currentStack = FALLBACK_STACK
+let ready: Promise<void> = Promise.resolve()
+let settled = true
+
+/**
+ * Whether the display face is in `document.fonts` yet.
+ *
+ * **A `Text` object does not repaint when a font arrives after it drew**, so anything that wants
+ * the display face has to either wait for this or be built again once it flips. The loading screen
+ * does the second: it draws its own title only once the face is there, because the alternative is a
+ * flash of system sans on the first screen of the game.
+ */
+export function isDisplayFontReady(): boolean {
+  return settled && currentStack !== FALLBACK_STACK
+}
+
+/** Resolves when `initDisplayFont` has settled, successfully or not. Never rejects. */
+export function whenDisplayFontReady(): Promise<void> {
+  return ready
+}
 
 /** The active display-font CSS stack — `'Arial, sans-serif'` until `initDisplayFont()`
  * resolves (or if it was never called, or failed). Read by `ui/theme.ts`'s `neonText()`; any
@@ -42,6 +61,15 @@ export function getDisplayFontStack(): string {
  * is a cosmetic degradation, not something that should block game boot.
  */
 export async function initDisplayFont(options: DisplayFontOptions): Promise<void> {
+  settled = false
+  ready = load(options).finally(() => {
+    settled = true
+  })
+
+  return ready
+}
+
+async function load(options: DisplayFontOptions): Promise<void> {
   try {
     const face = new FontFace(options.family, `url(${options.url})`, options.weight ? { weight: options.weight } : undefined)
     const loaded = await face.load()

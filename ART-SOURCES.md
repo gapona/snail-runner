@@ -194,6 +194,93 @@ The ship, the enemies, the boss, the scenery and the road palette are all genera
 and `src/road/palette.ts`. No file, no provenance question, and they recolour with the theme —
 which is exactly why the sky plates are the only raster art in the game.
 
+## Titan One (OFL) — the display font
+
+The one typeface in the game. Heavy, rounded and single-weight, which is what lets the title carry
+a thick dark outline without the counters closing up; compared side by side against Baloo 2
+ExtraBold and Fredoka SemiBold at the shipped title size, it is the only one of the three that
+still reads as a logo rather than as interface type under a 14px stroke.
+
+**Shipped as a local file, not a CDN link.** Playables is offline-only and its CSP blocks
+`fonts.googleapis.com`; `ui/font.ts` loads it through the `FontFace` API from `public/assets/`.
+Only the latin subset is fetched — the game's locales are `en` and `es`.
+
+| file | source | licence | added |
+|---|---|---|---|
+| `public/assets/fonts/titan-one.woff2` | Google Fonts, https://fonts.google.com/specimen/Titan+One (latin subset) | SIL Open Font License 1.1 | 2026-08-29 |
+
+## The obstacles (self-generated geometry)
+
+The three obstacle classes are boxes with bevelled front faces, built by
+`dev-assets/cc0-3d/barrier_render.py` and rendered by the same `smooth_render.py` pass as the
+fruit. Nothing was downloaded and there is no third-party work in them.
+
+They replace five CC0 nature-kit renders — a stump, a cliff chunk, a slab, a pebble cluster, a turf
+lid. A sixth was built for the `overhead` class and is not here: that class was removed rather than
+re-arted a fourth time. See CLAUDE.md, "The obstacles are one family of road barriers".
+
+| file | source | licence | added |
+|---|---|---|---|
+| `public/assets/obstacle/obstacle-low-0.png` | `dev-assets/cc0-3d/barrier_render.py` (this project) | self-generated | 2026-08-29 |
+| `public/assets/obstacle/obstacle-low-1.png` | `dev-assets/cc0-3d/barrier_render.py` (this project) | self-generated | 2026-08-29 |
+| `public/assets/obstacle/obstacle-low-2.png` | `dev-assets/cc0-3d/barrier_render.py` (this project) | self-generated | 2026-08-29 |
+| `public/assets/obstacle/obstacle-blocking-0.png` | `dev-assets/cc0-3d/barrier_render.py` (this project) | self-generated | 2026-08-29 |
+| `public/assets/obstacle/obstacle-blocking-1.png` | `dev-assets/cc0-3d/barrier_render.py` (this project) | self-generated | 2026-08-29 |
+
+## The critters (self-generated geometry)
+
+Not from a kit and not from the diffusion pipeline. **Both local kits were checked for an insect and
+neither has one**, and the finding that rebuilt the barriers decided the rest: the aspect IS the
+collision box, these two boxes are 4.67:1 and 2.34:1, and nothing bought comes at those proportions.
+Built as geometry by `dev-assets/cc0-3d/critter_render.py` and rendered through `smooth_render`, the
+same pass as the coin and the barriers. See CLAUDE.md, "Bugs That Run At You".
+
+| file | source | licence | added |
+|---|---|---|---|
+| `public/assets/critter/critter-beetle-0.png` | `dev-assets/cc0-3d/critter_render.py` (this project) | self-generated | 2026-08-31 |
+| `public/assets/critter/critter-beetle-1.png` | `dev-assets/cc0-3d/critter_render.py` (this project) | self-generated | 2026-08-31 |
+
+### Five of the six kinds are downloaded CC0 models, adapted
+
+The first assets in this game to come from third-party 3D models rather than from a kit render, a
+diffusion pass or our own geometry. `dev-assets/cc0-3d/glb_obj.py` reads the GLB (Kenney ships OBJ
+and has no creatures; everything else free ships glTF), `poly_survey.py` finds and measures
+candidates, `critter_render.py` substitutes this game's palette into each model's own material split
+and poses it for the second frame, and `smooth_render` draws it in the same pass as everything else.
+
+**The geometry and the material split are the model's; the colours, the camera and the lighting are
+this game's.** That is not a preference — the ladybird's shell arrives at `Kd 1.00 0.04 0.02`, which
+is **6 degrees from `THREAT_COLOR` at full chroma**, i.e. inside the band this game reserves for
+"something has landed on you". The spider's accent and the frog's are red too. The remap is what
+makes these models usable at all.
+
+The beetle is **not** a model and cannot be: its box is 4.67:1, solved from half the road against the
+jump's ceiling, and no creature has that proportion.
+
+| file | model | source | licence | added |
+|---|---|---|---|---|
+| `public/assets/critter/critter-bee-{0,1}.png` | `Armabee` by Quaternius | https://poly.pizza/m/42djT5zJnx | CC0 | 2026-08-31 |
+| `public/assets/critter/critter-wasp-{0,1}.png` | `Wasp` by Quaternius | https://poly.pizza/m/3aQgc75sUR | CC0 | 2026-08-31 |
+| `public/assets/critter/critter-spider-{0,1}.png` | `Spider` by Quaternius | https://poly.pizza/m/yRYJiAJyiM | CC0 | 2026-08-31 |
+| `public/assets/critter/critter-frog-{0,1}.png` | `Frog` by Quaternius | https://poly.pizza/m/9Z2V8fpazF | CC0 | 2026-08-31 |
+| `public/assets/critter/critter-ladybird-{0,1}.png` | `Ladybird` by Exceptional_3D | https://poly.pizza/m/3tCnJC9UYA | CC0 | 2026-08-31 |
+
+## The coin (self-generated geometry)
+
+Not from a kit and not from the diffusion pipeline: the coin is a surface of revolution built by
+`dev-assets/cc0-3d/coin_render.py` and rendered by the same `smooth_render.py` pass as the fruit,
+at the same light rig. Nine profile points and three `Kd` values; nothing was downloaded and there
+is no third-party work in it, so there is no licence question to record beyond this row.
+
+**Why it is not a render.** All twelve `pick_coin_v*` diffusion variants are either a coin with a
+glyph struck into it (a "0", a monogram, a pair of eyes) or a machine washer — the failure
+`CLAUDE.md` records as "this checkpoint draws objects, not symbols". The one that shipped was a
+steel bearing at three-quarters with a cast shadow baked into its matte.
+
+| file | source | licence | added |
+|---|---|---|---|
+| `public/assets/pickup/pickup-coin.png` | `dev-assets/cc0-3d/coin_render.py` (this project) | self-generated | 2026-08-28 |
+
 ## Kenney Food Kit (CC0) — pickups and fruit
 
 Same licence, same pipeline and same camera as the Nature Kit rows above: downloaded to
