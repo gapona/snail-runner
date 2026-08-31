@@ -673,8 +673,30 @@ export function ensureVignetteTexture(scene: Phaser.Scene): void {
   context.clearRect(0, 0, size, size)
   context.fillStyle = gradient
   context.fillRect(0, 0, size, size)
+
+  // **The crescent is cut out of the finished disc, not drawn as a second shape.** A moon is the
+  // same object as the sun with a bite taken out of it and no corona -- so what makes it a moon is
+  // one `destination-out` arc, and every other property (the two whiten stops, the halo tail, the
+  // theme's own glow colour, which on `night` is already a cold blue) is the sun's arithmetic
+  // untouched. Drawing a separate crescent would be a second object to keep lit the same way.
+  if (getRoadTheme().moon) {
+    context.globalCompositeOperation = 'destination-out'
+    context.beginPath()
+    context.arc(half + half * MOON_BITE.offset, half - half * MOON_BITE.rise, half * MOON_BITE.radius, 0, Math.PI * 2)
+    context.fill()
+    context.globalCompositeOperation = 'source-over'
+  }
+
   canvasTexture.refresh()
 }
+
+/**
+ * Where the crescent's missing circle sits, as fractions of the disc's own half-size.
+ *
+ * Offset and raised rather than centred: a bite taken straight across the middle leaves a lens,
+ * which reads as an eye -- the same failure the first leaf gauge had, and for the same reason.
+ */
+const MOON_BITE = { offset: 0.30, rise: 0.10, radius: 0.30 } as const
 
 
 
@@ -723,7 +745,10 @@ export function ensureSunTexture(scene: Phaser.Scene): void {
     if (!raysTexture) throw new Error(`ensureSunTexture: could not create canvas texture "${raysKey}"`)
 
     raysTexture.context.clearRect(0, 0, size, size)
-    drawSunRays(raysTexture.context, half, rgb)
+    // **A moon has no corona, and the texture is left empty rather than skipped.** `layout` points
+    // an `Image` at this key every pass and `sunShimmer` turns and breathes it; a missing key would
+    // be a destroyed-texture crash on the one theme, where an empty one is simply nothing drawn.
+    if (!getRoadTheme().moon) drawSunRays(raysTexture.context, half, rgb)
     raysTexture.refresh()
   }
 

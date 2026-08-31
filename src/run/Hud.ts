@@ -4,6 +4,7 @@ import { KIT } from '../ui/kitPalette'
 import { leafFill, leafHalfHeight, leafOutline, leafRib, leafRibLine, LEAF_STEM, leafVeins } from '../ui/leafGauge'
 import { toCssColor } from '../ui/theme'
 import { uiScale } from '../ui/uiScale'
+import { formatCount } from '../ui/format'
 import { HUD_DEPTH } from './hudDepth'
 import { FEVER_EASE_MS, FEVER_MS, RUN_LIVES, SPEED_BASE } from './constants'
 import { PICKUP_COLORS } from './artPalette'
@@ -16,7 +17,7 @@ import { PICKUP_COLORS } from './artPalette'
  */
 const MAX_SHIELD_PIPS = 5
 import { feverCharge } from './fever'
-import { runScore, type RunState } from './runState'
+import { type RunState } from './runState'
 
 /**
  * The run's readouts: what it is worth, how far it has come, how much Fever is banked, how fast it
@@ -47,7 +48,6 @@ import { runScore, type RunState } from './runState'
  * them through the road's own projection.
  */
 export class Hud {
-  private readonly score: Phaser.GameObjects.Text
   private readonly distance: Phaser.GameObjects.Text
   private readonly lives: Phaser.GameObjects.Text
   /**
@@ -65,14 +65,16 @@ export class Hud {
   private readonly coins: Phaser.GameObjects.Text
   /** The fruit gauge and the Fever meter, drawn together because they are one object's two states. */
   private readonly gauge: Phaser.GameObjects.Graphics
-  private readonly speedPlate: Phaser.GameObjects.Graphics
-  private readonly speed: Phaser.GameObjects.Text
+  private readonly livesPlate: Phaser.GameObjects.Graphics
 
   /** What the counters are currently showing, so they count up rather than jump. */
   private shownScore = 0
   private shownMetres = 0
   /** Where `layout` put the gauge and how big it is, so `update` can redraw without re-deriving it. */
   private gaugeBox = { x: 0, y: 0, w: 0, h: 0 }
+  private gaugeSize = { w: 0, h: 0 }
+  /** Where the mascot's head is this frame, in screen pixels — see `update`. */
+  private snailAnchor: { x: number; y: number } | null = null
   /** Where the lives row starts, so `update` can lay the shields beside whatever the lives became. */
   private livesRow = { x: 0, y: 0, gap: 0 }
   /** Where the speed badge sits and how big its chrome is; its width follows the text. */
@@ -85,12 +87,6 @@ export class Hud {
     // sand and grass without a panel behind it, and an outline does that at a fraction of the ink a
     // plate costs — which matters here because the thing behind these two numbers is the road the
     // player is reading.
-    this.score = scene.add
-      .text(0, 0, 'SCORE: 0', { fontFamily: 'Arial Black, Arial', fontSize: 34, color: toCssColor(KIT.rim) })
-      .setOrigin(0, 0)
-      .setStroke(toCssColor(KIT.plate), 6)
-      .setShadow(0, 3, toCssColor(KIT.plate), 4, false, true)
-      .setDepth(HUD_DEPTH)
     this.distance = scene.add
       .text(0, 0, '0 m', { ...body, color: toCssColor(KIT.coin) })
       .setOrigin(0, 0)
@@ -108,11 +104,7 @@ export class Hud {
       .setStroke(toCssColor(KIT.plate), 4)
       .setDepth(HUD_DEPTH)
     this.gauge = scene.add.graphics().setDepth(HUD_DEPTH)
-    this.speedPlate = scene.add.graphics().setDepth(HUD_DEPTH)
-    this.speed = scene.add
-      .text(0, 0, '', { ...body, fontFamily: 'Arial Black, Arial', color: toCssColor(KIT.active) })
-      .setOrigin(0, 0.5)
-      .setDepth(HUD_DEPTH + 1)
+    this.livesPlate = scene.add.graphics().setDepth(HUD_DEPTH - 1)
   }
 
   /**
@@ -142,7 +134,7 @@ export class Hud {
   }
 
   get gameObjects(): Phaser.GameObjects.GameObject[] {
-    return [this.score, this.distance, this.lives, this.shields, this.coins, this.gauge, this.speedPlate, this.speed]
+    return [this.distance, this.lives, this.shields, this.coins, this.gauge, this.livesPlate]
   }
 
   /**
@@ -153,19 +145,18 @@ export class Hud {
    * reads. A hundred to one puts it at 36 a second — fast enough to feel, slow enough that the
    * leading digits mean something.
    */
-  update(run: RunState, width: number): void {
-    const points = runScore(run)
-
-    if (points !== this.shownScore) {
-      this.shownScore = points
-      this.score.setText(`SCORE: ${points.toLocaleString('en-US')}`)
-    }
-
+  update(run: RunState, width: number, snail?: { x: number; y: number }): void {
+    // **⚠ The gauge rides above the mascot rather than sitting in the top-right corner.** That
+    // corner is the furthest point in the frame from where the player is looking: the snail is at
+    // the bottom centre and everything that decides a run happens around it, so a readout the
+    // player has to check *while dodging* was diagonally opposite the thing they were dodging with.
+    // Passed in per frame rather than derived here, because only the scene has the projection.
+    this.snailAnchor = snail ?? null
     const metres = Math.floor(run.distance / 100)
 
     if (metres !== this.shownMetres) {
       this.shownMetres = metres
-      this.distance.setText(metres >= 1000 ? `${(metres / 1000).toFixed(2)} km` : `${metres} m`)
+      this.distance.setText(metres >= 1000 ? `${(metres / 1000).toFixed(2)} km` : `${formatCount(metres)} m`)
     }
 
     // Filled pips for lives left, hollow for lives spent. A count is a number to read; pips are a
@@ -182,11 +173,17 @@ export class Hud {
     this.shields.setPosition(this.livesRow.x + this.lives.width + this.livesRow.gap, this.livesRow.y)
     this.coins.setText(run.coins > 0 ? `🪙 ${run.coins}` : '')
 
-    // **The speed is a multiple of the run's own floor, not a number of units.** 5760 means nothing;
-    // "2.4x" is the same fact in the unit the player actually experiences, and it is the one readout
-    // that makes a Fever legible as a number as well as as a wash.
-    this.speed.setText(`SPEED: ${(run.speed / SPEED_BASE).toFixed(1)}x`)
-    this.drawSpeedPlate()
+    // Centred over the mascot's head, clamped into the frame so it cannot leave with the snail on a
+    // hard lock. Falls back to the old corner when the scene has not handed an anchor over — the
+    // menu draws a HUD-less world, and a missing anchor must not put the gauge at 0,0.
+    if (this.snailAnchor) {
+      const { w, h } = this.gaugeSize
+      const x = Math.max(8, Math.min(width - w - 8, this.snailAnchor.x - w / 2))
+
+      this.gaugeBox = { x, y: Math.max(h / 2 + 8, this.snailAnchor.y - h), w, h }
+    }
+
+    this.drawLivesPlate()
     this.drawGauge(run)
     void width
   }
@@ -276,12 +273,15 @@ export class Hud {
     const scale = uiScale(width)
     const margin = 16 * scale
 
-    this.score.setFontSize(34 * scale)
-    for (const text of [this.distance, this.lives, this.shields, this.coins, this.speed]) text.setFontSize(22 * scale)
+    // **The distance is the big number now, and it is the only one.** It is what `sendScore` sends
+    // and what the save records as the best, and the readout that used to be twice its size --
+    // `SCORE`, distance plus what the pickups paid -- agreed with neither. Three numbers said two
+    // things and the largest of them was the one nothing else in the game used, which is the shape
+    // of the report: the player cannot tell which number the run is about.
+    this.distance.setFontSize(34 * scale)
+    for (const text of [this.lives, this.shields, this.coins]) text.setFontSize(30 * scale)
 
-    anchorTopLeft(this.score, margin, margin)
-    this.distance.setPosition(margin, this.score.y + this.score.height + 2 * scale)
-    this.lives.setPosition(margin, this.distance.y + this.distance.height + 4 * scale)
+    anchorTopLeft(this.distance, margin, margin)
     // **⚠ The shields are placed in `update`, not here, and placing them here drew them ON TOP of
     // the lives.** They sit beside the lives, so their x follows the lives' own *width* — and
     // `layout` runs once at scene create, before the first `update` has put any pips in either
@@ -289,42 +289,49 @@ export class Hud {
     // itself either: `layout` only runs again on a resize. Same rule, and the same failure, as the
     // speed badge's chrome one block below: **a thing positioned from another thing's text has to
     // be positioned where the text is written.** Reported from a screenshot of the corner.
-    this.livesRow = { x: margin, y: this.lives.y, gap: 10 * scale }
+    // **The lives moved out of the top-left stack and down beside the snail**, into the corner the
+    // speed badge used to hold. Three small pips under two other readouts is the one thing on this
+    // HUD a player has to *find*, and it is the thing they need mid-dodge -- so it is bigger, it has
+    // a plate behind it, and it is at the bottom of the frame where the mascot already is rather
+    // than diagonally opposite. The pips are 30px against the old 22.
+    const plateH = 52 * scale
+
+    this.plateAnchor = { x: margin, bottom: height - margin, height: plateH, pad: 16 * scale }
+    this.lives.setPosition(margin + this.plateAnchor.pad, height - margin - plateH / 2 - this.lives.height / 2)
+    this.livesRow = { x: this.lives.x, y: this.lives.y, gap: 10 * scale }
 
     // The leaf, top right, sized off the width so it keeps its proportion on any frame.
     const leafW = Math.min(200 * scale, width * 0.24)
     const leafH = leafW * 0.42
 
+    // Sized here, positioned per frame in `update` — the anchor moves with the mascot.
+    this.gaugeSize = { w: leafW, h: leafH }
     this.gaugeBox = { x: width - margin - leafW, y: margin + leafH / 2, w: leafW, h: leafH }
-    anchorTopRight(this.coins, margin, margin + leafH + 6 * scale)
+    anchorTopRight(this.coins, margin, margin)
 
-    // The speed badge, bottom left: a rounded plate with the multiple on it. Bottom rather than top
-    // because it is the one readout the player checks *after* deciding, not before.
-    //
-    // **The plate is drawn in `update`, not here**, because its width follows the text and the text
-    // is not written until there is a run to read it from. Laying it out to a fixed width instead
-    // is how a badge ends up with its own label hanging off the end of it.
-    const plateH = 40 * scale
-
-    this.plateAnchor = { x: margin, bottom: height - margin, height: plateH, pad: 16 * scale }
-    this.speed.setPosition(margin + this.plateAnchor.pad, height - margin - plateH / 2)
-    this.drawSpeedPlate()
+    this.drawLivesPlate()
   }
 
-  /** The badge's chrome, sized around whatever the readout currently says. */
-  private drawSpeedPlate(): void {
+  /**
+   * The plate behind the lives, sized around whatever the pips currently say.
+   *
+   * **Drawn in `update`, not in `layout`**, because its width follows the text and the text is not
+   * written until there is a run to read it from. Laying it out to a fixed width is how a badge ends
+   * up with its own label hanging off the end of it -- which this one did, as the speed badge.
+   */
+  private drawLivesPlate(): void {
     const { x, bottom, height, pad } = this.plateAnchor
 
     if (height <= 0) return
 
-    const w = this.speed.width + pad * 2
+    const w = this.lives.width + this.shields.width + this.livesRow.gap + pad * 2
     const y = bottom - height
 
-    this.speedPlate.clear()
-    this.speedPlate.fillStyle(KIT.plate, 0.82)
-    this.speedPlate.fillRoundedRect(x, y, w, height, height / 2)
-    this.speedPlate.lineStyle(Math.max(2, height * 0.06), KIT.active, 0.9)
-    this.speedPlate.strokeRoundedRect(x, y, w, height, height / 2)
+    this.livesPlate.clear()
+    this.livesPlate.fillStyle(KIT.plate, 0.82)
+    this.livesPlate.fillRoundedRect(x, y, w, height, height / 2)
+    this.livesPlate.lineStyle(Math.max(2, height * 0.06), KIT.active, 0.9)
+    this.livesPlate.strokeRoundedRect(x, y, w, height, height / 2)
   }
 
   destroy(): void {
@@ -332,12 +339,20 @@ export class Hud {
   }
 }
 
-/** The fruit's own violet, so the gauge and the thing that fills it are the same colour. */
-const LEAF_FRUIT = 0xa964d8
+/**
+ * What the gauge fills with.
+ *
+ * **⚠ It was the fruit's own violet, and violet on a gauge reads as damage.** Reported as exactly
+ * that: a purple bar filling up beside a mascot does not say "you are collecting", it says "you are
+ * losing something". The fruit set is four renders -- grapes, banana, melon, pear -- so violet was
+ * only ever *one* of them, and the ripe gold the other three share is both truer to the set and the
+ * one warm colour on this HUD that is not the reserved red.
+ */
+const LEAF_FRUIT = 0xf2b431
 /** The leaf itself: the shield pickup's green, which is the only leaf-coloured thing in the game. */
 const LEAF_RIM = 0x4fc663
 /** The stem, a shade darker so it reads as woody rather than as more blade. */
 const LEAF_STEM_COLOR = 0x2f7d3c
 /** The lit edge of whatever is filling it. The rest of this game's art is lit from above. */
-const LEAF_FRUIT_LIGHT = 0xd7a8f2
+const LEAF_FRUIT_LIGHT = 0xffe08a
 const LEAF_FEVER_LIGHT = 0xffe3a8

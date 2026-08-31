@@ -7,6 +7,7 @@ import { t } from '../i18n/strings'
 import { getState, mutate } from '../save/store'
 import { earnCoins } from '../shop/coins'
 import { bindLayout } from '../ui/layout'
+import { formatCount } from '../ui/format'
 import { KIT, kitButton, kitDivider, kitTitle, plate, type KitButton, type KitDivider, type Plate } from '../ui/kit'
 import { toCssColor } from '../ui/theme'
 import { uiScale } from '../ui/uiScale'
@@ -140,8 +141,8 @@ export class RunOver extends Phaser.Scene {
   }
 
   private refresh(best: number): void {
-    this.distanceText.setText(`${this.metres} m`)
-    this.bestText.setText(`${t('best')} ${best} m`)
+    this.distanceText.setText(`${formatCount(this.metres)} m`)
+    this.bestText.setText(`${t('best')} ${formatCount(best)} m`)
     this.coinText.setText(this.coins > 0 ? `🪙 +${this.coins}` : '')
   }
 

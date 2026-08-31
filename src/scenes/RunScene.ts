@@ -691,7 +691,13 @@ export class RunScene extends Phaser.Scene {
         if (!reaches(this.player, pickup)) continue
 
         pickup.taken = true
-        if (pickup.kind === 'fruit') this.run = eatFruit(this.run)
+        if (pickup.kind === 'fruit') {
+          this.run = eatFruit(this.run)
+          // One of the three moments the mascot looks back — see `lookBack.ts`. The event glances
+          // are the half that matters: a purely periodic one is a tic, and these land at the exact
+          // moments the player is already watching the snail rather than the road.
+          this.playerView.glance(this.time.now)
+        }
         else if (pickup.kind === 'shield') this.run = addShield(this.run)
         else this.run = earnCoin(this.run)
         // The streak ladder: each coin in a row sounds one interval higher, so the player can hear
@@ -717,6 +723,7 @@ export class RunScene extends Phaser.Scene {
       // The one sound in the vocabulary that already meant "you just got faster" — it was the
       // boost pickup's, and Fever is what became of that.
       playSfx(SFX.BOOST)
+      this.playerView.glance(this.time.now)
 
       return
     }
@@ -1257,6 +1264,7 @@ export class RunScene extends Phaser.Scene {
 
     if (wasAirborne && this.player.grounded) {
       squashOnLanding(this.squash, time)
+      if (this.player.flightSpins > 0) this.playerView.glance(time)
       addFreeze(this.playerFreeze, time, LANDING_HITSTOP_MS)
       playSfx(SFX.LAND)
       // The puff is thrown from where the snail was *drawn* last frame — its own feet on screen,
@@ -1353,7 +1361,7 @@ export class RunScene extends Phaser.Scene {
     )
     if (import.meta.env.DEV && this.reactionSeen) this.recordReaction(time)
 
-    this.hud.update(this.run, width)
+    this.hud.update(this.run, width, { x: this.playerView.screenX, y: this.playerView.screenY - this.playerView.sprite.displayHeight })
     this.updateTutorial(time)
     this.feverView.update(this.run.fever, delta, width, height)
     this.dust.update(time, delta, height)

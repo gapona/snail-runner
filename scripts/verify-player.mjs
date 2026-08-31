@@ -17,6 +17,7 @@
 //   own projected centre. That is the property the fork exists for, and the last section proves
 //   it against `billboardRectInto` rather than asserting it in prose.
 import assert from 'node:assert/strict'
+import { createLookBack, glanceBack, LOOK_BACK, lookBackTurn, stepLookBack } from '../src/run/lookBack.ts'
 import {
   createPlayerState,
   isOffRoad,
@@ -929,5 +930,62 @@ check('⚠ the shield is visible in all three of its moments, and the break outl
 function gcd(a, b) {
   return b === 0 ? a : gcd(b, a % b)
 }
+
+
+console.log('\nthe mascot glances back')
+
+check('a glance starts, peaks in the middle and ends exactly on time', () => {
+  const fixed = () => 0.5
+  let state = createLookBack(0, fixed)
+
+  assert.equal(lookBackTurn(state, 0), 0, 'a fresh mascot is already turning')
+
+  state = glanceBack(state, 1000, fixed)
+
+  assert.ok(lookBackTurn(state, 1000) < 0.01, 'the turn steps rather than easing in')
+  assert.ok(lookBackTurn(state, 1000 + LOOK_BACK.durationMs / 2) > 0.99, 'the turn does not reach its extreme')
+  assert.equal(lookBackTurn(state, 1000 + LOOK_BACK.durationMs), 0, 'the turn is still going when the window closes')
+
+  // Off the end and before the start are both rest, for `progress01`'s reason: the stepping harness
+  // hands back a clock that can run backwards, and an unclamped curve would extrapolate.
+  assert.equal(lookBackTurn(state, 999), 0)
+  assert.equal(lookBackTurn(state, 5000), 0)
+})
+
+check('an event mid-glance is absorbed, not restarted', () => {
+  // Two pickups half a second apart would otherwise reset the curve mid-turn, which reads as a
+  // stutter rather than as a second glance.
+  const fixed = () => 0.5
+  let state = glanceBack(createLookBack(0, fixed), 1000, fixed)
+  const peak = lookBackTurn(state, 1000 + LOOK_BACK.durationMs / 2)
+
+  state = glanceBack(state, 1000 + LOOK_BACK.durationMs / 2, fixed)
+
+  assert.equal(lookBackTurn(state, 1000 + LOOK_BACK.durationMs / 2), peak, 'a second event restarted the turn')
+})
+
+check('the idle clock fires inside its own window and never twice at once', () => {
+  const fixed = () => 0.5
+  let state = createLookBack(0, fixed)
+  const starts = []
+
+  for (let now = 0; now <= 60000; now += 16) {
+    const before = state.startedAt
+
+    state = stepLookBack(state, now, fixed)
+    if (state.startedAt >= 0 && state.startedAt !== before) starts.push(state.startedAt)
+  }
+
+  assert.ok(starts.length >= 5, `only ${starts.length} idle glances in a minute`)
+
+  for (let i = 1; i < starts.length; i++) {
+    const gap = starts[i] - starts[i - 1]
+
+    assert.ok(
+      gap >= LOOK_BACK.durationMs + LOOK_BACK.minGapMs - 32 && gap <= LOOK_BACK.durationMs + LOOK_BACK.maxGapMs + 32,
+      `two glances ${gap}ms apart, outside the ${LOOK_BACK.minGapMs}..${LOOK_BACK.maxGapMs} window`,
+    )
+  }
+})
 
 console.log(`${passed} checks passed`)

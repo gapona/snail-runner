@@ -11,6 +11,7 @@ import { hasPurchased } from '../shop/coins'
 import { applyTheme } from '../road/applyTheme'
 import { getState, mutate } from '../save/store'
 import { bindLayout } from '../ui/layout'
+import { formatCount } from '../ui/format'
 import { kitButton, type KitButton } from '../ui/kit'
 import { KIT } from '../ui/kitPalette'
 import { toCssColor } from '../ui/theme'
@@ -23,6 +24,7 @@ import { PlayerView } from '../run/PlayerView'
 import { createPlayerState } from '../run/playerMotion'
 import { PLAYER_REST_Y_FRACTION, PLAYER_WIDTH, PLAYER_Z, readableScale, SPEED_BASE } from '../run/constants'
 import { CAMERA_HEIGHT, HORIZON_Y } from '../road/constants'
+import { themeAccent } from '../road/themes'
 import { INK } from '../run/artPalette'
 
 /** Base font sizes, scaled by `uiScale(width)` and by each band's own fit. */
@@ -223,6 +225,7 @@ export class MainMenu extends Phaser.Scene {
     this.playButton = kitButton(this, t('play'), {
       primary: true,
       solid: true,
+      fill: themeAccent(),
       fontSize: PLAY_FONT_SIZE,
       fontFamily: getDisplayFontStack(),
     })
@@ -273,7 +276,7 @@ export class MainMenu extends Phaser.Scene {
     const state = getState()
     const coins = `🪙 ${state.coins}`
 
-    return state.bestScore > 0 ? `${t('best')} ${state.bestScore.toLocaleString()}   ${coins}` : coins
+    return state.bestScore > 0 ? `${t('best')} ${formatCount(state.bestScore)}   ${coins}` : coins
   }
 
   /**
@@ -307,6 +310,9 @@ export class MainMenu extends Phaser.Scene {
       setTheme: (id: string) => {
         if (!applyTheme(this, id)) return false
         this.world.refreshTheme(this, this.scale.width, this.scale.height)
+    // The one control drawn over the sky takes its colour from the sky's own theme — so the accent
+    // has to move with it, in the same handler, or the button advertises the previous palette.
+    this.playButton.setFill(themeAccent())
 
         return true
       },

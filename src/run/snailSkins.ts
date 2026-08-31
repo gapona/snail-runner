@@ -101,16 +101,29 @@ export interface SnailSkin {
  * for every skin, because that number is a property of the colour space and will move again the day
  * the mascot is re-rendered.
  *
- * The price ladder mirrors the themes' deliberately — the two catalogues sell the same kind of
+ * **⚠ The ladder no longer mirrors the themes', and the reason is what a skin actually is.** It ran
+ * 300/600/900/1200, the themes' own prices, on the argument that the two catalogues sell the same
+ * kind of thing. They do not: a theme repaints the whole frame -- sky, ground, props, road markings,
+ * and now the Play button -- while a skin rotates one creature's hue and changes nothing else. The
+ * dearest one asked more than the whole obstacle set costs to look at, for a difference a player
+ * only sees on their own mascot.
+ *
+ * The alternative was a visible feature per skin -- a shell shape, a pattern, an accessory -- and
+ * that is the one thing this system is built to avoid: six frames per skin is six more drawings of
+ * a creature whose identity is the entire product, i.e. five chances to draw a different animal.
+ * See the module docstring. So the price moved instead, to where a recolour belongs: a fifth of a
+ * capped run for the first and about two runs for the last.
+ *
+ * The old ladder mirrored the themes' deliberately — the two catalogues sell the same kind of
  * thing (a look, bought once, changing no number in the game) and pricing them differently would
  * say something about them that is not true.
  */
 export const SNAIL_SKINS: readonly SnailSkin[] = [
   { id: 'amber', titleKey: 'snail_amber', priceCoins: 0, icon: '\u{1F7E0}', shellHue: 62.1, footHue: 127 },
-  { id: 'fern', titleKey: 'snail_fern', priceCoins: 300, icon: '\u{1F7E2}', shellHue: 118, footHue: 150 },
-  { id: 'teal', titleKey: 'snail_teal', priceCoins: 600, icon: '\u{1F535}', shellHue: 180, footHue: 205 },
-  { id: 'indigo', titleKey: 'snail_indigo', priceCoins: 900, icon: '\u{1F7E3}', shellHue: 255, footHue: 285 },
-  { id: 'rose', titleKey: 'snail_rose', priceCoins: 1200, icon: '\u{1F338}', shellHue: 302, footHue: 330 },
+  { id: 'fern', titleKey: 'snail_fern', priceCoins: 120, icon: '\u{1F7E2}', shellHue: 118, footHue: 150 },
+  { id: 'teal', titleKey: 'snail_teal', priceCoins: 240, icon: '\u{1F535}', shellHue: 180, footHue: 205 },
+  { id: 'indigo', titleKey: 'snail_indigo', priceCoins: 360, icon: '\u{1F7E3}', shellHue: 255, footHue: 285 },
+  { id: 'rose', titleKey: 'snail_rose', priceCoins: 480, icon: '\u{1F338}', shellHue: 302, footHue: 330 },
 ] as const
 
 /**

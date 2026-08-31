@@ -92,9 +92,14 @@ export function plate(scene: Phaser.Scene, depth = 0): Plate {
       // `verify:ui`'s 4.5:1 measurement against `KIT.plate` becomes an honest one rather than an
       // approximation of whatever happened to be behind it.
       rim.fillStyle(KIT.plate, 0.94)
-      rim.fillRoundedRect(x - width / 2, y - height / 2, width, height, BUTTON.radius * 1.6)
-      rim.lineStyle(thickness, KIT.rim, 0.5)
-      rim.strokeRoundedRect(x - width / 2, y - height / 2, width, height, BUTTON.radius * 1.6)
+      rim.fillRoundedRect(x - width / 2, y - height / 2, width, height, BUTTON.radius * PANEL_RIM.radius)
+      // **⚠ A warm rim at full strength, not a thin cool one at half.** The panels read as a
+      // dark-blue dashboard beside a warm cartoon, and the border was most of why: `KIT.rim` is the
+      // neutral, and at 0.5 alpha it is a hairline that says "chrome". The coin's sand is the
+      // interface palette's own warm accent and is what the menu's record line is already drawn in,
+      // so the panel borrows a colour the player has been reading since the front screen.
+      rim.lineStyle(thickness * PANEL_RIM.weight, KIT.coin, PANEL_RIM.alpha)
+      rim.strokeRoundedRect(x - width / 2, y - height / 2, width, height, BUTTON.radius * PANEL_RIM.radius)
     },
     clear() {
       wash.setAlpha(0)
@@ -121,12 +126,14 @@ export interface KitButton {
   setPrimary(primary: boolean): void
   setEnabled(enabled: boolean): void
   setMinWidth(width: number): void
+  /** Repaints a `solid` button's fill — see `themeAccent`. A no-op on every other variant. */
+  setFill(fill: number): void
 }
 
 export function kitButton(
   scene: Phaser.Scene,
   text: string,
-  options?: { primary?: boolean; muted?: boolean; fontSize?: number; fontFamily?: string; solid?: boolean },
+  options?: { primary?: boolean; muted?: boolean; fontSize?: number; fontFamily?: string; solid?: boolean; fill?: number },
 ): KitButton {
   const label = scene.add
     .text(0, 0, text, {
@@ -150,6 +157,10 @@ export function kitButton(
    * game's whole idiom is hard-edged anyway.
    */
   const solid = options?.solid ?? false
+  // **Only the solid variant takes a colour from the world.** Every other widget is read against a
+  // plate and stays on the fixed interface palette for the reason `kitPalette.ts` states; this one
+  // is drawn straight over the sky, which is the case that argument does not cover.
+  let fill = options?.fill ?? KIT.active
   /**
    * The third tier, and the kit had only two.
    *
@@ -192,7 +203,7 @@ export function kitButton(
 
       background.fillStyle(KIT.plate, 0.85)
       background.fillRoundedRect(-halfW, -halfH + drop, width, height, radius)
-      background.fillStyle(KIT.active, hovered ? 1 : 0.94)
+      background.fillStyle(fill, hovered ? 1 : 0.94)
       background.fillRoundedRect(-halfW, -halfH + sink, width, height, radius)
       background.lineStyle(Math.max(1.5, 2 * scale), KIT.plate, 0.55)
       background.strokeRoundedRect(-halfW, -halfH + sink, width, height, radius)
@@ -258,8 +269,14 @@ export function kitButton(
 
   redraw()
 
+  const setFill = (next: number): void => {
+    fill = next
+    redraw()
+  }
+
   return {
     container,
+    setFill,
     label,
     get width() {
       return width
@@ -560,10 +577,39 @@ export function kitTitle(scene: Phaser.Scene, text: string, fontSize = 26): Phas
     .text(0, 0, text, { fontFamily: getDisplayFontStack(), fontSize, color: css(KIT.rim) })
     .setOrigin(0.5)
 
-  title.setShadow(0, 2, 'rgba(0,0,0,0.6)', 5, false, true)
+  applyPanelInk(title, fontSize)
 
   return title
 }
+
+/**
+ * The menu's own ink treatment, applied to a panel's title.
+ *
+ * **⚠ The panels and the menu were two different games to look at, and the panels were the ones in
+ * the wrong one.** The world and the front screen are a warm cartoon whose type is heavy and
+ * outlined; the shop and the result screen were a dark-blue dashboard with thin rims and a plain
+ * drop shadow. Reported as exactly that mismatch, with the instruction that the panels come to the
+ * menu rather than the other way round -- which is the right direction, because the menu's language
+ * is the one the *game* is drawn in and a panel is the guest.
+ *
+ * The stroke is a **fraction of the face**, not a pixel count, for `TITLE_INK`'s reason: these
+ * titles shrink to fit a narrow frame, and a 4px rim on a 26px face is a blob on the 14px one.
+ */
+export function applyPanelInk(text: Phaser.GameObjects.Text, fontSize: number): void {
+  text.setStroke(css(KIT.plate), Math.max(2, fontSize * PANEL_INK.stroke))
+  text.setShadow(0, Math.max(2, fontSize * PANEL_INK.shadowY), 'rgba(0,0,0,0.55)', 0, false, true)
+}
+
+/** The menu's `TITLE_INK`, at the weight a panel's smaller type carries. */
+const PANEL_INK = { stroke: 0.16, shadowY: 0.1 } as const
+
+/**
+ * The panel's border, brought to the menu's language.
+ *
+ * `radius` stays a multiple of the Play button's own so the two cannot drift: the brief asks for
+ * "rounding like the Play button", and the only way to keep that true is to say it in terms of it.
+ */
+const PANEL_RIM = { weight: 1.8, alpha: 0.85, radius: 1.6 } as const
 
 /** A `[icon value]` readout — coins, and anything else counted. */
 export interface KitBadge {

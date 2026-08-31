@@ -119,7 +119,7 @@ const en = {
   loadFailed: 'Could not load the game.\nCheck your connection and try again.',
   retry: 'Retry',
   /** The run's own screen: what a run produced and the two things to do next. */
-  runOver: 'Run Over',
+  runOver: 'Run Ended',
   newBest: 'New best!',
   best: 'Best',
   menu: 'Menu',

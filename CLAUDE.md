@@ -8047,6 +8047,142 @@ is the trade the previous round asked for (colour in the near and middle field) 
 biome. `fungal` needed three passes down — 49% to 30% to 17% — before it stopped reading as a
 ribbon.
 
+## The Frame The Player Actually Reads
+
+Blocks B and C of a review round: what the HUD says, what the mascot does, and whether the interface
+and the world look like one game. Nothing here changes a rule — every number below is presentation.
+
+### ⚠ B1: three numbers said two things, and the biggest was the one nothing used
+
+`sendScore` sends **metres**. The save records **metres** as the best. The HUD's largest readout was
+`SCORE` — metres plus what the pickups paid — at 34px against the distance's 22, and **nothing else
+in the game read it**: `runScore` had exactly one consumer, the line that printed it.
+
+So the eye was drawn to the one number that agreed with neither the record nor the leaderboard.
+`runScore`, `RunState.bonus` and the three `SCORE_PER_*` constants are deleted rather than demoted —
+dead state is worse than no state, and what the bonus was worth is already on screen as the coin
+count. The distance is the big number now, and the only one.
+
+### ⚠ B3: the lives were diagonally opposite the thing they are read during
+
+Three small pips, third in a stack under two other readouts, in the corner furthest from the snail.
+The speed badge is gone — a multiple the player cannot act on, and the frame already says how fast
+it is going — and the lives took its corner: bottom left beside the mascot, **30px against 22**, on
+the plate the badge used to carry.
+
+### ⚠ B4: the fruit gauge moved to the mascot, and stopped being violet
+
+It was top-right, the furthest point in the frame from where the player is looking. It rides above
+the snail now, clamped into the frame so a hard lock cannot take it out, and falls back to the old
+corner when no anchor is handed over — the menu draws a HUD-less world, and a missing anchor must
+not put a gauge at 0,0.
+
+**And the fill was the fruit's own violet, which reads as damage.** The fruit set is four renders —
+grapes, banana, melon, pear — so violet was only ever one of them; the ripe gold the other three
+share is truer to the set and is the one warm colour on this HUD that is not the reserved red.
+
+### B2: the mascot glances back, and the stalks are blocked on art
+
+`src/run/lookBack.ts` (pure, `npm run verify:player`). The shipped render is a **rear view** — that
+pick is written up at length and was right — and what it costs is a run spent looking at concentric
+rings on a shell, which read as a **target**. There is no face to add because there is no face in
+the art. A glance is the cheapest fix and needs no new art: for half a second the creature turns,
+which is a motion no target makes.
+
+- **On a clock *and* on events, and the events are the half that matters.** A purely periodic glance
+  is a tic — the eye finds the period in three repetitions, the failure a single sine gave the sun.
+  It also fires on fruit taken, a Fever entered and a ramp landed: the three moments the player is
+  already watching the mascot rather than the road.
+- **An event mid-glance is absorbed, not restarted.** Two pickups half a second apart would reset
+  the curve mid-turn, which reads as a stutter rather than as a second glance. Asserted.
+- **A rotation *and* a pinch, off one eased scalar.** Rotating alone reads as the creature tipping
+  over. The angle is deliberately small: far enough to be unambiguous would put the mascot visibly
+  on its side, which is the rotated-drawn-box problem the ramp's spin already cost a round.
+- `startedAt` is `-1` for "not glancing", the same sentinel and reason as `startPlayerDeath`: a
+  first frame can report `now === 0`.
+
+**⚠ The bigger stalks are not done and cannot be done here.** The mascot ships as six PNG renders;
+enlarging its stalks is a re-render through the Modal pipeline, not a code change. Editing the
+procedural fallback instead would make the fallback and the art disagree about what the creature
+looks like — the exact gap the rear-view pick already left open.
+
+### ⚠ B5 is blocked, and the door is already documented as closed
+
+"Raise the horizon in portrait" cannot be done by moving `HORIZON_Y`. **`PLAYER_REST_Y_FRACTION` and
+`PLAYER_Z` are solved from it** — so a viewport-dependent horizon is a viewport-dependent world
+position for the snail, and with it the collision timing, the arc geometry and the slime trail. Same
+door `PLAYER_WIDTH`'s docstring closes against a viewport-dependent field of view.
+
+What is true is that a portrait frame gives the sky 62% of its height while everything on the road is
+sized off its *width* — so the sky is tall and the road is narrow. That asymmetry is a property of
+the projection rather than of a constant, which "The Mascot Was Too Small" already records from the
+other side. Left undone rather than half-done.
+
+### C2: the Play button takes its colour from the theme
+
+It was a fixed cyan on all seven themes, including the two whose sky is cyan. `themeAccent()` lends
+it the theme's **rung** — the transverse road marking — for three reasons in order: it is already the
+theme's own loud colour rather than a new one to author; it is already swept against the reserved
+threat hue by `verify:road`, so this cannot smuggle in a hazard-coloured button; and it is the slot
+A2 just repainted to tell the themes apart. It falls back to the interface accent when the theme's
+own would not clear `ACCENT_MIN_SKY_CONTRAST` against its own sky — which is what makes borrowing a
+world colour for a control safe, since `signal`'s rung is a near-white grey under a near-white grey
+sky.
+
+**`KIT.active` stays fixed for everything else**, and that is not an inconsistency: `kitPalette.ts`'s
+argument is about readouts, which are read against a plate. It does not cover the one control drawn
+straight over the sky.
+
+### ⚠ C3: night gets a moon, which reverses a decision recorded as accepted
+
+The sun's own docstring argued that rays are a sun's mark, that nothing should branch on the theme,
+and that deriving ray length per theme would be "a mechanism for a look nobody has asked for".
+Somebody asked. `night` is the one theme whose whole subject is the absence of the sun, and a
+radiant star at midnight is not a night sky.
+
+One boolean on the theme, read in one place. **The crescent is cut out of the finished disc rather
+than drawn as a second shape** — one `destination-out` arc — so every other property is the sun's
+arithmetic untouched: the two whiten stops, the halo tail, and the theme's own glow colour, which on
+`night` is already a cold blue. The corona texture is **built empty rather than skipped**, because
+`layout` points an `Image` at that key every pass and a missing one is a destroyed-texture crash.
+The bite is offset and raised rather than centred: a bite straight across the middle leaves a lens,
+which reads as an eye — the first leaf gauge's own failure.
+
+### C4: one number format, and a title a non-native reader can parse
+
+`toLocaleString('en-US')` in the HUD and a bare `toLocaleString()` on the front screen meant the same
+quantity followed two rules, decided by the player's device. `formatCount` is the one of them now: a
+score is compared against a record and a leaderboard, so it has to look the same in both places and
+on both devices. Language belongs in `t()`, which is where it already is.
+
+`Run Over` became `Run Ended`. The first parses as a typo, or as an instruction to run something over.
+
+### C5: the skins are priced as recolours, because that is what they are
+
+They ran 300/600/900/1200 — the themes' own ladder — on the argument that the two catalogues sell the
+same kind of thing. They do not: a theme repaints the sky, the ground, the props, the road markings
+and now the Play button, while a skin rotates one creature's hue and changes nothing else.
+
+The other option the brief offers is a visible feature per skin — a shell shape, a pattern, an
+accessory — and that is the one thing this system exists to avoid: six frames per skin is six more
+drawings of a creature whose identity is the entire product, i.e. five chances to draw a different
+animal. So the price moved instead: **120/240/360/480**, a fifth of a capped run for the first and
+about two runs for the last.
+
+### C1: the panels speak the menu's language, in the two places that carry it
+
+The shop and the result screen read as a dark-blue dashboard beside a warm cartoon. Two things did
+most of that, and both live in the kit rather than in the scenes, so every panel gets them at once:
+the title carries the menu's ink — a stroke and a shadow stated as **fractions of the face**, for
+`TITLE_INK`'s reason, since these titles shrink to fit a narrow frame — and the border is the coin's
+warm sand at nearly full strength instead of the neutral rim at half, which is what made it read as
+chrome. The corner radius stays a multiple of the Play button's own, so "rounding like Play" cannot
+drift.
+
+**Not done: the rows, badges and buttons inside the panels are still on the kit's own palette.**
+Bringing those across is a wider restyle that touches every screen at once.
+
+
 ## One Palette Check For Every Theme, Biome And Skin
 
 `scripts/verify-palettes.mjs` (`npm run verify:palettes`), and it is the fifth thing wired into

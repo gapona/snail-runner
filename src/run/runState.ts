@@ -27,9 +27,6 @@ import {
   RUN_LIVES,
   SPEED_ACCEL,
   SPEED_BASE,
-  SCORE_PER_COIN,
-  SCORE_PER_FRUIT,
-  SCORE_PER_SHIELD,
   SPEED_CAP,
 } from './constants'
 import { addFruit as bankFruit, createFeverState, feverSpeedFactor, stepFever, type FeverState } from './fever'
@@ -57,15 +54,6 @@ export interface RunState {
   shields: number
   /** Coins collected this run. Banked into the save when the run ends. */
   coins: number
-  /**
-   * Points from what the run has *collected*, as opposed to how far it has come.
-   *
-   * **Stored rather than integrated, and the score is derived from it** — see `runScore`. Distance
-   * is already an exact number the fixed step maintains, so adding a second accumulator for the
-   * same quantity would be a second thing that can drift from it. What cannot be derived is what
-   * the player picked up, and that is all this holds.
-   */
-  bonus: number
   /**
    * The fruit gauge and the Fever it pays for — see `fever.ts`.
    *
@@ -116,7 +104,6 @@ export function createRunState(): RunState {
     lives: RUN_LIVES,
     shields: 0,
     coins: 0,
-    bonus: 0,
     fever: createFeverState(),
     over: false,
   }
@@ -155,29 +142,17 @@ export function takeHit(state: RunState): RunState {
 
 /** Grants a one-hit absorber. */
 export function addShield(state: RunState): RunState {
-  return { ...state, shields: state.shields + 1, bonus: state.bonus + SCORE_PER_SHIELD }
+  return { ...state, shields: state.shields + 1 }
 }
 
 /** Banks one fruit, which may start a Fever. All of the rule is in `fever.ts`. */
 export function eatFruit(state: RunState): RunState {
-  return { ...state, fever: bankFruit(state.fever), bonus: state.bonus + SCORE_PER_FRUIT }
-}
-
-/**
- * What the run is worth: the ground it has covered plus what it picked up along it.
- *
- * **Two readouts rather than one, because they answer different questions.** Distance is how far
- * you got and is the record the save keeps; the score is that plus what you were willing to leave
- * your line for. A player who never takes a pickup sees the two numbers agree, which is itself the
- * clearest possible statement of what the pickups are worth.
- */
-export function runScore(state: RunState): number {
-  return Math.floor(state.distance / 100) + state.bonus
+  return { ...state, fever: bankFruit(state.fever) }
 }
 
 /** Banks one coin. */
 export function earnCoin(state: RunState): RunState {
-  return { ...state, coins: state.coins + 1, bonus: state.bonus + SCORE_PER_COIN }
+  return { ...state, coins: state.coins + 1 }
 }
 
 /**

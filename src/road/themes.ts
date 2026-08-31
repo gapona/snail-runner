@@ -21,6 +21,8 @@
  * are already made of, so a yellow warning was competing with the scenery it had to be spotted
  * against.
  */
+import { contrastRatio } from './color'
+
 export const THREAT_COLOR = 0xff2f43
 
 /**
@@ -122,6 +124,16 @@ export interface RoadTheme {
    */
   propChroma: number
   propHue: number
+  /**
+   * Whether the light in this sky is a moon rather than a sun.
+   *
+   * **⚠ This reverses a decision recorded as accepted, and it is the right reversal.** The sun was
+   * one object with no theme branch, and its docstring argued that rays are a sun's mark and that
+   * deriving them per theme would be "a mechanism for a look nobody has asked for". Somebody asked:
+   * a radiant star at midnight is not a night sky, and `night` is the one theme whose whole subject
+   * is the absence of the sun. One boolean, read in one place.
+   */
+  moon: boolean
   /** Additive glow laid over the road surface, and how strong it is at its brightest. */
   glow: { color: number; alpha: number }
   vignette: number
@@ -155,6 +167,7 @@ export const THEMES: Record<string, RoadTheme> = {
     groundHue: 0,
     propChroma: 1,
     propHue: 0,
+    moon: false,
     // ── ⚠ THE ROAD IS A GARDEN PATH ON THIS THEME, NOT ASPHALT ────────────────────
     //
     // The five slots are `PALETTE_INDEX`: two alternating surface shades, two rumble-stripe
@@ -199,6 +212,7 @@ export const THEMES: Record<string, RoadTheme> = {
     groundHue: 0,
     propChroma: 1,
     propHue: 18,
+    moon: true,
     road: [0x363b48, 0x404554, 0x4a7fd6, 0xf2f2f5, 0xb0b4bd],
     fog: 0x2c3550,
     sky: { top: 0x121a33, bottom: 0x3a4a70, band: 0x6a80ad },
@@ -219,6 +233,7 @@ export const THEMES: Record<string, RoadTheme> = {
     groundHue: -12,
     propChroma: 1,
     propHue: -16,
+    moon: false,
     // **The markings carry the theme where the asphalt cannot.** Both asphalt slots are close to
     // neutral on every theme by necessity -- an obstacle is read against them -- so the rumble
     // stripes and the rung are the only road slots free to say which theme this is. These were
@@ -254,6 +269,7 @@ export const THEMES: Record<string, RoadTheme> = {
     groundHue: 42,
     propChroma: 1,
     propHue: 40,
+    moon: false,
     // The rung was a near-white grey, which is exactly what `signal` is made of -- 0.049 between
     // the two on the marking slots. Ice keeps its white rumble and takes a real cyan rung.
     road: [0x53687a, 0x5f7789, 0x7fdcff, 0xffffff, 0x8fd8ee],
@@ -290,6 +306,7 @@ export const THEMES: Record<string, RoadTheme> = {
     groundHue: 30,
     propChroma: 1,
     propHue: 30,
+    moon: false,
     road: [0x4a3a34, 0x56443d, 0xffa726, 0xffd9a8, 0xd8b98f],
     fog: 0x8a6f28,
     sky: { top: 0x5a2410, bottom: 0xd49a2a, band: 0xffb45c },
@@ -316,6 +333,7 @@ export const THEMES: Record<string, RoadTheme> = {
     groundHue: 6,
     propChroma: 1.1,
     propHue: 8,
+    moon: false,
     road: [0x4a5a4e, 0x56685a, 0x86e05a, 0xe8ffe0, 0xd8e4cf],
     fog: 0xa8d4b4,
     sky: { top: 0x2f6f8a, bottom: 0xcdeacf, band: 0xf2ffe8 },
@@ -341,6 +359,7 @@ export const THEMES: Record<string, RoadTheme> = {
     groundHue: 0,
     propChroma: 0,
     propHue: 0,
+    moon: false,
     // Monochrome with exactly one chromatic colour in the frame, and it means "enemy". Doubles
     // as the readable option for anyone who cannot separate the red/green pairs the other
     // themes lean on.
@@ -407,3 +426,35 @@ export function blendColor(color: number, towards: number, amount: number): numb
 
   return (mix(16) << 16) | (mix(8) << 8) | mix(0)
 }
+
+/**
+ * The colour a theme lends the interface's one loud control.
+ *
+ * **The Play button was a fixed cyan on all seven themes, including the two whose sky is cyan.**
+ * `KIT.active` is the interface palette's "yours" accent and it is deliberately fixed — a UI that
+ * changed colour with the world would need its contrast re-measured per theme (see
+ * `ui/kitPalette.ts`). That argument is about *readouts*, which are read against a plate. It does
+ * not cover the one control drawn straight over the sky.
+ *
+ * Taken from the theme's **rung** — the transverse road marking. Three reasons, in order: it is
+ * already the theme's own loud colour rather than a new one to author; it is already swept against
+ * the reserved threat hue by `verify:road`, so this cannot smuggle a hazard-coloured button in; and
+ * it is the slot that was just repainted to tell the themes apart, so a theme that reads as its own
+ * on the road reads as its own on the button.
+ *
+ * **Falls back to the interface accent when the theme's own would not read**, which is the whole
+ * safety of borrowing a world colour for a control: `signal`'s rung is a near-white grey against a
+ * near-white grey sky.
+ */
+export function themeAccent(): number {
+  const theme = getRoadTheme()
+  const rung = theme.road[4]
+
+  return contrastRatio(rung, theme.sky.bottom) >= ACCENT_MIN_SKY_CONTRAST ? rung : DEFAULT_ACCENT
+}
+
+/** How far the button has to stand off the sky it is drawn over. */
+export const ACCENT_MIN_SKY_CONTRAST = 1.8
+
+/** What a theme whose own accent would vanish into its sky falls back to: the interface's cyan. */
+export const DEFAULT_ACCENT = 0x4fd6e0

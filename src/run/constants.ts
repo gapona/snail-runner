@@ -467,18 +467,6 @@ export const FEVER_MAGNET_RATE = 20
 export const HIT_SPEED_LOSS = MAX_SPEED * 0.1
 export const RUN_LIVES = 3
 
-/**
- * What each pickup adds to the score, on top of the metre-per-metre the distance itself gives.
- *
- * **Priced by what it costs to take, not by what it does.** A coin is on the verge and costs a lane
- * change; a fruit is the same trip and is also progress toward a Fever, so it is worth the same in
- * points and more in consequence; a shield is the rarest thing on the road and is worth more than
- * either. What none of them is worth is enough to make collecting beat surviving — a full lap of
- * perfect collection is a few hundred points against the thousands a long run banks in distance.
- */
-export const SCORE_PER_COIN = 10
-export const SCORE_PER_FRUIT = 10
-export const SCORE_PER_SHIELD = 25
 
 /**
  * The fastest the game can ever go, in world units per second.

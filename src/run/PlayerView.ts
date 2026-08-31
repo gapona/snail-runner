@@ -1,4 +1,5 @@
 import * as Phaser from 'phaser'
+import { glanceBack, LOOK_BACK, type LookBackState, lookBackTurn, stepLookBack } from './lookBack'
 import { billboardRectInto, createBillboardRect } from '../road/billboard'
 import { DRAW_DISTANCE, SEGMENT_LENGTH, SPRITE_SCALE } from '../road/constants'
 import { segmentPercent, surfaceHeight, trackLengthOf, type Segment } from '../road/track'
@@ -110,6 +111,7 @@ export class PlayerView {
   groundY = 0
 
   private readonly rect = createBillboardRect()
+  private lookBack: LookBackState = { startedAt: -1, nextAt: 0 }
   /** When the carried bubble was last broken by a hit, in scene ms. `-1` for never. */
   private brokeAt = -1
   /**
@@ -332,12 +334,20 @@ export class PlayerView {
     this.sprite.setPosition(this.rect.x, this.rect.y)
     // Squash and stretch is volume-preserving: wider when flatter. Applied here rather than baked
     // into the billboard size so the collision footprint never changes with the animation.
-    this.sprite.setDisplaySize(this.rect.w / squash, this.rect.h * squash)
+    // **The glance, folded into the same two calls the squash already uses.** A rear-view shell
+    // rotating a little *and* narrowing reads as a head coming round; rotating alone reads as the
+    // whole creature tipping over. Both terms come off one eased scalar so they cannot disagree
+    // about how far through the turn it is. See `lookBack.ts`.
+    this.lookBack = stepLookBack(this.lookBack, look.now, Math.random)
+
+    const glance = lookBackTurn(this.lookBack, look.now)
+
+    this.sprite.setDisplaySize((this.rect.w / squash) * (1 - LOOK_BACK.pinch * glance), this.rect.h * squash)
     // **The spin, and the shadow deliberately does not take it.** A shadow is a mark on the ground
     // and the ground is not turning; rotating it would read as the whole world tipping rather than
     // as the snail doing something. It grows and fades with height and nothing else — see
     // `shadows.ts`. `spinAngle` is 0 for an ordinary jump, so this line costs nothing there.
-    this.sprite.setAngle(spinAngle(player))
+    this.sprite.setAngle(spinAngle(player) + LOOK_BACK.turnDegrees * glance)
     // The shadow blinks with the snail: a solid shadow under a flickering creature reads as the
     // sprite failing to draw rather than as the creature being briefly untouchable.
     const blink = look.invulnerable && Math.floor(look.now / BLINK_PERIOD_MS) % 2 === 1 ? BLINK_DIM : 1
@@ -389,6 +399,11 @@ export class PlayerView {
     const segment = track[Math.floor(worldZ / SEGMENT_LENGTH) % track.length]
 
     return surfaceHeight(segment, segmentPercent(worldZ))
+  }
+
+  /** The three moments the run hands over: fruit taken, a Fever entered, a ramp landed. */
+  glance(now: number): void {
+    this.lookBack = glanceBack(this.lookBack, now, Math.random)
   }
 
   destroy(): void {
