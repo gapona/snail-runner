@@ -1,6 +1,6 @@
 import * as Phaser from 'phaser'
-import { BIOMES, biomeIndexForSegment } from './biomes'
-import { multiplyTint } from './color'
+import { BIOMES, biomeIndexForSegment, themedProp } from './biomes'
+
 import {
   billboardOnScreen,
   billboardVisibleFraction,
@@ -119,10 +119,13 @@ export class RoadSprites {
 
     // Read through the getter every frame, never captured once: a theme switch replaces the
     // whole object, and a captured value would keep painting the previous theme's light.
-    const themeTint = getRoadTheme().decorTint
+    const theme = getRoadTheme()
 
     for (const [index, biome] of BIOMES.entries()) {
-      this.biomeTints[index] = multiplyTint(biome.decorTint, themeTint)
+      // The theme lights the prop and rotates it; the biome keeps the hue relationships that make
+      // it a place. A plain multiply did both jobs with one operation and lost the second — see
+      // `themedProp`.
+      this.biomeTints[index] = themedProp(biome.decorTint, theme.decorTint, theme.propChroma, theme.propHue)
     }
 
     for (let n = 0; n < DRAW_DISTANCE; n++) {

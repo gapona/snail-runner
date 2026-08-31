@@ -20,8 +20,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { decodePng } from './png.mjs'
 import { chroma, contrastRatio, deltaE, fromOklab, hueDistance, mixOklab, relativeLuminance, toHsl, toOklab } from '../src/road/color.ts'
 import { blendColor, getRoadTheme, setRoadTheme, themeIds, THREAT_MIN_CHROMA } from '../src/road/themes.ts'
-import { BIOMES, groundShadesForTheme, MIN_GROUND_CONTRAST, themedGround } from '../src/road/biomes.ts'
-import { BIOME_SKYLINE_WEIGHT, HORIZON_Y } from '../src/road/constants.ts'
+import { BIOMES, groundShadesForTheme, MIN_GROUND_CONTRAST, themedGround, themedProp } from '../src/road/biomes.ts'
+import { BIOME_SKYLINE_WEIGHT, HORIZON_Y, PALETTE_INDEX } from '../src/road/constants.ts'
 import { surfaceColour } from '../src/road/paletteColour.ts'
 import { INK_LIGHTNESS, lightnessOf, OBSTACLE_MATERIALS } from '../src/run/artPalette.ts'
 import { OBSTACLE_ART_KEYS, OBSTACLE_RIM } from '../src/run/obstacleArt.ts'
@@ -384,6 +384,123 @@ check('the check bites: tightening the ratio floor makes both numbers worse', ()
 
   assert.ok(spread > EDGE_SPREAD, `at a 1.8 ratio floor the perceptual spread is ${spread.toFixed(2)}x, which no longer exceeds the bound`)
   console.log(`    at MIN_GROUND_CONTRAST 1.8 the spread is ${spread.toFixed(2)}x against ${EDGE_SPREAD}x, and the darkest ground falls toward black`)
+})
+
+// ---------------------------------------------------------------------------------------------
+// A2 -- the theme colours the whole frame, and does not erase the place while doing it
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * How much of a biome's own separation has to survive the theme's light on its props.
+ *
+ * **⚠ A retention ratio and not a floor, because the two facts it separates are different.** How
+ * far apart two biomes' props are is capped by how far apart they were *authored*: `dunes` and
+ * `ruins` sit 0.035 apart at source, the closest pair in the set, because both are warm stone. A
+ * theme can only ever shrink that — a hue rotation preserves distance and a chroma scale under 1
+ * reduces it — so an absolute floor would be measuring the biome authoring and calling it a theme
+ * defect.
+ *
+ * What it caught: `multiplyTint(biome.decorTint, theme.decorTint)` retained **48–57%** on the dark
+ * themes, and on `ember` the nearest two biomes came out **0.012** apart — forest and wetland were
+ * the same orange. The theme was colouring the whole frame exactly as A2 asks and erasing the place
+ * while it did it.
+ *
+ * Derived on 2026-09-01: after `themedProp` the chromatic themes retain 61–100%, so 0.55 admits
+ * them and rejects the arrangement that shipped. A regression threshold, like the rest here.
+ */
+const PROP_BIOME_RETENTION = 0.55
+
+/**
+ * How far apart two themes' road markings have to sit.
+ *
+ * **Measured on the marking slots only — the two rumble stripes and the rung — never on the
+ * asphalt.** Both asphalt slots are close to neutral on every theme *by necessity*: an obstacle is
+ * read against them, and `PALETTE_SATURATION.road` is the smallest of the three for that reason. A
+ * mean over all five slots therefore punishes a theme for obeying a rule it has to obey, and it is
+ * what made this look like a five-pair failure when it was a three-pair one.
+ */
+const MARKING_MIN_DISTANCE = 0.1
+
+console.log('\nA2 - the theme colours the whole frame, and does not erase the place')
+
+check('a theme lights the props without collapsing the biomes into one', () => {
+  const rows = []
+
+  for (const id of THEMES) {
+    const theme = themeOf(id)
+    let kept = 0
+    let pairs = 0
+    let worst = { drawn: Infinity }
+
+    for (let i = 0; i < BIOMES.length; i++) {
+      for (let j = i + 1; j < BIOMES.length; j++) {
+        const authored = deltaE(BIOMES[i].decorTint, BIOMES[j].decorTint)
+        const drawn = deltaE(
+          themedProp(BIOMES[i].decorTint, theme.decorTint, theme.propChroma, theme.propHue),
+          themedProp(BIOMES[j].decorTint, theme.decorTint, theme.propChroma, theme.propHue),
+        )
+
+        kept += drawn / authored
+        pairs++
+        if (drawn < worst.drawn) worst = { drawn, pair: `${BIOMES[i].id}/${BIOMES[j].id}` }
+      }
+    }
+
+    rows.push({ id, retention: kept / pairs, worst, monochrome: theme.propChroma === 0 })
+  }
+
+  console.log(`    biome separation surviving the theme's light on props (floor ${(PROP_BIOME_RETENTION * 100).toFixed(0)}%):`)
+  for (const row of rows) {
+    const note = row.monochrome ? '  monochrome theme - exempt' : ''
+
+    console.log(`      ${row.id.padEnd(9)} ${(row.retention * 100).toFixed(0).padStart(3)}%   closest ${row.worst.pair.padEnd(16)} ${row.worst.drawn.toFixed(3)}${note}`)
+  }
+
+  for (const row of rows) {
+    // A theme that has deliberately removed chroma cannot be asked to preserve hue separation --
+    // the same exemption A1.1 grants an achromatic sky, and for the same reason. `signal` says it
+    // is monochrome and its props have to be too, or the claim is only about the ground.
+    if (row.monochrome) continue
+
+    assert.ok(
+      row.retention >= PROP_BIOME_RETENTION,
+      `${row.id} keeps only ${(row.retention * 100).toFixed(0)}% of the biomes' separation on its props`,
+    )
+  }
+
+  assert.ok(rows.some((row) => row.monochrome), 'no theme is monochrome any more, so the exemption above is dead code')
+})
+
+check('two themes are told apart by their road markings, not only by their sky', () => {
+  const marks = (theme) => [theme.road[PALETTE_INDEX.RUMBLE_DARK], theme.road[PALETTE_INDEX.RUMBLE_LIGHT], theme.road[PALETTE_INDEX.TRACK_MARK]]
+  const failures = []
+  const pairs = []
+
+  for (let i = 0; i < THEMES.length; i++) {
+    for (let j = i + 1; j < THEMES.length; j++) {
+      const a = themeOf(THEMES[i])
+      const aMarks = marks(a)
+      const z = themeOf(THEMES[j])
+      const zMarks = marks(z)
+      const distance = aMarks.reduce((sum, colour, k) => sum + deltaE(colour, zMarks[k]), 0) / aMarks.length
+      // A greyscale theme's markings are grey on purpose, so it is exempt from being told apart
+      // *by hue* from anything -- what tells `signal` apart is that it has no colour at all.
+      const monochrome = a.propChroma === 0 || z.propChroma === 0
+
+      pairs.push({ a: THEMES[i], z: THEMES[j], distance, monochrome })
+      if (!monochrome && distance < MARKING_MIN_DISTANCE) failures.push(`${THEMES[i]}/${THEMES[j]} (${distance.toFixed(3)})`)
+    }
+  }
+
+  pairs.sort((x, y) => x.distance - y.distance)
+
+  console.log(`    rumble and rung, mean deltaE (floor ${MARKING_MIN_DISTANCE}, asphalt deliberately excluded):`)
+  for (const pair of pairs.slice(0, 5)) {
+    console.log(`      ${pair.a.padEnd(8)} ${pair.z.padEnd(8)} ${pair.distance.toFixed(3)}${pair.monochrome ? '  monochrome - exempt' : ''}`)
+  }
+  console.log(`      ... ${pairs.length - 5} further pairs, up to ${pairs[pairs.length - 1].distance.toFixed(3)}`)
+
+  assert.equal(failures.length, 0, `themes sharing their road markings: ${failures.join(', ')}`)
 })
 
 // ---------------------------------------------------------------------------------------------

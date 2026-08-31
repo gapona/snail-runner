@@ -8305,7 +8305,61 @@ lightness difference rather than a ratio — which would make the rule equally s
 and let dark themes keep non-black verges. It is a change to a function `verify:road`'s 116 checks
 are built on, so it is its own round.
 
-All ten checks green, and `npm run build` with them.
+All twelve checks green, and `npm run build` with them.
+
+### A2's other two thirds: the props and the markings
+
+The ground half landed with `themedGround`. The rest of A2 — rocks, vegetation, road markings —
+turned out to be two separate defects pulling opposite ways, and one of them nobody had asked about.
+
+**Measured before touching anything.** Themes did not separate on props (`dusk`/`ember` at 0.043 mean
+`deltaE` over the nine biomes, four more pairs under 0.10) — and, unasked, **biomes did not separate
+*within* a theme**: on `ember` the closest two came out **0.012** apart. Forest and wetland were the
+same orange.
+
+**One operation was doing both jobs and losing the second.** A prop's colour was
+`multiplyTint(biome.decorTint, theme.decorTint)`, and a multiply by a saturated tint does not light
+a place, it replaces it: every biome is pulled toward one point. `ember`'s `decorTint` is a
+67%-saturated firelight, so it was colouring the whole frame exactly as A2 asks and erasing the
+place while it did it.
+
+`themedProp` splits the two contributions the way `themedGround` did. The theme gives **lightness
+and a rotation** (`propHue`/`propChroma`), which move every biome together and therefore cannot
+collapse them; `PROP_THEME_CHROMA` holds back most of the theme tint's own colour in the multiply
+that remains. Retention went **48–57% to 61–100%**.
+
+- **⚠ The check is a retention ratio, not a floor, and the distinction is the finding.** How far
+  apart two biomes' props can be is capped by how far apart they were *authored*: `dunes` and
+  `ruins` sit **0.035** apart at source, the closest pair in the set, because both are warm stone. A
+  theme can only shrink that. An absolute floor would have been measuring the biome authoring and
+  reporting it as a theme defect.
+- **⚠ And props are deliberately not asked to prove that two themes differ.** A3 already guarantees
+  that on the sky and the ground, which are 62% and 38% of a portrait frame; props are scattered
+  sprites along the verge. What props must protect is the **biome**, because that is the thing the
+  player crosses mid-run — the same asymmetry that made equal lightness a biome rule and not a theme
+  one.
+
+### ⚠ The markings looked like a five-pair failure and were a three-pair one
+
+Measured over all five `road` slots, five theme pairs sat under 0.10. Measured over the **marking**
+slots alone — the two rumble stripes and the rung — three did. The difference is the two asphalt
+slots, which are close to neutral on every theme **by necessity**: an obstacle is read against them,
+and `PALETTE_SATURATION.road` is the smallest of the three for exactly that reason. Averaging them
+in punishes a theme for obeying a rule it has no choice about.
+
+So the check measures the slots that are free to carry a theme, and the repaint is two moves:
+`dusk` takes the sunset pink its own sky is made of (it was a warm yellow **0.070** from `ember`'s
+orange — two sunset themes sharing one marking), and `ice` takes a real cyan rung in place of a
+near-white grey that was **0.049** from `signal`, which is made of near-white greys.
+
+**⚠ And the threat reservation caught the first pink at 25 degrees**, with all three of its terms
+holding. It was right to: a hazard-coloured kerb is the reservation's whole point. Pushed to magenta
+at 47 degrees.
+
+`signal` is exempt from both checks, by the same rule A1.1 grants an achromatic sky: a theme that
+has deliberately removed chroma cannot be asked to preserve hue separation. Its props are grey now
+too — `propChroma: 0` — which the monochrome claim needed and did not have, since it had only ever
+been made true of the ground.
 
 ### ⚠ A4: there is no colour left to reserve, and the proof is three sweeps
 

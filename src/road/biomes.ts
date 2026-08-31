@@ -24,7 +24,7 @@
  */
 
 // `color.ts` imports no phaser either, so this stays on the testable side of the line.
-import { contrastRatio, fromOklab, relativeLuminance, toOklab } from './color'
+import { contrastRatio, fromOklab, multiplyTint, relativeLuminance, toOklab } from './color'
 
 /**
  * Smallest contrast ratio between a biome's ground and the asphalt it lies beside.
@@ -141,30 +141,66 @@ function shiftLightnessAndChroma(colour: number, lightness: number, chromaDelta:
  * shade level) and would walk a cleared pair straight back into the road. Same ordering argument
  * as `groundLight`'s own, one step earlier.
  */
+export function treatColour(colour: number, chromaScale = 1, hueDegrees = 0): number {
+  if (chromaScale === 1 && hueDegrees === 0) return colour
+
+  const radians = (hueDegrees * Math.PI) / 180
+  const cos = Math.cos(radians)
+  const sin = Math.sin(radians)
+  const lab = toOklab(colour)
+  // Rotated first, then scaled. The other order is the same arithmetic for a pure rotation, and
+  // is not once the scale can be 0: a grey has no angle, so rotating it afterwards would be
+  // rotating noise back into a colour the theme has just said it does not want.
+  const a = lab.a * cos - lab.b * sin
+  const b = lab.a * sin + lab.b * cos
+
+  return fromOklab({ L: lab.L, a: a * chromaScale, b: b * chromaScale })
+}
+
 export function themedGround(
   ground: readonly [number, number],
   groundChroma = 1,
   groundHue = 0,
 ): [number, number] {
-  if (groundChroma === 1 && groundHue === 0) return [ground[0], ground[1]]
-
-  const radians = (groundHue * Math.PI) / 180
-  const cos = Math.cos(radians)
-  const sin = Math.sin(radians)
-
-  const treat = (colour: number) => {
-    const lab = toOklab(colour)
-    // Rotated first, then scaled. The other order is the same arithmetic for a pure rotation, and
-    // is not once the scale can be 0: a grey has no angle, so rotating it afterwards would be
-    // rotating noise back into a colour the theme has just said it does not want.
-    const a = lab.a * cos - lab.b * sin
-    const b = lab.a * sin + lab.b * cos
-
-    return fromOklab({ L: lab.L, a: a * groundChroma, b: b * groundChroma })
-  }
-
-  return [treat(ground[0]), treat(ground[1])]
+  return [treatColour(ground[0], groundChroma, groundHue), treatColour(ground[1], groundChroma, groundHue)]
 }
+
+/**
+ * The colour a prop is drawn in: the biome's own, under the theme's light.
+ *
+ * **⚠ It was `multiplyTint(biome.decorTint, theme.decorTint)`, and a multiply by a saturated tint
+ * does not light a place, it replaces it.** Measured across the nine biomes: on `ember`, whose
+ * `decorTint` is a 67%-saturated firelight, the closest two biomes' props sat **0.012** apart —
+ * forest and wetland were the same orange. `verdant` 0.017, `dusk` 0.020. The theme was colouring
+ * the whole frame exactly as asked and erasing the place while it did it.
+ *
+ * At the same time the *themes* were not separating on props either: `dusk`/`ember` at 0.043 mean
+ * `deltaE` over the nine, four more pairs under 0.10. One multiply cannot do both jobs, because it
+ * is the same operation pulling every biome toward one point.
+ *
+ * So the theme contributes what a light contributes — **lightness, and a rotation** — and the
+ * biome keeps the hue relationships that make it a place. `PROP_THEME_CHROMA` is how much of the
+ * theme tint's own colour survives into the multiply; the rest of its character arrives through
+ * `propHue`/`propChroma`, which move every biome together and therefore cannot collapse them.
+ * Same argument, and the same shape, as `themedGround`.
+ */
+export function themedProp(
+  biomeTint: number,
+  themeTint: number,
+  propChroma = 1,
+  propHue = 0,
+  themeChroma = PROP_THEME_CHROMA,
+): number {
+  return multiplyTint(treatColour(biomeTint, propChroma, propHue), treatColour(themeTint, themeChroma, 0))
+}
+
+/**
+ * How much of the theme tint's own chroma survives into the prop multiply.
+ *
+ * The lightness is untouched, so a night prop is still a night prop and an ember one still burns —
+ * what comes out is the part that was flattening nine biomes onto one hue.
+ */
+export const PROP_THEME_CHROMA = 0.45
 
 /**
  * The `GROUND_SHADES_PER_BIOME` colours a biome's ground is drawn in, under one theme.

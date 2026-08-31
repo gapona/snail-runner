@@ -111,6 +111,17 @@ export interface RoadTheme {
    */
   groundChroma: number
   groundHue: number
+  /**
+   * The same two levers for the props — rocks and vegetation — and they exist for the mirror
+   * reason `groundChroma`/`groundHue` do.
+   *
+   * The prop tint used to be `multiply(biome.decorTint, theme.decorTint)`, and a multiply by a
+   * saturated tint replaces a place rather than lighting it: on `ember` the closest two biomes'
+   * props measured **0.012** apart. These rotate every biome together, so they move the theme
+   * without collapsing the places inside it. See `themedProp`.
+   */
+  propChroma: number
+  propHue: number
   /** Additive glow laid over the road surface, and how strong it is at its brightest. */
   glow: { color: number; alpha: number }
   vignette: number
@@ -142,6 +153,8 @@ export const THEMES: Record<string, RoadTheme> = {
     groundLight: 1,
     groundChroma: 1,
     groundHue: 0,
+    propChroma: 1,
+    propHue: 0,
     // ── ⚠ THE ROAD IS A GARDEN PATH ON THIS THEME, NOT ASPHALT ────────────────────
     //
     // The five slots are `PALETTE_INDEX`: two alternating surface shades, two rumble-stripe
@@ -184,6 +197,8 @@ export const THEMES: Record<string, RoadTheme> = {
     groundLight: 0.34,
     groundChroma: 1,
     groundHue: 0,
+    propChroma: 1,
+    propHue: 18,
     road: [0x363b48, 0x404554, 0x4a7fd6, 0xf2f2f5, 0xb0b4bd],
     fog: 0x2c3550,
     sky: { top: 0x121a33, bottom: 0x3a4a70, band: 0x6a80ad },
@@ -202,7 +217,16 @@ export const THEMES: Record<string, RoadTheme> = {
     // indigo and the warmth stays where it belongs, at the horizon and on the ground.
     groundChroma: 0.9,
     groundHue: -12,
-    road: [0x5a4450, 0x67505c, 0xffd45e, 0xffe9d6, 0xd6c3b4],
+    propChroma: 1,
+    propHue: -16,
+    // **The markings carry the theme where the asphalt cannot.** Both asphalt slots are close to
+    // neutral on every theme by necessity -- an obstacle is read against them -- so the rumble
+    // stripes and the rung are the only road slots free to say which theme this is. These were
+    // a warm yellow, 0.070 from `ember`'s orange: two sunset themes sharing one marking. This
+    // theme's own sky is pink, so its road is too, and `ember` keeps the fire. Pushed to magenta
+    // rather than a straight pink because `verify:road` rejected the first at 25 degrees from the
+    // threat hue -- all three terms of the reservation held, and it was right to.
+    road: [0x5a4450, 0x67505c, 0xe87fd0, 0xffd8ef, 0xe8b0d8],
     fog: 0x8a6a9a,
     sky: { top: 0x27285e, bottom: 0xc87fa8, band: 0xffc27a },
     decor: { body: 0x4a2f3d, rim: 0x9c6a8c },
@@ -228,7 +252,11 @@ export const THEMES: Record<string, RoadTheme> = {
     // passing that rule by having no hue left is dodging it, not satisfying it.
     groundChroma: 0.5,
     groundHue: 42,
-    road: [0x53687a, 0x5f7789, 0x7fdcff, 0xffffff, 0xc9d6de],
+    propChroma: 1,
+    propHue: 40,
+    // The rung was a near-white grey, which is exactly what `signal` is made of -- 0.049 between
+    // the two on the marking slots. Ice keeps its white rumble and takes a real cyan rung.
+    road: [0x53687a, 0x5f7789, 0x7fdcff, 0xffffff, 0x8fd8ee],
     fog: 0x9fc4d8,
     // **A polar sky, because the cold had to move somewhere `day` is not.** `day` and `ice` were
     // one product at a weighted distance of 0.033 against a floor of 0.05, and 62% of that weight
@@ -260,6 +288,8 @@ export const THEMES: Record<string, RoadTheme> = {
     // under a hot sky actually looks like and what separates it from the three.
     groundChroma: 0.72,
     groundHue: 30,
+    propChroma: 1,
+    propHue: 30,
     road: [0x4a3a34, 0x56443d, 0xffa726, 0xffd9a8, 0xd8b98f],
     fog: 0x8a6f28,
     sky: { top: 0x5a2410, bottom: 0xd49a2a, band: 0xffb45c },
@@ -284,6 +314,8 @@ export const THEMES: Record<string, RoadTheme> = {
     // than hue rotated far: `verdant` is *lusher* biomes, not different ones.
     groundChroma: 1.25,
     groundHue: 6,
+    propChroma: 1.1,
+    propHue: 8,
     road: [0x4a5a4e, 0x56685a, 0x86e05a, 0xe8ffe0, 0xd8e4cf],
     fog: 0xa8d4b4,
     sky: { top: 0x2f6f8a, bottom: 0xcdeacf, band: 0xf2ffe8 },
@@ -307,6 +339,8 @@ export const THEMES: Record<string, RoadTheme> = {
     // A rotation of a grey has no direction to point in, so this is 0 rather than unset: the theme
     // is saying it leaves the hue alone because it has already removed it.
     groundHue: 0,
+    propChroma: 0,
+    propHue: 0,
     // Monochrome with exactly one chromatic colour in the frame, and it means "enemy". Doubles
     // as the readable option for anyone who cannot separate the red/green pairs the other
     // themes lean on.
