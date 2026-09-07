@@ -7681,12 +7681,61 @@ override — the `AUDIO_ENABLED_CHANGE` handler recomputes audibility but never 
   `stopMusic()` call `.destroy()`, not `.stop()` — `.stop()` alone leaves a dead-but-not-removed instance
   in the manager's sound list, which leaked one per call on repeated PAUSE/RESUME cycles before this was
   caught in testing.
-- `YTEvents.PAUSE` → `soundManager.mute = true` (blanket safety net) + capture `currentMusic.seek` into
-  `pausedMusicSeek` + `stopMusic()`. `YTEvents.RESUME` → unmute the manager, then
-  `playMusic(currentMusicKey, pausedMusicSeek)` if `effectiveMusic()` — continues the same track from
-  where it left off (a fresh instance, since `stopMusic()` destroyed the old one, but seeked back in).
-  `playMusic()`'s second argument is `seekSeconds` and defaults to `0`; only the PAUSE/RESUME path passes
-  a non-zero value — a plain `playMusic(key)` call still always starts from the top.
+- `YTEvents.PAUSE` → capture `currentMusic.seek` into `pausedMusicSeek` + `stopMusic()`, with the
+  blanket mute now set by `applyAudibility` rather than in the handler. `YTEvents.RESUME` clears the
+  pause flag and calls the same function, which continues the same track from where it left off (a
+  fresh instance, since `stopMusic()` destroyed the old one, but seeked back in). `playMusic()`'s
+  second argument is `seekSeconds` and defaults to `0`; only that path passes a non-zero value — a
+  plain `playMusic(key)` call still always starts from the top.
+
+### ⚠ Three Ways To Be Silent For A Session, Which Is The One Certification Failure That Matters
+
+Raised against a report from a *different* game on this platform — *"[Android] Game MUST respect the
+YouTube mute button. Neither background music nor sound effects can be heard… resulting in complete
+silence"*. The mechanism that report is about was already here: the boot value of `isAudioEnabled()`
+is a starting point and `AUDIO_ENABLED_CHANGE` keeps it live, so a Playable opened from a muted feed
+is not silent for the session. **What had never been asserted is any of it**, and looking found
+three real holes.
+
+- **⚠ `WebAudioSoundManager.mute` is an `AudioParam` at both ends, so a mute set while the context is
+  suspended never lands — and the getter lies about it.** Its setter is
+  `masterMuteNode.gain.setValueAtTime(...)` and its getter is `masterMuteNode.gain.value === 0`
+  (`node_modules/phaser/src/sound/webaudio/WebAudioSoundManager.js`). **On Android the context is
+  suspended from boot until the player's first touch** — Chrome's autoplay policy, which Phaser
+  reports as `sound.locked` — so everything this module decides before that first tap is decided
+  into a context with no audio thread reading it. Measured in the running game: emit the platform's
+  own `PAUSE`, whose first statement is `soundManager.mute = true`, and `game.sound.mute` reads
+  **false**. The answer is `Phaser.Sound.Events.UNLOCKED`, emitted on the step after
+  `context.resume()` succeeds: the whole platform state is **re-stated** there rather than hoped to
+  have survived. Nothing had ever listened for it.
+- **⚠ `RESUME` set `soundManager.mute = false` unconditionally**, so a pause/resume cycle unmuted the
+  manager whether or not YouTube was muted. Nothing audible leaked — `effectiveSound()` gates every
+  play and the music carries its own mute — but the blanket flag then said the opposite of what the
+  platform had asked for, and a flag that lies is what the next reader believes. **One function sets
+  it now** (`applyAudibility`), from the platform alone: the player's own two switches are per
+  channel and must not be flattened into one.
+- **⚠ And a track a pause destroyed was gone for the session.** Everything else here only ever
+  *mutes* an instance that already exists, and `RESUME` restarted one only `if (effectiveMusic())` —
+  correct at that instant and permanent afterwards. So: YouTube muted → the platform pauses (an ad,
+  a backgrounded app) → it resumes with nothing restarted → the player unmutes → `applyMusicAudibility`
+  finds no instance to unmute. **No music for the rest of the session, with the mute button off**,
+  which is the reported failure read from the other end. Measured live before the fix: the manager's
+  sound list stayed empty. The restart moved into `applyAudibility`, so there is **one path back to
+  a playing track** and `setMusic`/`setMusicVolume` reach it too — turning the switch back on after
+  a pause used to do nothing either.
+
+`verify:audio` now holds the whole contract by reading the source (`audio.ts` imports `phaser` as a
+value, so none of it is reachable from Node — `Preloader`'s reason): the boot value is not baked,
+both channels consult the live flag, **exactly one** place sets the blanket mute and it reads both
+platform facts, `UNLOCKED` re-applies, and there is exactly one restart path. **Shown to reject two
+shipped-before shapes** — a literal `soundManager.mute = true`, and the unlock hook removed.
+
+**⚠ What could not be verified here, stated rather than glossed:** the harness tab is hidden, so
+Chrome keeps the `AudioContext` suspended and `game.sound.locked` never clears — every `mute` read
+in this project's own instrumentation is therefore reading the lie described above. What *was*
+measured live is the state machine: the sound list across mute/unmute, pause/resume and the
+unlock hook, with zero errors. Whether anything is audible on a real Android device is the standing
+limitation on every audio claim in this file.
 - **Phaser 4 typing gap:** `Phaser.Sound.BaseSound`'s `.d.ts` omits `mute`/`setMute()`/`volume`/`loop` even
   though every concrete backend (WebAudio, HTML5, NoAudio) implements them identically (confirmed in
   `node_modules/phaser/src/sound/*`, and documented in the `audio-and-sound` skill) — `audio.ts` works
@@ -7717,6 +7766,11 @@ own module graph (e.g. a Playwright script) resolves to a *different* module ins
 WebAudio's `mute`/`volume` are backed by real `AudioParam` automation (`gain.setValueAtTime(...)`) — reading
 the value back synchronously in the same tick after setting it can return the stale value in headless
 Chromium (no real audio render thread ticking); wait ~100–300ms before asserting on it in tests.
+**⚠ And waiting does not help at all while the context is `suspended`**, which is a hidden tab's
+permanent state and Android's state until the first touch: there is no audio thread to apply the
+automation, so the value is never written and the getter goes on reporting the old one indefinitely.
+Any `game.sound.mute` read taken under this harness is that lie — see "Three Ways To Be Silent For A
+Session", which is a game bug found through exactly this property rather than a testing artefact.
 
 ## Build Guards & Asset Policy
 
@@ -14116,6 +14170,13 @@ App bugs:
   properties can't catch this (those aren't touched by which camera renders them); it only showed up in an
   actual screenshot. → "Responsive Layout" (two-camera split: UI on a dedicated always-1:1 `uiCamera`,
   excluded from `cameras.main` via `.ignore()`)
+- **⚠ Three ways to be silent for a whole session**, found by checking this game against another
+  project's Android certification failure (*"MUST respect the YouTube mute button… complete
+  silence"*): a mute written while the `AudioContext` is suspended never lands and its getter lies
+  about it (Android is suspended from boot until the first touch, and nothing listened for
+  `UNLOCKED`); `RESUME` unmuted the manager whether or not YouTube was muted; and a track a pause
+  destroyed could never be brought back, so unmuting after a pause left the music gone for good.
+  → "Three Ways To Be Silent For A Session"
 
 Non-obvious platform facts (not bugs, but easy to get wrong again):
 
@@ -14164,4 +14225,7 @@ Testing-only gotchas (not app bugs — see "Audio Layer" for both):
     the live store from outside: drive the game through its scenes instead.
 - WebAudio's `mute`/`volume` are `AudioParam` automation — reading them back synchronously in the same
   tick after setting them can return the stale value in headless Chromium; wait ~100–300ms before
-  asserting on it.
+  asserting on it. **⚠ While the context is `suspended` waiting never helps**: there is no audio
+  thread, so the write is not applied and the getter reports the old value for as long as it stays
+  suspended — which is a hidden tab always, and Android until the player's first touch. That is not
+  only a testing artefact; see "Three Ways To Be Silent For A Session".

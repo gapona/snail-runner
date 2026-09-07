@@ -492,4 +492,78 @@ check('the loop is deterministic and its bars line up with its own tempo', () =>
   console.log(`    ${notes.length} notes, all inside ${(MUSIC_LENGTH_MS / 1000).toFixed(2)}s, deterministic`)
 })
 
+check('⚠ the YouTube mute button is obeyed live, and re-stated once the context can hear it', () => {
+  // **The certification requirement this guards is "Game MUST respect the YouTube mute button", and
+  // the way it is failed is total silence.** A game that reads `isAudioEnabled()` once at boot and
+  // bakes it is silent for the whole session whenever a Playable is opened from a muted feed —
+  // which on Android is routine. Nothing here had ever been asserted; this is the contract.
+  //
+  // Read as source, for `Preloader`'s reason: `audio.ts` imports `phaser` as a value, so none of it
+  // is reachable from Node.
+  const src = readFileSync('src/audio/audio.ts', 'utf8')
+
+  // 1. The boot value is a starting point, and the change event is what keeps it true.
+  assert.ok(/platformAudioEnabled = isAudioEnabled\(\)/.test(src), 'the platform mute is never read at boot')
+  assert.ok(
+    /AUDIO_ENABLED_CHANGE[\s\S]{0,200}platformAudioEnabled = enabled/.test(src),
+    'the platform mute is read once and baked — a session opened from a muted feed stays silent',
+  )
+  // 2. Both channels consult it on every play rather than at construction.
+  assert.ok(/function effectiveSound\(\)[\s\S]{0,200}platformAudioEnabled/.test(src), 'effects do not consult the platform mute')
+  assert.ok(/function effectiveMusic\(\)[\s\S]{0,200}platformAudioEnabled/.test(src), 'music does not consult the platform mute')
+
+  // 3. **One place sets the blanket mute, and it reads both platform facts.** `RESUME` used to set
+  // it `false` unconditionally, so a pause/resume cycle unmuted the manager whether or not YouTube
+  // was muted — a flag saying the opposite of what the platform asked for.
+  // Comment lines are stripped first: this file's own prose quotes the shape it rejects, and a
+  // check that reads the argument for a rule as an instance of breaking it measures nothing.
+  const isComment = (line) => {
+    const t = line.trim()
+
+    return t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')
+  }
+  const lines = src.split(/\r?\n/).filter((line) => !isComment(line))
+  const code = lines.join(' ')
+  const blanket = lines.map((line) => /soundManager\.mute = (.+)/.exec(line)).filter(Boolean).map((m) => m[1].trim())
+
+  assert.equal(blanket.length, 1, `the blanket mute is set in ${blanket.length} places; one of them will disagree`)
+  assert.ok(/platformAudioEnabled/.test(blanket[0]), 'the blanket mute ignores the YouTube mute button')
+  assert.ok(/platformPaused/.test(blanket[0]), 'the blanket mute ignores the platform pause')
+  // The control: the shipped-before shape, which is what this rejects.
+  assert.ok(!/soundManager\.mute = (true|false)/.test(code), 'the blanket mute is set to a literal again')
+
+  // 4. **⚠ And it is re-stated when the context is first able to hear anything.**
+  // `WebAudioSoundManager.mute` is an `AudioParam` at both ends — set with `setValueAtTime`, read
+  // back as `gain.value` — so on a suspended context (Android, every frame before the first touch)
+  // a write does not land and the getter lies. Measured live: after the platform's own `PAUSE`,
+  // whose first statement sets it, `game.sound.mute` reads false. `UNLOCKED` is the one moment it
+  // can be made true.
+  assert.ok(/Phaser\.Sound\.Events\.UNLOCKED/.test(src), 'nothing re-applies audibility when the audio context unlocks')
+  assert.ok(
+    /Phaser\.Sound\.Events\.UNLOCKED[\s\S]{0,120}applyAudibility\(\)/.test(src),
+    'the unlock hook does not re-apply the platform state',
+  )
+
+  // 5. **⚠ A track a pause destroyed comes back when it becomes audible, and used to be gone for
+  // the session.** Everything else here only *mutes* an instance that already exists, and `RESUME`
+  // restarted one only if it was audible at that instant — so YouTube muted, a pause, a resume, and
+  // then the player unmuting left nothing to unmute. Measured live before the fix: the manager's
+  // sound list stayed empty. One restart path, in the function every entry point goes through.
+  const restarts = lines.filter((line) => /playMusic\(currentMusicKey/.test(line))
+
+  assert.equal(restarts.length, 1, `the music is restarted from ${restarts.length} places; one of them will be missed`)
+  assert.ok(
+    /function applyAudibility\(\)[\s\S]{0,1200}playMusic\(currentMusicKey/.test(src),
+    'the one restart is not in applyAudibility, so an entry point that only mutes will lose the track',
+  )
+  // ...and the two the player drives reach it, or turning music back on after a pause does nothing.
+  for (const setter of ['setMusicVolume', 'setMusic']) {
+    assert.ok(
+      new RegExp(`export function ${setter}\\([\\s\\S]{0,400}applyAudibility\\(\\)`).test(src),
+      `${setter} only mutes, so it cannot bring a destroyed track back`,
+    )
+  }
+  console.log(`    one blanket mute (${blanket[0]}), re-stated on UNLOCKED, one path back to a playing track`)
+})
+
 console.log(`${passed} checks passed`)
