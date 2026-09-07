@@ -30,7 +30,7 @@ import {
 } from '../src/run/ramp.ts'
 import { createPlayerState, flightHeight, jump, launch, stepPlayer } from '../src/run/playerMotion.ts'
 import { bodyBand, createObstacle, hits, placeRunObstacles } from '../src/run/obstacles.ts'
-import { JUMP_APEX, JUMP_GRAVITY, JUMP_LAUNCH_V, OBSTACLE_BANDS, PLAYER_BODY_H, ROAD_EDGE } from '../src/run/constants.ts'
+import { JUMP_APEX, JUMP_GRAVITY, JUMP_LAUNCH_V, OBSTACLE_BANDS, PLAYER_BODY_H, PLAYER_WIDTH, ROAD_EDGE, MAX_ATTAINABLE_SPEED } from '../src/run/constants.ts'
 import { createRng } from '../src/race/rng.ts'
 import { placeFormations } from '../src/run/formations.ts'
 
@@ -60,11 +60,25 @@ check('RAMP_LAUNCH_V puts the apex exactly at RAMP_APEX, through the game\'s one
   )
 })
 
+/**
+ * How much of a ramp's flight must clear the tall barrier, as a fraction.
+ *
+ * **Not 1, and not the 12.7% that was reported.** A ramp that cleared a `blocking` obstacle for its
+ * whole flight would be a free pass through the one class a jump cannot answer; one that cleared it
+ * for an eighth is a promise the picture makes and the model breaks. A little under half is a
+ * window the player can see and aim at — measured at 49.3% on the shipped constants, held at 0.35
+ * so a re-tuned apex or body height has room before this has to be re-argued.
+ */
+const RAMP_CLEARS_BLOCKING = 0.35
+
 check('⚠ a tumbling snail is hittable where it is DRAWN, not where an upright one would be', () => {
-  // **The drawn box stopped being the collision box the moment this spin was added.** `PlayerView`
-  // turns the sprite about its bottom-centre origin, so a tumbling snail hangs below its own feet --
-  // at half a turn, entirely below them -- while `hits` went on testing the upright band. Reported
-  // as tumbling off a ramp into a tall barrier and taking no damage.
+  // **The drawn box stopped being the collision box the moment this spin was added**, and `hits`
+  // went on testing the upright band -- reported as tumbling off a ramp into a tall barrier and
+  // taking no damage. The rectangle is the drawn one now, at whatever angle it is drawn at.
+  //
+  // **⚠ And it turns about the body's CENTRE, which is the correction the second report bought.**
+  // It used to turn about the feet, so the body swung 310 units below its own ground point and a
+  // ramp could not clear a tall barrier at all. See `bodyBand`.
   const wall = createObstacle({ id: 1, z: 0, offsetX: 0, halfWidths: 0.2, kind: 'blocking' })
   const T = RAMP_AIR_MS / 1000
   let upright = 0
@@ -91,13 +105,68 @@ check('⚠ a tumbling snail is hittable where it is DRAWN, not where an upright 
 
   assert.equal(flat.low, 100)
   assert.equal(flat.high, 100 + PLAYER_BODY_H)
-  // And half a turn hangs the whole body below the feet, which is what is drawn.
+  // **Half a turn is the same box upside down, which about a centre is the same box.** About the
+  // feet it was `[y - h, y]` — the whole creature below its own ground point — and that is the
+  // arrangement this replaces.
   const over = bodyBand({ offsetX: 0, y: 100, spinDegrees: 180 })
 
-  assert.ok(Math.abs(over.high - 100) < 1e-9 && Math.abs(over.low - (100 - PLAYER_BODY_H)) < 1e-9)
+  assert.ok(Math.abs(over.low - 100) < 1e-9 && Math.abs(over.high - (100 + PLAYER_BODY_H)) < 1e-9)
+  // A quarter turn is the widest the body ever hangs, and it is half the difference between the two
+  // sides of the box rather than a whole body height.
+  const side = bodyBand({ offsetX: 0, y: 100, spinDegrees: 90 })
+
+  assert.ok(Math.abs(side.low - (100 + PLAYER_BODY_H / 2 - PLAYER_WIDTH / 2)) < 1e-9, 'a quarter turn is not the width on its side')
   console.log(
     `    over a real flight: upright ${(upright / samples * 100).toFixed(0)}% hittable, tumbling ${(tumbling / samples * 100).toFixed(0)}%`,
   )
+})
+
+check('⚠ a ramp is the answer to the barrier a jump cannot pass', () => {
+  // **This is the report**: a tall barrier should be clearable off a ramp, and it was not. The apex
+  // has cleared `HIGHEST_BAND` since ramps shipped — what did not was the *flight*, because the
+  // tumble turned about the snail's feet and swung its body 310 units below them (see `bodyBand`).
+  // So the creature was drawn a body's height over the barrier and hit it anyway.
+  //
+  // What is asserted is the share of the flight that clears, because "the apex clears it" is a
+  // statement about one instant and a player crosses a barrier over many.
+  const wall = createObstacle({ id: 1, z: 0, offsetX: 0, halfWidths: 0.2, kind: 'blocking' })
+  const T = RAMP_AIR_MS / 1000
+  const samples = 400
+  let clear = 0
+  let feetClear = 0
+  let footPivotClear = 0
+
+  for (let i = 0; i <= samples; i++) {
+    const t = (i / samples) * T
+    const y = flightHeight(RAMP_LAUNCH_V, t)
+    const vy = RAMP_LAUNCH_V - JUMP_GRAVITY * t
+    const spin = spinAngle({ y, vy, grounded: false, flightV0: RAMP_LAUNCH_V, flightSpins: RAMP_SPINS })
+    const radians = (spin * Math.PI) / 180
+    // The control: the same rectangle turned about the bottom-centre origin, which is what shipped.
+    const foot = Math.abs((PLAYER_WIDTH / 2) * Math.sin(radians))
+    const crown = PLAYER_BODY_H * Math.cos(radians)
+    const footLow = y + Math.min(-foot, foot, crown - foot, crown + foot)
+
+    if (!hits({ offsetX: 0, y, spinDegrees: spin }, wall)) clear++
+    if (y > OBSTACLE_BANDS.blocking.yHigh) feetClear++
+    if (footLow > OBSTACLE_BANDS.blocking.yHigh) footPivotClear++
+  }
+
+  const share = clear / samples
+  const wasShare = footPivotClear / samples
+
+  assert.ok(share >= RAMP_CLEARS_BLOCKING, `a ramp clears the tall barrier for ${(share * 100).toFixed(1)}% of its flight`)
+  // **And the control is the arrangement that was reported**, which has to be visibly worse or this
+  // check is measuring nothing.
+  assert.ok(wasShare < RAMP_CLEARS_BLOCKING, `the foot-pivoted box already cleared for ${(wasShare * 100).toFixed(1)}%`)
+  // Not all of it: a ramp taken with a barrier at the wrong moment still costs a life, which is what
+  // stops it being a free pass. The window is what makes it *possible*, not automatic.
+  assert.ok(share < 0.8, 'a ramp clears a tall barrier for almost its whole flight — it is a free pass')
+  console.log(
+    `    a ramp clears the tall barrier for ${(share * 100).toFixed(1)}% of its flight` +
+      ` (feet alone ${((feetClear / samples) * 100).toFixed(1)}%, pivoted on the feet it was ${(wasShare * 100).toFixed(1)}%)`,
+  )
+  console.log(`    at ${MAX_ATTAINABLE_SPEED.toFixed(0)} u/s that window is ${(share * (RAMP_AIR_MS / 1000) * MAX_ATTAINABLE_SPEED).toFixed(0)} units of road`)
 })
 
 check('it is a different verb: the apex clears every obstacle band, a jump\'s does not', () => {

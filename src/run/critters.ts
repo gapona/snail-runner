@@ -80,7 +80,7 @@ import {
  * critter therefore cannot eat the warning every obstacle row in the game is spaced against — see
  * `critterWarningMs`, which measures what it actually leaves.
  */
-export const BEETLE_SPEED = SPEED_BASE * 0.35
+export const CRITTER_BASE_SPEED = SPEED_BASE * 0.35
 
 /**
  * How much of a jump still clears a bug, as a fraction of the flight.
@@ -118,7 +118,7 @@ export const CRITTER_JUMP_WINDOW = 0.45
  * apex; and a row that forces a lateral gap is met on the ground, where the bug is dodged instead.
  *
  * **What is actually true is more surprising, and it is measured rather than argued.** Widening a
- * bug barely costs the road at all, because `BEETLE_MAX_OFFSET` shrinks with it — a wider bug
+ * bug barely costs the road at all, because `GROUND_MAX_OFFSET` shrinks with it — a wider bug
  * cannot run near the verge, so it always straddles the middle and leaves asphalt on both sides.
  * Over a real lap's 48 rows against 21 lanes:
  *
@@ -136,7 +136,7 @@ export const CRITTER_JUMP_WINDOW = 0.45
  * barrier in the game, and this project's own finding is that type reads by aspect before contour.
  * Past here it stops reading as a creature and starts reading as a bar laid across the road.
  */
-export const BEETLE_ROAD_SHARE = 0.6
+export const GROUND_ROAD_SHARE = 0.6
 
 /**
  * How big a bug is, in world units — **solved from those two bounds, not picked.**
@@ -160,9 +160,20 @@ export const BEETLE_ROAD_SHARE = 0.6
  * the darkest thing on the road (57 lightness against 134 and 120), it has legs and two pale eyes,
  * and it is the only object in the frame moving against the road rather than with it.
  */
-export const BEETLE_HALF_WIDTHS = ROAD_EDGE * BEETLE_ROAD_SHARE - PLAYER_HALF_WIDTHS
-export const BEETLE_WIDTH = BEETLE_HALF_WIDTHS * 2 * ROAD_WIDTH
-export const BEETLE_HEIGHT = JUMP_APEX * (1 - CRITTER_JUMP_WINDOW ** 2)
+export const GROUND_MAX_HALF_WIDTHS = ROAD_EDGE * GROUND_ROAD_SHARE - PLAYER_HALF_WIDTHS
+export const GROUND_MAX_WIDTH = GROUND_MAX_HALF_WIDTHS * 2 * ROAD_WIDTH
+
+/**
+ * The tallest a kind that must be jumpable may be.
+ *
+ * **⚠ These three were named `BEETLE_*` and the beetle is gone; the RULE is not.** They were never
+ * one creature's numbers — they are the bounds a ground kind lives inside, and the beetle was
+ * simply the extreme case of them: the widest a bug may be before the snail cannot get past, and
+ * the tallest before `CRITTER_JUMP_WINDOW` of a flight stops clearing it. A kind may be shorter or
+ * narrower; none may exceed these. Renamed rather than deleted, because a constant called
+ * `BEETLE_HEIGHT` in a game with no beetle is a name that lies.
+ */
+export const GROUND_MAX_HEIGHT = JUMP_APEX * (1 - CRITTER_JUMP_WINDOW ** 2)
 
 /**
  * The height band a bug occupies, in world units.
@@ -183,7 +194,7 @@ export const BEETLE_HEIGHT = JUMP_APEX * (1 - CRITTER_JUMP_WINDOW ** 2)
  * mascot costs nothing either: the snail's separation was never carried by height, it is carried by
  * being the only saturated thing in the frame.
  */
-export const BEETLE_BAND = { yLow: 0, yHigh: BEETLE_HEIGHT } as const
+export const GROUND_MAX_BAND = { yLow: 0, yHigh: GROUND_MAX_HEIGHT } as const
 
 /**
  * How deep along the track a bug is, in world units.
@@ -250,7 +261,7 @@ export const CRITTER_FIRST_Z = SEGMENT_LENGTH * 120
 export const MAX_CRITTERS = 14
 
 /** The furthest from the centreline a bug may run, so the whole of it is on the road. */
-export const BEETLE_MAX_OFFSET = ROAD_EDGE - BEETLE_HALF_WIDTHS
+export const GROUND_MAX_OFFSET = ROAD_EDGE - GROUND_MAX_HALF_WIDTHS
 
 
 /* ------------------------------------------------------------------ *
@@ -318,9 +329,28 @@ export const BEE_ROAD_SHARE = 0.35
  * the same rate are told apart only by their pictures, and the one that is about to cost the player
  * a jump should be the one arriving faster.
  */
-export const BEE_SPEED = BEETLE_SPEED * 1.6
+export const BEE_SPEED = CRITTER_BASE_SPEED * 1.6
 
-export type CritterKind = 'beetle' | 'ladybird' | 'spider' | 'frog' | 'bee' | 'wasp'
+/**
+ * ⚠ ONE KIND. The bestiary was six and is deliberately down to the frog.
+ *
+ * The other five — beetle, ladybird, spider, bee, wasp — were 3D renders, and measuring them
+ * against the frog's contour is what settled it: **five of the six had no contour at all.**
+ * `p5` of the outer line was 0.0 px on every one of them and the median was 0.0 on the bee and the
+ * wasp, i.e. the dark line the frog is drawn with simply is not there. They are Blinn-Phong renders
+ * with a shaded edge, not drawings, so bringing them to `INK_FRACTION` would not have been a
+ * normalisation — it would have been a restyle that still left a gradient interior beside the
+ * frog's flat one.
+ *
+ * The flying half of the design is therefore **temporarily absent**, and that is a real regression
+ * rather than a simplification: `OBSTACLE_BANDS` records that deleting the `overhead` class left
+ * "a jump taken when none was needed is free", and the bee was what put that cost back. Nothing
+ * punishes being airborne right now. `BEE_BAND`, `BEE_SPEED`, `BEE_CLEARANCE`, `fromModel`'s
+ * flying branch and `critterArt`'s `drawBee` are all kept for the replacements — and
+ * `verify:critters` asserts there are currently no flying kinds, so the day one is added the check
+ * fails and says the flying rules are live again and untested.
+ */
+export type CritterKind = 'frog' | 'bee' | 'hornet' | 'mosquito'
 
 export interface CritterSpec {
   band: { yLow: number; yHigh: number }
@@ -332,6 +362,17 @@ export interface CritterSpec {
   weight: number
   /** Whether its band leaves the road, i.e. whether it throws a mark on it. */
   flying: boolean
+  /**
+   * How it moves along the ground.
+   *
+   * `'walk'` advances a two-pose leg cycle and nothing else; `'hop'` adds `critterJump.ts`'s
+   * deformation and arc on top of the same two poses. It is a property of the kind rather than a
+   * flag read anywhere else -- `stepCritters` is untouched by it, so a hopping kind still runs in
+   * a straight line at a constant speed and is still hit by the same band. **The hop is what the
+   * creature LOOKS like, never what it can do**: a hitbox that rose with the animation would move
+   * while the player is committing to a lane.
+   */
+  gait?: 'walk' | 'hop'
 }
 
 /**
@@ -355,12 +396,75 @@ function fromModel(aspect: number, height: number, flying: boolean): Pick<Critte
 }
 
 /**
- * The tallest a kind that must be jumpable may be.
+ * A second drawn pose, used while the kind is at the top of its hop.
  *
- * The beetle's own height, and for the beetle's own reason: `CRITTER_JUMP_WINDOW` of a flight has to
- * still clear it. A ground kind may be shorter; none may be taller.
+ * **⚠ Only a kind whose deformation reads badly gets one, and the frog is the only one so far.**
+ * `critterJump.ts` builds a hop by deforming the single drawing, which is the cheap and correct
+ * answer for a compact creature — and the frog is drawn front-on with its legs splayed to the edges
+ * of the canvas, so compressing it drags the legs with the body. A real frog folds them. Measured on
+ * the first clip: at close range that read as one sprite being stretched rather than as an animal.
+ *
+ * Every number here is MEASURED and lives in `dev-assets/critter/critter-art.json`, written by
+ * `scripts/normalize-critter.py` when the pose pair is normalised together. They are copied rather
+ * than imported for the reason `UPGRADE_REFERENCE_MARKS` is: a TypeScript module cannot read a
+ * build report, and what keeps them honest is that the report is regenerated from the same sources.
+ *
+ * ── What the two poses share, and why the normalizer has to do it in one pass ──────────────────
+ *
+ * THE CREATURE'S SCALE. The supplied drawings are not at the same size — the tucked pose is at
+ * 0.67 of the crouch's (eye span 288 px against 431). Delivered separately, the frog would change
+ * size the instant it left the ground.
+ *
+ * THE CONTOUR, in absolute pixels: 3.73 px on the crouch and 3.69 px on the tuck.
  */
-export const GROUND_MAX_HEIGHT = BEETLE_HEIGHT
+export interface CritterAirPose {
+  /** World height of the drawn box, at the same creature scale as the ground pose. */
+  height: number
+  /** World width of it. Its own aspect, so the sprite is never stretched. */
+  width: number
+  /**
+   * Where the pose's centre of mass sits, as a fraction of its box measured UP from the bottom.
+   *
+   * **This is the anchor the swap is aligned on**, and it is the alpha centroid rather than a
+   * rigid landmark on the character. Both were measured: aligning on the eyes instead moves the
+   * base by 86.5 units against the centroid's 78.1, i.e. the two disagree by **8.4 units — 2.4% of
+   * the creature's height**. Below the size at which the choice is visible, so the one the brief
+   * names is the one used.
+   */
+  anchorFromBottom: number
+}
+
+/** The ground pose's own anchor, in the same terms. Measured the same way, in the same pass. */
+export const CRITTER_GROUND_ANCHOR: Partial<Record<CritterKind, number>> = { frog: 0.4328 }
+
+export const CRITTER_AIR_POSES: Partial<Record<CritterKind, CritterAirPose>> = {
+  frog: { height: 427.5, width: 567.2, anchorFromBottom: 0.53 },
+}
+
+/**
+ * How far the air pose's base sits below the ground pose's, with both anchors in the same place.
+ *
+ * **⚠ This is also WHEN the swap happens, and that is not a coincidence — it is the whole design.**
+ * Place the two poses so their anchors coincide and the tucked sprite's base ends up 78 units lower,
+ * because the tucked frog's feet hang below its body while the crouched frog's are flat on the
+ * ground. Swapping at the instant flight begins would therefore draw the feet 78 units UNDER the
+ * road for the first fifth of the hop.
+ *
+ * So the swap waits until the hop has lifted the creature by exactly that offset. At that moment
+ * the air pose's base is at ground level and its anchor is where the ground pose's anchor already
+ * was — **the position is continuous by construction, and there is nothing left to tune.** The tuck
+ * therefore occupies the top of the arc, which is where a frog is tucked anyway.
+ */
+export function tuckOffset(kind: CritterKind): number {
+  const air = CRITTER_AIR_POSES[kind]
+  const groundAnchor = CRITTER_GROUND_ANCHOR[kind]
+
+  if (!air || groundAnchor === undefined) return Infinity
+
+  const spec = CRITTER_KINDS[kind]
+
+  return air.anchorFromBottom * air.height - groundAnchor * (spec.band.yHigh - spec.band.yLow)
+}
 
 /**
  * Everything that differs between the kinds, in one table.
@@ -373,31 +477,117 @@ export const GROUND_MAX_HEIGHT = BEETLE_HEIGHT
  * **The aspects are the models' own**, measured by `poly_survey.py` and delivered by
  * `critter_render.py`; see `ART-SOURCES.md` for which model each is and under what licence.
  */
+/**
+ * A flyer's wings, measured off its supplied ASSEMBLED reference by `scripts/normalize-flyer.py`.
+ *
+ * Every number is a FRACTION, never a pixel offset: the delivered sprites are a different size from
+ * the reference they were read off, and the world box is a third size again. See ART-STYLE.md and
+ * `dev-assets/critter/critter-art.json`, which is the report these were copied from.
+ */
+export interface CritterWings {
+  /**
+   * The hinge, as a fraction of the BODY sprite -- x from its left edge, y from its top.
+   *
+   * **⚠ Of the body, and the two things that made an earlier version say "never of the body" are
+   * both answered rather than avoided.** That version placed the wing's tip at a fraction of the
+   * world box, on the argument that the material and the reference disagree about the body: the
+   * mosquito's material body is 292x378 where its reference body is 181x461, 0.77:1 against 0.39:1.
+   * True -- and the world box is no escape from it, because the box has to be *rebuilt* from the
+   * body to be used, and rebuilding it inherits exactly that disagreement. Measured, our mosquito
+   * covered a quarter of the rebuilt box's width where the reference's covers an eighth, and wings
+   * laid at absolute box fractions sat in clear air beside the thorax.
+   *
+   * So nothing is transferred across the two drawings except the hinge's HEIGHT, which means the
+   * same thing in both (how far down the body the wing is mounted). Its x is measured on the
+   * shipped body sprite itself: the thorax's own drawn edge at that height, walked out from the
+   * centreline so a detached antenna cannot be mistaken for the body, then set back by
+   * `WING_TUCK` of the wing's span so the proximal arm goes where the reference keeps it -- behind
+   * the creature. See `scripts/normalize-flyer.py`.
+   */
+  hingeInBody: readonly [number, number]
+  /** Where the hinge sits in the WING's own sprite, same convention. */
+  pivot: readonly [number, number]
+  /** The wing's resting rotation in degrees, relative to the angle its sprite is drawn at. */
+  restDeg: number
+  /**
+   * The wing sprite's width against the body's.
+   *
+   * Straight from the material, where the two are one drawing at one scale -- so it is exact and
+   * needs nothing reconciled between the two references.
+   */
+  wingOverBody: number
+  /** The wing sprite's own proportion, so it is never stretched. */
+  wingAspect: number
+  /** Where the body sits in the world box, vertically, and how tall it is drawn. Fractions of it. */
+  bodyTop: number
+  bodyHeight: number
+  /** The body sprite's own proportion. Its width follows this, never the box. */
+  bodyAspect: number
+}
+
+export const CRITTER_WINGS: Partial<Record<CritterKind, CritterWings>> = {
+  bee: { hingeInBody: [0.6477, 0.2865], pivot: [0.0353, 0.6002], restDeg: -6.43, wingOverBody: 1.7085, wingAspect: 1.9318, bodyTop: 0.0634, bodyHeight: 0.9366, bodyAspect: 0.5182 },
+  hornet: { hingeInBody: [0.6195, 0.3385], pivot: [0.0398, 0.5732], restDeg: -4.26, wingOverBody: 1.8432, wingAspect: 2.6852, bodyTop: 0.0, bodyHeight: 1.0, bodyAspect: 0.6146 },
+  mosquito: { hingeInBody: [0.3781, 0.1328], pivot: [0.0384, 0.6009], restDeg: 0.78, wingOverBody: 1.4286, wingAspect: 4.1414, bodyTop: 0.0129, bodyHeight: 0.9871, bodyAspect: 0.7474 },
+}
+
 export const CRITTER_KINDS: Record<CritterKind, CritterSpec> = {
-  // Geometry, not a model: 4.67:1 is not a proportion any creature has. The big one.
-  beetle: {
-    band: BEETLE_BAND,
-    halfWidths: BEETLE_HALF_WIDTHS,
-    speed: BEETLE_SPEED,
-    maxOffset: BEETLE_MAX_OFFSET,
-    weight: 3,
+  /**
+   * The frog: the whole bestiary, for now.
+   *
+   * Full height (the ground ceiling), 1.94:1 from its own art, and the only kind that hops — see
+   * `critterJump.ts`. Its `weight` is meaningless with one kind and is kept because `pickKind`
+   * reads it and a second kind is expected within days.
+   *
+   * **⚠ 1.94, and the number moved because the ART did.** The kind was authored against a
+   * Quaternius model at 2.33:1; it now ships a supplied front-view drawing whose own content box is
+   * 1.94:1 (`dev-assets/critter/critter-art.json`, measured by `normalize-critter.py`). Leaving the
+   * old aspect would stretch the sprite 20% wider than it is drawn on **every frame** — the failure
+   * `obstacle-low-0` shipped at 41%, because `CritterSprites` calls `setDisplaySize(rect.w, rect.h)`
+   * and the world box, not the texture, decides the box.
+   */
+  frog: {
+    ...fromModel(1.92, GROUND_MAX_HEIGHT, false),
+    speed: CRITTER_BASE_SPEED * 1.1,
+    // ⚠ Much the heaviest weight in the table, and it has to be: with one ground kind against three
+    // flyers, the ground kind is what keeps the flyer share under the 45% the design allows. A road
+    // where half of everything forbids jumping is a road with no jump in it.
+    weight: 8,
     flying: false,
+    gait: 'hop',
   },
-  // A ladybird trundles: the slowest thing on the road, and the most common of the models.
-  ladybird: { ...fromModel(2.64, 260, false), speed: BEETLE_SPEED * 0.85, weight: 2, flying: false },
-  // A spider scuttles — wide, because its legs are, and the quickest of the ground kinds.
-  spider: { ...fromModel(3.05, 300, false), speed: BEETLE_SPEED * 1.4, weight: 2, flying: false },
-  // A frog is the chunkiest ground kind: full height, and it comes at you in a straight line.
-  frog: { ...fromModel(2.33, GROUND_MAX_HEIGHT, false), speed: BEETLE_SPEED * 1.1, weight: 2, flying: false },
-  bee: { ...fromModel(2.28, BEE_HEIGHT, true), speed: BEE_SPEED, weight: 2, flying: true },
-  // A wasp is the fastest thing in the frame — the sharpest version of "do not jump".
+
+  // ── The three flyers ────────────────────────────────────────────────────────────────────────
   //
-  // **⚠ Its height is its own rather than the bee's, and the contact sheet is why.** At 0.96:1 a
-  // wasp is nearly as tall as it is wide, so sharing the bee's 310 made it **298 units across — the
-  // smallest thing on the road, 29px on a phone** — and the kind that costs a jump cannot be the one
-  // hardest to see. Nothing bounds a flyer's height from above (its band's top is over the player's
-  // head at every jump), so the height is what gives, and the width follows the model as always.
-  wasp: { ...fromModel(0.96, BEE_HEIGHT * 1.8, true), speed: BEE_SPEED * 1.12, weight: 1, flying: true },
+  // One band for all three ([431, 741] — over a standing snail, under nothing), so every one of
+  // them is answered by STAYING DOWN and none is jumpable. What separates them is speed, rarity,
+  // wingbeat and silhouette, in that order of how far away it reads.
+  //
+  // **The ordering is the design and it is asserted rather than assumed**: the bee is the slowest
+  // and the commonest, the hornet faster and rarer, the mosquito the fastest and the rarest. A
+  // player meeting one should be able to price it before they can make out what it is.
+
+  /** Round, yellow, placid. The flyer a player meets first and most often. */
+  bee: { ...fromModel(1.7049, BEE_HEIGHT, true), speed: CRITTER_BASE_SPEED * 1.6, weight: 3, flying: true },
+
+  /** Armoured, orange, red-eyed. Faster and rarer — the one that costs you for jumping. */
+  hornet: { ...fromModel(2.2865, BEE_HEIGHT, true), speed: CRITTER_BASE_SPEED * 1.85, weight: 2, flying: true },
+
+  /**
+   * Dark and thin. The fastest thing in the frame and the rarest.
+   *
+   * Boxed on its assembled span it is the narrowest of the three, which is what the brief asks
+   * for and which nothing had to be special-cased to get: its wings are the shortest relative to
+   * its body.
+   *
+   * **⚠ Every flyer's aspect here is the aspect of the ASSEMBLY the game draws** — body plus two
+   * mirrored wings, measured by `scripts/normalize-flyer.py` on the same composite
+   * `scripts/silhouette-sheet.py` builds and `CritterSprites.placeWings` mirrors. It is not the
+   * reference's own assembled aspect: the wings hang on our body now, and our body is not the
+   * reference's. `CritterSprites` stretches a texture onto this box, so an aspect that is not the
+   * drawing's is a distortion on every frame — `obstacle-low-0` shipped at 41% of exactly that.
+   */
+  mosquito: { ...fromModel(1.8483, BEE_HEIGHT, true), speed: CRITTER_BASE_SPEED * 2.1, weight: 1, flying: true },
 }
 
 export const CRITTER_KIND_IDS = Object.keys(CRITTER_KINDS) as CritterKind[]
@@ -412,7 +602,11 @@ export function chooseCritterKind(rng: () => number): CritterKind {
     if (roll <= 0) return kind
   }
 
-  return 'beetle'
+  // ⚠ The first key of the table, never a kind by name. A hardcoded fallback is one more place a
+  // deleted kind survives -- this one said 'beetle' and stopped compiling the moment the table
+  // lost it, which is the good outcome; the bad one is where such a default is a string in a
+  // `Record` that still typechecks.
+  return CRITTER_KIND_IDS[0]
 }
 
 /**
@@ -528,6 +722,42 @@ export function critterTravel(critter: Pick<Critter, 'kind'>, deltaMs: number): 
  * the correction `resolveObstacles` records for rocks: three frames of overlap is time enough to
  * slide sideways into something, and being inside it at any point is what the player sees.
  */
+/**
+ * The critters whose midpoint the player crosses this frame, for scoring how close the pass was.
+ *
+ * **Non-mutating, and separate from `resolveCritters` on purpose.** That function owns *damage* —
+ * it settles a critter and reports the one that struck — and folding a reward into it would give
+ * one function two jobs whose guards differ: a hit is refused during the grace after another hit,
+ * where a close pass is simply not scored at all. Two callers, two questions, one sweep each.
+ *
+ * The **midpoint** rather than the whole crossing, because that is the instant the two are closest
+ * in `z` and therefore the instant "how close did I pass" is actually asking about. Swept over the
+ * frame's own travel, so a dropped frame cannot step over it.
+ */
+export function critterMidpointCrossings(
+  field: CritterField,
+  playerFrom: number,
+  playerTo: number,
+  deltaMs: number,
+  out: Critter[] = [],
+): Critter[] {
+  out.length = 0
+
+  for (const critter of field.critters) {
+    if (critter.resolved) continue
+
+    const middle = critter.z + CRITTER_DEPTH / 2
+    const travel = critterTravel(critter, deltaMs)
+    // Its midpoint at the start of the frame and at the end, against the player at each.
+    const before = middle + travel - playerFrom
+    const after = middle - playerTo
+
+    if (before > 0 && after <= 0) out.push(critter)
+  }
+
+  return out
+}
+
 export function resolveCritters(
   field: CritterField,
   body: Body,
@@ -568,18 +798,19 @@ export function resolveCritters(
  * warning. `verify:critters` holds this against `REACTION_MS` at every speed the run can reach,
  * including a Fever, which is where the closing speed is highest.
  */
-export function critterWarningMs(runSpeed: number, kind: CritterKind = 'beetle'): number {
+export function critterWarningMs(runSpeed: number, kind: CritterKind = CRITTER_KIND_IDS[0]): number {
   return (CRITTER_SPAWN_AHEAD_Z / (runSpeed + CRITTER_KINDS[kind].speed)) * 1000
 }
 
 /**
  * Whether a critter of `kind` is cleared by a body at height `y`, in its own lane.
  *
- * **The two kinds answer this in opposite directions and that is the whole design**: a beetle is
- * cleared by going up, a bee by staying down. Neither is a flag — both are the same interval
- * overlap against different numbers.
+ * **A ground kind and a flying kind answer this in opposite directions, and that is the whole
+ * design**: one is cleared by going up, the other by staying down. Neither is a flag — both are the
+ * same interval overlap against different numbers, which is why this function needs no branch and
+ * why it still reads correctly with the flying half of the bestiary temporarily absent.
  */
-export function clearedAt(y: number, kind: CritterKind = 'beetle'): boolean {
+export function clearedAt(y: number, kind: CritterKind = CRITTER_KIND_IDS[0]): boolean {
   const spec = CRITTER_KINDS[kind]
 
   return !hits({ offsetX: 0, y }, { offsetX: 0, halfWidths: spec.halfWidths, ...spec.band })

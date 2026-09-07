@@ -46,10 +46,10 @@ import { wrapZ } from '../road/project'
 import { PLAYER_BODY_H, PLAYER_HALF_WIDTHS, readableScale, ROAD_EDGE } from './constants'
 import type { Obstacle } from './obstacles'
 
-export type PickupKind = 'fruit' | 'shield' | 'coin'
+export type PickupKind = 'fruit' | 'shield' | 'heal' | 'coin'
 
 /** Every kind, in the order the art and the tests walk them. */
-export const PICKUP_KINDS: readonly PickupKind[] = ['fruit', 'shield', 'coin']
+export const PICKUP_KINDS: readonly PickupKind[] = ['fruit', 'shield', 'heal', 'coin']
 
 /**
  * How often each kind is laid down, as relative weights — see the header for the argument.
@@ -57,11 +57,74 @@ export const PICKUP_KINDS: readonly PickupKind[] = ['fruit', 'shield', 'coin']
  * Fruit at 5 of 15 is one pickup in three, so `FEVER_FRUIT_TARGET` fruit is roughly 24 pickups of
  * road. That is the number both halves of the pacing are tuned against, and moving either without
  * the other moves how often a Fever happens.
+ *
+ * **⚠ The weight is per CHAIN, not per pickup, which is what makes a `1` here very nearly nothing.**
+ * `placeFormations` rolls the kind once per chain and a coin chain is 6-12 long while a shield or a
+ * medkit is a single, so a lap of ~15 chains lays about 76 coins, 19 fruit — and, at weight 1, *one*
+ * of the two survivability pickups. Measured on the shipped seed at 1: **4 shields and 0 medkits on
+ * the whole lap**, i.e. a pickup the player would meet about once a run. `heal` is 2 for that reason
+ * and because it is the *conditional* one: `canTakeHeal` says whether it is worth anything, and one
+ * that is not is drawn inert rather than collected — see `UNAVAILABLE_ALPHA`.
+ *
+ * **What that costs is stated rather than hidden.** A fourth kind dilutes the other three, and
+ * `COINS_PER_LAP` and `PER_LAP.fruit` are *measured* constants the ad reward, the stage clear bonus
+ * and every quest target are derived from — so they were re-measured over forty laps rather than
+ * left to drift. Fruit keeps its share of the table, which is what `FEVER_FRUIT_TARGET` is tuned
+ * against.
  */
 export const PICKUP_WEIGHTS: Record<PickupKind, number> = {
   fruit: 5,
-  shield: 2,
+  shield: 1,
+  heal: 3,
   coin: 8,
+}
+
+/**
+ * How a pickup is drawn while the run has no room for what it gives, as a fraction of full alpha.
+ *
+ * ## ⚠ It used to be deleted instead, and that is what "I never see medkits" was
+ *
+ * `MAX_SHIELDS` is 1 and `RUN_LIVES` is the cap on carelessness, so a shield or a medkit can be
+ * worth **nothing** at the moment it is reached. The first answer was to take it off the road:
+ * `RunScene.withholdFull` marked one `taken` at exactly the draw distance, on the argument that a
+ * pickup driven through for no effect does not teach "you are full", it teaches "pickups are
+ * unreliable" — and that a pickup which was never there teaches neither.
+ *
+ * **The second half of that argument is the part that was wrong, and it was reported twice.** A
+ * player who has not been hit is at full lives for the whole run, so they met **no medkits at all**
+ * and had no way to learn the thing exists. And because the decision was taken 300 segments — 600m
+ * — ahead, every medkit within 600m at the moment of a hit had already been deleted: at `SPEED_CAP`
+ * that is 17 seconds of road before the first one could appear.
+ *
+ * So it is neither taken nor deleted: it is **drawn dimmed and not collected**, which is this
+ * project's own rule about a control that cannot do anything — *a button that cannot do anything
+ * says so by being disabled rather than by vanishing: a control that disappears takes its own
+ * explanation with it* (`Garage.act`). Driving through a visibly greyed medkit is not "the game
+ * dropped it", it is "that one is not for me right now", which is a lesson rather than a doubt.
+ *
+ * What it costs is that a pickup the player cannot use is still on the road competing for
+ * attention, and that is what this number is for: at 0.3 it reads as present and inert rather than
+ * as a reward. There is no state anywhere — `withholdFull` and its per-frame pass are **gone**, and
+ * the question is asked where it is answered, by the renderer and by the collector, from the run's
+ * own live state. Nothing can go stale, and nothing appears or vanishes: the dimming crossfades
+ * with the player's own lives.
+ */
+export const UNAVAILABLE_ALPHA = 0.3
+
+/**
+ * The kinds this run has no room for right now.
+ *
+ * **Both members of the survivability class, asked separately**, because they run out at different
+ * times: a full-health run with no shield may take a shield and not a medkit. Everything else is
+ * always worth taking, so the set is usually empty and the two callers pay a `Set.has` for it.
+ */
+export function uselessKinds(room: { canHeal: boolean; canShield: boolean }): ReadonlySet<PickupKind> {
+  const useless = new Set<PickupKind>()
+
+  if (!room.canHeal) useless.add('heal')
+  if (!room.canShield) useless.add('shield')
+
+  return useless
 }
 
 /**
@@ -275,17 +338,58 @@ export function sideAwayFrom(
   return weight > 0 ? -1 : 1
 }
 
-/** Picks a kind from `PICKUP_WEIGHTS`. */
-export function chooseKind(rng: () => number): PickupKind {
+/**
+ * Deals chain kinds so that each one arrives as evenly as its weight allows.
+ *
+ * ## ⚠ Dealt on a schedule, not drawn per chain, and that is the whole report
+ *
+ * Reported: *the medkits come four almost in a row and then there are none at all — can it be even,
+ * especially in endless?* That is exactly what an independent weighted draw does. `PICKUP_WEIGHTS`
+ * gives `heal` an eighth of the chains, and an eighth of ~33 chains rolled independently produces
+ * clusters and droughts by construction: the **rate** is right and no window of the lap is.
+ *
+ * **A lap is the only sample anybody experiences**, so "often" and "rarely" have to be true over one
+ * rather than in the limit — and in endless, where the player is on the road for many laps, a
+ * two-kilometre drought is a mechanic they conclude does not exist.
+ *
+ * ## Smooth weighted round-robin, not a shuffled bag
+ *
+ * A shuffled deck was the first fix and it is only half of one: it bounds the *count* per pass —
+ * exactly `PICKUP_WEIGHTS[kind]` per deck — and says nothing about where inside the pass they land,
+ * so two medkits still deal back to back and four still meet across a reshuffle. Measured over 40
+ * laps: a median gap of 513m, a worst of **2065m**, and clusters of three.
+ *
+ * So the deal is a scheduler instead. Each kind accumulates credit equal to its weight per chain,
+ * the richest is dealt and pays the total back, and the result is the most even interleaving the
+ * ratios admit — the same arithmetic a weighted round-robin balancer uses. The **phase is seeded**
+ * so two laps are not the same order; the *spacing* is a property of the weights and not of luck.
+ *
+ * The ratios are exactly `PICKUP_WEIGHTS`, so what a lap contains is unchanged — `COINS_PER_LAP`,
+ * `PER_LAP.fruit` and every quest target derived from them keep their means and lose variance.
+ */
+export function createKindDeck(rng: () => number): () => PickupKind {
   const total = PICKUP_KINDS.reduce((sum, kind) => sum + PICKUP_WEIGHTS[kind], 0)
-  let roll = rng() * total
+  // A seeded starting credit per kind, which is the only randomness left: it decides *which* chain
+  // of the cycle each kind falls on, and nothing decides how far apart they are.
+  const credit = new Map<PickupKind, number>(PICKUP_KINDS.map((kind) => [kind, Math.floor(rng() * total)]))
 
-  for (const kind of PICKUP_KINDS) {
-    roll -= PICKUP_WEIGHTS[kind]
-    if (roll <= 0) return kind
+  return () => {
+    let best: PickupKind = PICKUP_KINDS[0] ?? 'coin'
+    let bestCredit = -Infinity
+
+    for (const kind of PICKUP_KINDS) {
+      const next = (credit.get(kind) ?? 0) + PICKUP_WEIGHTS[kind]
+
+      credit.set(kind, next)
+      if (next > bestCredit) {
+        best = kind
+        bestCredit = next
+      }
+    }
+    credit.set(best, bestCredit - total)
+
+    return best
   }
-
-  return 'coin'
 }
 
 /**

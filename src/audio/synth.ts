@@ -180,3 +180,54 @@ export function toBase64(bytes: Uint8Array): string {
 export function renderToneUri(spec: ToneSpec): string {
   return `data:audio/wav;base64,${toBase64(encodeWav(renderSamples(spec)))}`
 }
+
+/** One scheduled voice in a track: a tone, and where it starts. */
+export interface TrackNote {
+  atMs: number
+  tone: ToneSpec
+}
+
+/**
+ * Mixes scheduled tones into one buffer of a fixed length, wrapping anything that overruns the end.
+ *
+ * **The wrap is what makes a loop a loop.** A track rendered by truncation ends on whatever the last
+ * note happened to be doing, so the join back to the start is a step — and a step in a waveform is
+ * a click, once per loop, forever. Folding a tail back onto the head means the sound crossing the
+ * seam is the *same* sound on both sides of it, which is the only way to get a seamless loop out of
+ * a fixed buffer without crossfading the whole thing.
+ *
+ * Clamped rather than normalised at the end: normalising makes the track's own loudness a function
+ * of its single loudest instant, so adding one bright note quietly turns everything else down.
+ * `verify:audio` measures the peak instead, which is the honest place to catch a mix that clips.
+ */
+export function renderTrack(
+  notes: readonly TrackNote[],
+  durationMs: number,
+  sampleRate: number = SAMPLE_RATE,
+): Float32Array {
+  const total = Math.max(1, Math.round((durationMs / 1000) * sampleRate))
+  const out = new Float32Array(total)
+
+  for (const note of notes) {
+    const voice = renderSamples(note.tone)
+    const start = Math.round((note.atMs / 1000) * sampleRate)
+
+    for (let i = 0; i < voice.length; i++) {
+      // The modulo is the wrap. `start` is already inside the buffer, so this only ever folds a
+      // tail — a note that began past the end would be a note nobody wrote.
+      out[(start + i) % total] += voice[i]
+    }
+  }
+  for (let i = 0; i < total; i++) out[i] = Math.max(-1, Math.min(1, out[i]))
+
+  return out
+}
+
+/** Renders a whole track to a `data:` URI, exactly as `renderToneUri` does for one tone. */
+export function renderTrackUri(
+  notes: readonly TrackNote[],
+  durationMs: number,
+  sampleRate: number = SAMPLE_RATE,
+): string {
+  return `data:audio/wav;base64,${toBase64(encodeWav(renderTrack(notes, durationMs, sampleRate), sampleRate))}`
+}

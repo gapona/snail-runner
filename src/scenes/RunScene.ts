@@ -3,13 +3,20 @@ import { HUD_DEPTH } from '../run/hudDepth'
 import * as Phaser from 'phaser'
 import { bindAction, bindSteering, type Steering } from '../platform/input'
 import { bindLayout } from '../ui/layout'
+import { launchOverlay } from '../ui/overlay'
 import { WorldView } from '../run/WorldView'
 import {
   addShield,
+  canTakeHeal,
+  heal,
+  canTakeShield,
+  earnBonus,
+  tally,
   eatFruit,
   createRunState,
   earnCoin,
   isRunOver,
+  revive,
   runSeconds,
   speedAfter,
   stepRun,
@@ -40,7 +47,10 @@ import {
   type PlayerDeath,
 } from '../run/playerDeath'
 import { THREAT_COLOR } from '../road/themes'
-import { getState, mutate } from '../save/store'
+import { distanceIndexOf } from '../run/worldDepth'
+import { isResumable, resolveSuspended, type SuspendedRun } from '../run/suspend'
+import { flush, getState, mutate } from '../save/store'
+import { earnCoins } from '../shop/coins'
 import { createSquashState, squashAt, squashOnLanding, squashOnLaunch, type SquashState } from '../run/squash'
 import { addFreeze, isFrozen, type Freezable } from '../run/hitstop'
 import { hits, placeRunObstacles, type Body, type Obstacle } from '../run/obstacles'
@@ -65,7 +75,10 @@ import {
   CRITTER_FIRST_Z,
   type CritterField,
 } from '../run/critters'
-import { reaches, type Pickup } from '../run/pickups'
+import { reaches, type Pickup,
+  type PickupKind,
+  uselessKinds,
+} from '../run/pickups'
 import { ARC_RELAY_NEAR_Z, ARC_RELAY_Z, chainPoints, placeFormations } from '../run/formations'
 import {
   placeRamps,
@@ -96,6 +109,7 @@ import {
   HITSTOP_MS,
   FEVER_MAGNET_RATE,
   FEVER_MAGNET_Z,
+  CONTINUE_GRACE_Z,
   HIT_INVULNERABLE_Z,
   JUMP_LAUNCH_V,
   KEYBOARD_POINT_SPEED,
@@ -105,11 +119,49 @@ import {
   PLAYER_Z,
   SPEED_BASE,
 } from '../run/constants'
-import { SEGMENT_LENGTH } from '../road/constants'
+import { DRAW_DISTANCE, SEGMENT_LENGTH } from '../road/constants'
 import { PICKUP_DETUNE_CENTS, streakDetuneCents, STREAK_STEPS } from '../audio/sfx'
 import { wrapZ } from '../road/project'
 import { playSfx } from '../audio/audio'
 import { SFX } from '../audio/sfx'
+import {
+  breakStreak,
+  createStreak,
+  lateralGap,
+  nearMissTier,
+  scoreNearMiss,
+  streakMultiplier,
+  type StreakState,
+} from '../run/nearMiss'
+import { nearMissDetuneCents, nearMissGain } from '../audio/sfx'
+import { critterMidpointCrossings, CRITTER_KINDS, type Critter } from '../run/critters'
+import { ROAD_WIDTH } from '../road/constants'
+import { applyTally, createTally, QUEST_KINDS, resolveQuestBoard } from '../run/quests'
+import {
+  announce,
+  createPlaque,
+  MILESTONE_COINS,
+  milestoneCrossed,
+  milestoneProgress,
+  type Plaque,
+} from '../run/rewards'
+import { bodyBand } from '../run/obstacles'
+import { feverSpeedFactor } from '../run/fever'
+
+/**
+ * One object the snail has just passed, and how closely.
+ *
+ * Buffered rather than scored on the spot because the unit being paid for is a *manoeuvre*: a row
+ * cleared by one hop is one decision, and three payments for it would say otherwise. See
+ * `settleManoeuvre`.
+ */
+interface PassedObject {
+  object: { offsetX: number; halfWidths: number; yHigh: number }
+  /** Clearance in road half-widths — lateral on the ground, vertical in the air. */
+  gap: number
+  /** How fast the two came together, as a multiple of the run's own speed. */
+  closing: number
+}
 
 /**
  * The run.
@@ -217,6 +269,16 @@ export class RunScene extends Phaser.Scene {
    */
   private invulnerableUntilDistance = 0
   /**
+   * How many of this run's coins the result screen has already paid into the save.
+   *
+   * **A continue means the run ends twice, and coins may only be banked once.** `RunOver` banks
+   * what it is handed the moment it opens — before an ad or a scene change can lose them — so the
+   * second panel has to be handed the coins taken *since* the first one, or every coin collected
+   * before the crash is paid for a second time. `run.coins` stays the run's true total, because
+   * that is what the HUD counts.
+   */
+  private bankedCoins = 0
+  /**
    * The tutorial, when this is a first run. `null` once the player has been taught.
    *
    * **Resolved once, at `create`, from the save** — like the snail's skin and for the same reason:
@@ -272,6 +334,21 @@ export class RunScene extends Phaser.Scene {
   /** Coins taken in a row, for the rising collection tone. Reset by anything that is not a coin. */
   private streak = 0
   /**
+   * The close-pass streak, and the manoeuvre currently being paid for.
+   *
+   * **One buffer rather than one event per object, because the unit being rewarded is a decision.**
+   * A row of three rocks taken in one hop is one manoeuvre, not three; a row threaded on the ground
+   * is one line, not two dodges. So passes are collected and settled together — at the end of the
+   * frame while the snail is grounded, and on landing while it is not, which is exactly the moment
+   * the manoeuvre stopped being revisable. See `nearMiss.ts`.
+   */
+  private nearMissStreak: StreakState = createStreak()
+  private readonly passes: PassedObject[] = []
+  private readonly crossedCritters: Critter[] = []
+  private plaque: Plaque = createPlaque()
+  /** When the current flight began, so a hop can be paid for what it committed. `-1` on the ground. */
+  private flightStartedAt = -1
+  /**
    * The player's own hitstop deadline — `hitstop.ts`'s `Freezable`, on the snail and nothing else.
    *
    * **Never `timeScale`, never a global pause.** The ground has to keep moving through a landing:
@@ -280,14 +357,28 @@ export class RunScene extends Phaser.Scene {
    * the module is the same one.
    */
   private playerFreeze!: Freezable
-
+  /**
+   * Whether this run was resumed from a snapshot, for the DEV report and for one rule: a resumed
+   * run may not be a tutorial run, because the tutorial is what refuses to be suspended.
+   */
+  private resumed = false
   constructor() {
     super('RunScene')
   }
 
   create() {
-    this.run = createRunState()
-    this.player = createPlayerState()
+    // **Read once, here, never per frame.** The run is not a place to consult the save sixty times a
+    // second — the same rule the skin and the ship are resolved under.
+    const saved = getState()
+    // **A run the player put down, or `null`.** `resolveSuspended` never trusts what is stored and
+    // refuses anything that is not a run rather than repairing one into existence — see
+    // `suspend.ts`. Refused, this is a fresh run, which is exactly what the player asked for by
+    // pressing a button that says Play.
+    const resume = saved.tutorialDone ? resolveSuspended(saved.suspendedRun) : null
+
+    this.resumed = resume !== null
+    this.run = resume?.run ?? createRunState()
+    this.player = resume?.player ?? createPlayerState()
     this.squash = createSquashState()
     this.playerFreeze = { frozenUntil: 0 }
     // **⚠ Before the world and before `LapLayout`, because that constructor builds lap 0 inside
@@ -299,10 +390,17 @@ export class RunScene extends Phaser.Scene {
     if (!getState().tutorialDone) this.tutorial = createTutorialState()
     this.resolvedOnLap = new Map()
     this.slime = []
-    this.invulnerableUntilDistance = 0
+    this.invulnerableUntilDistance = resume?.invulnerableUntilDistance ?? 0
+    // **Carried across a suspend, because a suspend BANKS.** Without it, resuming and then ending
+    // would pay the same coins into the save twice — see `suspend.ts`.
+    this.bankedCoins = resume?.bankedCoins ?? 0
     this.death = createPlayerDeath()
     this.hitCount = 0
     this.streak = 0
+    this.nearMissStreak = createStreak()
+    this.plaque = createPlaque()
+    this.passes.length = 0
+    this.flightStartedAt = -1
 
     // The ground, the scenery, the sky and the camera that rides through them — all of it in
     // `WorldView`, which `MainMenu` builds the same way. Two scenes drawing the same world from
@@ -313,7 +411,11 @@ export class RunScene extends Phaser.Scene {
     // sweeps every point of it), and a per-run random circuit would be an unverified one. Variety
     // across runs comes from the scenery seed and from the eight biomes the lap already cycles
     // through, neither of which can produce a corner you cannot see round.
-    this.runSeed = Math.floor(Math.random() * 0xffff)
+    // **The seed comes back with a resumed run**, because the road is a pure function of it: the
+    // obstacles, the pickups, the ramps, the scenery and the bugs are all derived, so restoring one
+    // number restores the whole lap the player was in the middle of. That is the entire reason the
+    // snapshot does not have to carry a road.
+    this.runSeed = resume?.seed ?? Math.floor(Math.random() * 0xffff)
     this.world = new WorldView(this, { speed: SPEED_BASE, decorSeed: this.runSeed })
 
     // The obstacles, laid along the finished track and *proved passable* before they are used —
@@ -323,9 +425,15 @@ export class RunScene extends Phaser.Scene {
       trackLength: this.world.trackLength,
       segmentCount: this.world.track.length,
       build: (lapOffset) => this.buildLap(lapOffset),
+      // **The lap the run is on, not its distance**, or the first `advance` would walk every
+      // segment of every lap in between and build a layout at each boundary — see `startLap`.
+      startLap: Math.floor(this.run.distance / this.world.trackLength),
     })
-    this.previousPlayerZ = PLAYER_Z
-    this.previousPlayerOdometer = PLAYER_Z
+    // **Seeded from where the run actually is**, so the first frame of a resumed run sweeps the
+    // few units it really travelled rather than the whole distance from the start line — which
+    // would resolve every obstacle on the lap in one frame.
+    this.previousPlayerZ = wrapZ(this.run.z + PLAYER_Z, this.world.trackLength)
+    this.previousPlayerOdometer = this.run.distance + PLAYER_Z
     // **A first run meets no bugs until it has been taught the road.** The tutorial owns the first
     // `TUTORIAL_LENGTH_Z` and its cards stop the world one at a time; a creature walking into a
     // frozen frame while a card explains something else is two things at once, which is the whole
@@ -350,6 +458,7 @@ export class RunScene extends Phaser.Scene {
     // trusts the stored id — a save can outlive a skin and can be edited by hand.
     this.playerView = new PlayerView(this, {
       skin: resolveSelectedSnail(getState().selectedSnail, getState().purchases),
+      // Resolved once here, never per frame, for the same reason the skin is — and through
     })
     // Screen-space, so it goes on `uiCamera` and is hidden from the world camera.
     this.hud = new Hud(this)
@@ -423,9 +532,29 @@ export class RunScene extends Phaser.Scene {
     // arise.
     bindAction(this, 'jump', { keys: ['SPACE', 'UP', 'W'], screenTap: true }, () => this.tryJump())
 
-    bindAction(this, 'close', { keys: ['ESC'] }, () => {
-      this.scene.start('MainMenu')
-    })
+    // **⚠ This used to be ESC and nothing else, and it threw the run away.** Two defects in one
+    // line: on a phone there was no way out of a run at all, and the way out a keyboard had went
+    // straight to the menu — so the coins collected, the quest progress and the distance were all
+    // lost, because `endRun` is the only place any of that is banked.
+    //
+    // Both go through the same door, and that door now **puts the run down rather than ending it**:
+    // the coins and the quest tally are banked exactly as ending banks them, the rest of the run is
+    // snapshotted into the save, and the player is returned to the front screen where Play has
+    // become Continue. See `suspend.ts` for what is kept and what is let go.
+    //
+    // **⚠ Except during the tutorial, which ends instead.** Its cards are a hand-placed 900m
+    // stretch taught in an order that does not survive being interrupted — the same argument that
+    // used to gate the stage mode behind it. A tutorial run therefore leaves the way every run used
+    // to: banked, ended, and the panel over it.
+    // **⚠ On the tap, not the press, and this is a safety rule rather than a convention.** An
+    // accidental exit is the worst mistake this game can make — a run is the whole product and
+    // there is no undo — and the one gesture the player makes constantly is a *drag* across the
+    // frame. Firing on the press means a steer that happens to begin on the glyph ends the run;
+    // firing on the tap means a press that goes anywhere is a press the player changed their mind
+    // about. Same rule, and the same reason, as the shop rows and the quest board's collect.
+    bindAction(this, 'close', { pointer: this.hud.exitTarget, keys: ['ESC'], tap: true }, () =>
+      this.tutorial === null ? this.suspend() : this.endRun(true),
+    )
 
     bindLayout(this, (width, height) => this.layout(width, height))
 
@@ -487,10 +616,26 @@ export class RunScene extends Phaser.Scene {
    * mistake. Cheap to check once at start-up, impossible to spot by eye later.
    */
   private assertWorldIsSingleCamera(): void {
-    const leaked = this.worldObjects().filter((object) => (object.cameraFilter & this.uiCamera.id) === 0)
+    // **⚠ This walked `worldObjects()` and was therefore blind to the one mistake it exists to
+    // catch.** An object missing from that list is not ignored by either camera and is drawn twice —
+    // and checking the list can only ever confirm that the things *in* it were handled. A flyer's
+    // wings were absent for four rounds, drawn a second time by `uiCamera` on top of the whole
+    // frame, and this guard reported nothing every single time.
+    //
+    // What it asks now is the property rather than the bookkeeping: **is anything on this scene's
+    // display list drawn by both cameras?** An object belongs to exactly one of them, so a
+    // `cameraFilter` carrying neither camera's id is the defect, whatever list it was left out of.
+    const both = this.children.list.filter(
+      (object) =>
+        (object.cameraFilter & this.uiCamera.id) === 0 && (object.cameraFilter & this.cameras.main.id) === 0,
+    )
 
-    if (leaked.length > 0) {
-      console.warn(`[run] ${leaked.length} world object(s) are not ignored by uiCamera and will be drawn twice`)
+    if (both.length > 0) {
+      const names = both.slice(0, 6).map((object) => object.type + (object.name ? `:${object.name}` : ''))
+
+      console.warn(
+        `[run] ${both.length} object(s) are ignored by neither camera and will be drawn twice: ${names.join(', ')}`,
+      )
     }
   }
 
@@ -532,6 +677,15 @@ export class RunScene extends Phaser.Scene {
           continue
         }
 
+        // **The instant of the pass, which is the instant the reward is about.** The two are
+        // closest in `z` at the obstacle's own midpoint, so that is where the clearance is read
+        // rather than at the near edge (where the player has not arrived) or at settling (where
+        // they have already moved on). Swept over the frame's travel so a dropped frame cannot step
+        // over it. See `nearMiss.ts`.
+        const middle = obstacle.z + OBSTACLE_DEPTH / 2
+
+        if (fromZ <= middle && middle < toZ) this.notePass(obstacle, 1)
+
         // **⚠ Inside it, so it is tested again every frame until it is behind us.** The first
         // version marked an obstacle resolved on the frame the sweep first *touched* its near edge
         // and never looked again — one instant, at the moment of contact. But an obstacle is 200
@@ -565,6 +719,22 @@ export class RunScene extends Phaser.Scene {
    */
   private resolveCritterHits(playerOdometer: number, deltaMs: number, now: number): void {
     if (this.isInvulnerable()) return
+
+    // Scored before the hit is resolved, because a critter that struck is settled by that call and
+    // would then be invisible here — and a pass the player did not make must not pay.
+    for (const critter of critterMidpointCrossings(
+      this.critters,
+      this.previousPlayerOdometer,
+      playerOdometer,
+      deltaMs,
+      this.crossedCritters,
+    )) {
+      // **The one place the closing ratio is not 1.** A bug walks at the player, so the same gap is
+      // a shorter escape by exactly this much — see `URGENCY_CAP`.
+      const closing = (this.run.speed + CRITTER_KINDS[critter.kind].speed) / Math.max(1, this.run.speed)
+
+      this.notePass(critter, closing)
+    }
 
     const struck = resolveCritters(
       this.critters,
@@ -669,6 +839,101 @@ export class RunScene extends Phaser.Scene {
     return { obstacles, pickups, ramps }
   }
 
+
+
+  /**
+   * Buffers one thing the snail has just gone past, for `settleManoeuvre` to pay for.
+   *
+   * **The unit being rewarded is a decision, not an object.** A row of three cleared by one hop is
+   * one hop, so passes are collected here and settled together — see `settleManoeuvre` for the two
+   * moments that happens at and why they differ.
+   *
+   * **Lateral on the ground, vertical in the air**, both in road half-widths so `NEAR_MISS_GAP` —
+   * which is derived from a *lateral* residual — means the same thing on either axis. One
+   * `offsetX` unit is `ROAD_WIDTH` world units, which is what converts the vertical one.
+   *
+   * The vertical clearance is measured from the body's own band rather than from its feet, so a
+   * tumble off a ramp is graded on the rectangle it is actually drawn in — see `bodyBand`.
+   *
+   * Nothing needs an invulnerability guard here: both callers return before this while the player
+   * cannot be hit, because a pass that costs nothing is not a pass the player made.
+   */
+  private notePass(object: { offsetX: number; halfWidths: number; yHigh: number }, closing: number): void {
+    const gap = this.player.grounded
+      ? lateralGap(this.player.offsetX, object.offsetX, object.halfWidths)
+      : (bodyBand({
+          offsetX: this.player.offsetX,
+          y: this.player.y,
+          spinDegrees: spinAngle(this.player),
+        }).low -
+          object.yHigh) /
+        ROAD_WIDTH
+
+    this.passes.push({ object, gap, closing })
+  }
+
+  /**
+   * Settles the manoeuvre the buffered passes belong to, and pays for it once.
+   *
+   * **Called at the end of a grounded frame and on landing, and the difference is the design.** A
+   * steer is revisable up to the last instant, so it settles as soon as the row is behind; a flight
+   * is not revisable at all once it has begun, so everything it clears belongs to the single
+   * decision that started it — which is what makes "one hop over three things" a rung of its own
+   * rather than three payments.
+   */
+  private settleManoeuvre(now: number, width: number): void {
+    if (this.passes.length === 0) return
+
+    // The tightest of them is what the manoeuvre is graded on: clearing three things by a mile and
+    // one by a hair is a hair-thin decision, and the mile is what the other two were worth.
+    let gap = Infinity
+    let closing = 1
+
+    for (const pass of this.passes) {
+      gap = Math.min(gap, pass.gap)
+      closing = Math.max(closing, pass.closing)
+    }
+
+    const count = this.passes.length
+    const airControl = this.player.grounded ? 1 : this.player.airControl
+    const commitmentMs = this.flightStartedAt >= 0 ? Math.max(0, now - this.flightStartedAt) : 0
+
+    this.passes.length = 0
+
+    const scored = scoreNearMiss(
+      gap,
+      closing,
+      commitmentMs,
+      count,
+      feverSpeedFactor(this.run.fever),
+      this.nearMissStreak,
+      this.run.distance,
+      airControl,
+    )
+
+    if (!scored) return
+
+    this.nearMissStreak = scored.streak
+    this.run = tally(earnBonus(this.run, scored.miss.points), 'nearMiss')
+
+    const tier = nearMissTier(scored.miss)
+    // **One plaque, updated, never a queue of them.** A streak on a dense stretch fires several
+    // times a second, and a plaque per reward fills the strip the road is read through. See
+    // `rewards.ts`.
+    const announced = announce(this.plaque, scored.miss.points, tier, streakMultiplier(this.nearMissStreak.count), now)
+
+    this.plaque = announced.plaque
+    this.hud.announce(this.plaque)
+
+    // **The sound is the feedback, not the number.** At this moment the player is looking at the
+    // road: a pitch can say which manoeuvre and how far into a streak without moving their eyes.
+    playSfx(SFX.NEAR_MISS, {
+      detune: nearMissDetuneCents(tier, this.nearMissStreak.count - 1),
+      volume: nearMissGain(tier),
+    })
+    void width
+  }
+
   /**
    * Collects anything the snail passed through this frame.
    *
@@ -677,6 +942,7 @@ export class RunScene extends Phaser.Scene {
    * the player has already cleared feel cleared.
    */
   private collectPickups(fromZ: number, toZ: number): void {
+    const useless = uselessKinds({ canHeal: canTakeHeal(this.run), canShield: canTakeShield(this.run) })
     const first = Math.floor(fromZ / SEGMENT_LENGTH) - 1
     const last = Math.floor(toZ / SEGMENT_LENGTH)
     const segmentCount = this.world.track.length
@@ -688,17 +954,22 @@ export class RunScene extends Phaser.Scene {
 
       for (const pickup of here) {
         if (pickup.taken || toZ < pickup.z || fromZ > pickup.z + SEGMENT_LENGTH) continue
+        // **A pickup the run has no room for is passed through, not consumed** — it is drawn
+        // dimmed and stays on the road. See `UNAVAILABLE_ALPHA` for why it is no longer deleted
+        // 600m ahead instead, and `uselessKinds` for the two kinds this can be true of.
+        if (useless.has(pickup.kind)) continue
         if (!reaches(this.player, pickup)) continue
 
         pickup.taken = true
         if (pickup.kind === 'fruit') {
-          this.run = eatFruit(this.run)
+          this.run = tally(eatFruit(this.run), 'fruit')
           // One of the three moments the mascot looks back — see `lookBack.ts`. The event glances
           // are the half that matters: a purely periodic one is a tic, and these land at the exact
           // moments the player is already watching the snail rather than the road.
           this.playerView.glance(this.time.now)
         }
         else if (pickup.kind === 'shield') this.run = addShield(this.run)
+        else if (pickup.kind === 'heal') this.run = heal(this.run)
         else this.run = earnCoin(this.run)
         // The streak ladder: each coin in a row sounds one interval higher, so the player can hear
         // how many they have taken without looking away from the road. Reset by a gap.
@@ -724,6 +995,10 @@ export class RunScene extends Phaser.Scene {
       // boost pickup's, and Fever is what became of that.
       playSfx(SFX.BOOST)
       this.playerView.glance(this.time.now)
+      // **Counted on entry, not on the gauge filling.** Filling it is arithmetic on fruit already
+      // counted by its own quest; *entering* is the event the player experiences, and counting both
+      // would pay one action twice.
+      this.run = tally(this.run, 'fever')
 
       return
     }
@@ -746,8 +1021,12 @@ export class RunScene extends Phaser.Scene {
   private pullPickups(playerZ: number, delta: number): void {
     const rate = 1 - Math.exp((-FEVER_MAGNET_RATE * delta) / 1000)
 
+    const useless = uselessKinds({ canHeal: canTakeHeal(this.run), canShield: canTakeShield(this.run) })
+
     for (const pickup of this.lap.livePickups()) {
-      if (pickup.taken) continue
+      // **The magnet does not drag something the run cannot take.** Pulling a greyed medkit onto
+      // the snail's line would be the game offering what it is about to refuse.
+      if (pickup.taken || useless.has(pickup.kind)) continue
 
       const ahead = wrapZ(pickup.z - playerZ, this.world.trackLength)
 
@@ -782,6 +1061,7 @@ export class RunScene extends Phaser.Scene {
         if (!ridesOver(this.player, ramp)) continue
 
         this.player = launch(this.player, RAMP_LAUNCH_V, RAMP_SPINS, RAMP_AIR_CONTROL)
+        this.run = tally(this.run, 'ramp')
         // The chain is laid for the speed this flight is actually flown at, which is knowable here
         // and nowhere earlier. See `layArc`.
         this.layArc(ramp, this.run.speed)
@@ -943,6 +1223,11 @@ export class RunScene extends Phaser.Scene {
   private takeHit(now: number): void {
     this.hitCount++
     this.streak = 0
+    // **The reset is the whole reason the streak is worth holding.** A multiplier that survived
+    // damage would make a close pass a free upside on top of a mistake. Anything buffered goes with
+    // it: a manoeuvre that ended in a hit was not a manoeuvre that came off.
+    this.nearMissStreak = breakStreak()
+    this.passes.length = 0
     this.invulnerableUntilDistance = this.run.distance + HIT_INVULNERABLE_Z
     addFreeze(this.playerFreeze, now, HITSTOP_MS)
     // **Asked before the hit is applied, because the hit is what spends it.** `takeHit` returns a
@@ -1113,9 +1398,114 @@ export class RunScene extends Phaser.Scene {
     }
   }
 
-  private endRun(): void {
-    this.scene.pause()
-    this.scene.launch('RunOver', { distance: this.run.distance, coins: this.run.coins })
+  /**
+   * Ends the run and hands over to the result panel.
+   *
+   * `quit` is the player having asked to leave rather than the road having ended it, and the only
+   * thing that turns on it is the rewarded continue: a continue offered on a run the player chose
+   * to end is an ad attached to nothing, which is the exact shape `canOfferContinue` exists to
+   * refuse. Everything else — the coins, the quests, a cleared stage — is banked identically,
+   * because what was earned was earned however the run stopped.
+   */
+  private endRun(quit = false): void {
+    const coins = this.run.coins - this.bankedCoins
+
+    this.bankedCoins = this.run.coins
+    // **The board is advanced once, here, rather than per event.** A quest advanced as each fruit
+    // is taken is a save write per fruit; and the board is only ever read on the front screen,
+    // which is also the only place a finished quest can be claimed. See `quests.ts`.
+    this.bankQuestProgress()
+    // **A run that ends is a run there is nothing to continue.** Cleared here rather than on the
+    // panel: the panel is where the player is *told*, and a run whose panel never opened — a
+    // platform pause, a reload — must not leave a snapshot the front screen would offer to resume.
+    this.clearSuspended()
+    launchOverlay(this, 'RunOver', { distance: this.run.distance, coins, run: this, quit })
+  }
+
+  /**
+   * Puts the run down: banks what it has earned, writes the rest into the save, and goes home.
+   *
+   * **⚠ It banks, and that is what makes putting a run down safe rather than a gamble.** A snapshot
+   * that held the coins would mean a player who suspends and later starts a new run has silently
+   * thrown away everything the old one earned — and finds out afterwards. Banking here and carrying
+   * `bankedCoins` into the snapshot means abandoning a suspended run costs nothing already earned;
+   * what it costs is the distance, which is the thing they were in the middle of.
+   *
+   * **The scene is stopped, not paused.** `MainMenu` builds a `WorldView` of its own and two worlds
+   * may never be alive at once — the `glTexture` crash this project has now diagnosed from five
+   * directions. That is the whole reason the run comes back as a value rather than as a scene.
+   */
+  private suspend(): void {
+    const coins = this.run.coins - this.bankedCoins
+    const snapshot: SuspendedRun = {
+      seed: this.runSeed,
+      run: this.run,
+      player: this.player,
+      bankedCoins: this.run.coins,
+      invulnerableUntilDistance: this.invulnerableUntilDistance,
+    }
+
+    this.bankedCoins = this.run.coins
+    this.bankQuestProgress()
+    mutate((state) => {
+      state.coins = earnCoins(state.coins, coins)
+      state.suspendedRun = isResumable(snapshot) ? snapshot : null
+    })
+    // Flushed rather than left to the debounce: the next thing that happens to this tab may be the
+    // platform killing it, and a suspended run that did not reach the disk is a run thrown away by
+    // the one gesture that exists to keep it. `bindAutosave` covers the pause; this covers the tap.
+    void flush()
+    this.scene.start('MainMenu')
+  }
+
+  /** Forgets a suspended run. Called wherever a run stops being one. */
+  private clearSuspended(): void {
+    if (getState().suspendedRun === null) return
+
+    mutate((state) => {
+      state.suspendedRun = null
+    })
+  }
+
+  /**
+   * Puts the player back on the road they crashed on. Called by `RunOver`, once, after a rewarded ad.
+   *
+   * **The run is resumed, not restarted, and that is only possible because it was never stopped.**
+   * `endRun` *pauses* this scene and launches the panel over it — which is the arrangement that
+   * made `Menu` hang the game once, and is the arrangement that makes a continue nearly free: every
+   * lap, every pool, the layout cursor, the tutorial's place and the fixed step's own remainder are
+   * still sitting exactly where the crash left them. Nothing here rebuilds a thing.
+   *
+   * What has to be undone is only what the death did: the flag that ended the run (`revive`), the
+   * wreck's own state, and the frame the wreck was tinting. The sprite needs no repair — `render`
+   * writes its size, angle and alpha from scratch every frame, so the swell and the fade are gone
+   * on the first frame after this.
+   *
+   * **The grace is the part that makes the offer honest.** The snail comes back on the piece of
+   * road that killed it, at the speed it was doing, with the rest of that row still standing — see
+   * `CONTINUE_GRACE_Z`. Resuming without it would sell the player a continue and spend it before
+   * they could touch the controls.
+   */
+  /**
+   * Whether `continueRun` would do anything — the question `RunOver` has to ask before it stops
+   * itself. See `ContinuableRun.canContinue` for what it costs to skip it.
+   */
+  canContinue(): boolean {
+    return isRunOver(this.run)
+  }
+
+  continueRun(): void {
+    // **The guard is not paranoia: the panel stays interactive while its ad plays.** `RunOver` is an
+    // `OVERLAY_SCENES` member, so nothing pauses it — a player who presses `Again` (or SPACE) while
+    // the ad is in flight restarts this scene, and the reward then arrives for a run that no longer
+    // exists. A restarted run is not over, so this is where that lands.
+    if (!isRunOver(this.run)) return
+
+    this.run = revive(this.run)
+    this.death = createPlayerDeath()
+    this.deathFlashRect.setAlpha(0)
+    this.invulnerableUntilDistance = this.run.distance + CONTINUE_GRACE_Z
+    this.scene.resume()
   }
 
   /**
@@ -1164,6 +1554,7 @@ export class RunScene extends Phaser.Scene {
       now,
     })
     // The card asks the HUD where the readout it names actually is — see `Hud.highlightRect`.
+    this.tutorialCard.setHudBottom(this.hud.blockBottom)
     this.tutorialCard.update(this.tutorial, this.run.distance, now, (target) => this.hud.highlightRect(target))
 
     if (tutorialRunning(this.tutorial)) return
@@ -1173,6 +1564,25 @@ export class RunScene extends Phaser.Scene {
     this.tutorialCard = null
     mutate((state) => {
       state.tutorialDone = true
+    })
+  }
+
+  /**
+   * Folds this run's tallies into the saved quest board.
+   *
+   * **Idempotent by construction**, because a run can end more than once: `RunOver` is launched over
+   * a *paused* scene and `Again` resumes it, so `endRun` runs again on the next death. The tally is
+   * cleared as it is banked, so a second call adds nothing.
+   */
+  private bankQuestProgress(): void {
+    const banked = this.run.tally
+
+    this.run = { ...this.run, tally: createTally() }
+
+    if (QUEST_KINDS.every((kind) => banked[kind] === 0)) return
+
+    mutate((state) => {
+      state.quests = applyTally(resolveQuestBoard(state.quests, this.runSeed), banked)
     })
   }
 
@@ -1260,7 +1670,24 @@ export class RunScene extends Phaser.Scene {
       this.resolveObstacles(this.previousPlayerZ, this.world.trackLength, lap - 1, time)
       this.resolveObstacles(0, playerZ, lap, time)
     }
+    // **A milestone IS the biome change**, so it is detected from the biome index rather than from
+    // a counter of its own — two ladders would drift the moment the lap length or the biome count
+    // moved, and the player would be told they had arrived somewhere the world did not change.
+    if (!frozen && milestoneCrossed(this.previousPlayerZ, playerZ, this.world.track.length)) {
+      for (let i = 0; i < MILESTONE_COINS; i++) this.run = earnCoin(this.run)
+      this.hud.markMilestone(time)
+      playSfx(SFX.MILESTONE)
+    }
+
     this.previousPlayerZ = playerZ
+
+    // **The flight settles on landing, the ground settles every frame.** A hop is one decision from
+    // launch to touchdown; a steer is revisable to the last instant, so its row is paid for as soon
+    // as it is behind. See `settleManoeuvre`.
+    if (this.player.grounded) this.settleManoeuvre(time, width)
+
+    if (!wasAirborne && !this.player.grounded) this.flightStartedAt = time
+    if (this.player.grounded) this.flightStartedAt = -1
 
     if (wasAirborne && this.player.grounded) {
       squashOnLanding(this.squash, time)
@@ -1349,6 +1776,9 @@ export class RunScene extends Phaser.Scene {
       this.world.clipY,
       width,
       height,
+      this.time.now,
+      this.lap.liveObstacles(),
+      this.world.track.length * SEGMENT_LENGTH,
     )
     this.pickupSprites.render(
       this.lap.pickups,
@@ -1358,10 +1788,20 @@ export class RunScene extends Phaser.Scene {
       width,
       height,
       time,
+      uselessKinds({ canHeal: canTakeHeal(this.run), canShield: canTakeShield(this.run) }),
     )
     if (import.meta.env.DEV && this.reactionSeen) this.recordReaction(time)
 
-    this.hud.update(this.run, width, { x: this.playerView.screenX, y: this.playerView.screenY - this.playerView.sprite.displayHeight })
+    // **No anchor, and that is the fix rather than a simplification.** The HUD used to be handed the
+    // mascot's projected head so the fruit gauge could ride above it — which put the gauge on the
+    // vanishing point, because the snail is drawn just under it. See `ui/fruitGauge.ts`.
+    this.hud.update(
+      this.run,
+      width,
+      time,
+      milestoneProgress(this.run.z, this.world.track.length),
+      this.playerView.drawnBox,
+    )
     this.updateTutorial(time)
     this.feverView.update(this.run.fever, delta, width, height)
     this.dust.update(time, delta, height)

@@ -27,8 +27,9 @@
  */
 import * as Phaser from 'phaser'
 import { INK, SNAIL_BODY as BODY, SNAIL_SHELL as SHELL } from './artPalette'
-import { DEFAULT_SNAIL_SKIN, recolour, snailSkin } from './snailSkins'
-import { paintInkRim, rimWidthPx } from './inkRim'
+import { DEFAULT_SNAIL_SKIN, snailSkin } from './snailSkins'
+import { paintMascot } from './mascotPixels'
+import { getRoadTheme, getRoadThemeId } from '../road/themes'
 
 /** How many frames the glide cycle has. */
 export const SNAIL_FRAMES = 6
@@ -56,7 +57,7 @@ export function snailFrameKey(index: number): string {
  * on screen before `createSnailTexture` has run at all.
  */
 export function snailSkinFrameKey(index: number, skinId: string): string {
-  return `${snailFrameKey(index)}-${skinId}`
+  return `${snailFrameKey(index)}-${skinId}-${getRoadThemeId()}`
 }
 
 /** The first frame, for anything needing a key before it has a distance to derive one from. */
@@ -145,33 +146,13 @@ function createSkinTextures(scene: Phaser.Scene, skinId: string): void {
     canvas.draw(0, 0, source)
 
     const image = canvas.getData(0, 0, source.width, source.height)
-    const pixels = image.data
 
-    for (let i = 0; i < pixels.length; i += 4) {
-      // Fully transparent pixels are skipped rather than recoloured: `build-sprites.py` floods
-      // colour under the transparency on purpose (so no downscale mixes black into the silhouette),
-      // and rotating that flood would cost the pass a third of its work to change nothing visible.
-      if (pixels[i + 3] === 0) continue
-
-      const packed = (pixels[i] << 16) | (pixels[i + 1] << 8) | pixels[i + 2]
-      let turned = cache.get(packed)
-
-      if (turned === undefined) {
-        turned = recolour(packed, skin)
-        cache.set(packed, turned)
-      }
-
-      pixels[i] = (turned >> 16) & 0xff
-      pixels[i + 1] = (turned >> 8) & 0xff
-      pixels[i + 2] = turned & 0xff
-      // Alpha is untouched, so a skin cannot change the silhouette `verify:mattes` measures.
-    }
-
-    // **After the recolour, never before.** The rim is a constant — the one part of the mascot that
-    // must read the same on every skin and against every ground — so rotating it with the rest
-    // would make the thing carrying the guarantee depend on the thing it is guaranteeing against.
-    // It also reads alpha only, which is why it is identical for all five skins.
-    paintInkRim(pixels, source.width, source.height, rimWidthPx(source.width, source.height))
+    // **Every decision about what these pixels become lives in `mascotPixels.ts`, which imports no
+    // Phaser.** This function's whole job is the canvas: get the data, hand it over, put it back.
+    // The split is not tidiness — the skin x theme matrix in `verify:palettes` has to recompute
+    // itself through the code the game actually runs, and a rule behind a Phaser import is a rule
+    // no check can reach.
+    paintMascot(image.data, source.width, source.height, skin, getRoadTheme(), cache)
 
     canvas.putData(image, 0, 0)
     canvas.refresh()
@@ -356,4 +337,28 @@ function drawShell(g: Phaser.GameObjects.Graphics, w: Scale, h: Scale, ink: numb
   // A specular nick, top-left — the one pure highlight on the whole creature.
   g.fillStyle(0xfff0d0, 0.75)
   g.fillEllipse(cx - r * 0.42, cy - r * 0.46, r * 0.3, r * 0.2)
+}
+
+
+
+
+/**
+ * Tears down every skin frame a given theme built.
+ *
+ * **The mascot is the one themed texture whose key list nobody can enumerate**, because which skins
+ * exist in the cache depends on what the player has bought and previewed rather than on a constant.
+ * So it is swept by prefix: the key is `snail-<frame>-<skin>-<theme>`, and a theme swap removes
+ * everything ending in the theme it is leaving. Missing this is a leak of six textures per skin per
+ * theme change, and — worse — the same defect `applyTheme` documents for the sky: a live sprite
+ * holding a destroyed texture throws inside the renderer a few frames later.
+ */
+export function removeSnailSkinTextures(scene: Phaser.Scene, themeId: string): void {
+  for (let frame = 0; frame < SNAIL_FRAMES; frame++) {
+    const prefix = `${snailFrameKey(frame)}-`
+    const suffix = `-${themeId}`
+
+    for (const key of scene.textures.getTextureKeys()) {
+      if (key.startsWith(prefix) && key.endsWith(suffix)) scene.textures.remove(key)
+    }
+  }
 }

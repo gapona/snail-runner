@@ -71,6 +71,7 @@ import {
   sideAwayFrom,
   type Pickup,
   type PickupKind,
+  createKindDeck,
 } from './pickups'
 
 export type FormationKind = 'line' | 'wave' | 'arc'
@@ -88,6 +89,11 @@ export const CHAIN: Record<PickupKind, { min: number; max: number; gapMs: number
   coin: { min: 6, max: 12, gapMs: 150 },
   fruit: { min: 3, max: 5, gapMs: 260 },
   shield: { min: 1, max: 1, gapMs: 0 },
+  // Singles, for `shield`'s reason: a row of the same absorbed hit is not a row, and a row of the
+  // same restored life is not one either — the second of a pair would be a pickup worth nothing at
+  // the moment the player drives through it, which is what `canTakeHeal` exists to keep off the
+  // road in the first place.
+  heal: { min: 1, max: 1, gapMs: 0 },
 }
 
 /** How far apart chains are laid, in world units, before the per-chain jitter. */
@@ -304,6 +310,10 @@ export function placeFormations(options: FormationOptions): Pickup[] {
   const pickups: Pickup[] = []
   let id = 0
   let seededSide = rng() < 0.5 ? -1 : 1
+  // **⚠ Dealt from a deck rather than drawn per chain**, which is the whole of the report that a
+  // kind arrives four times over and then not at all. One deck per lap, on the lap's own stream —
+  // see `createKindDeck`.
+  const deal = createKindDeck(rng)
 
   // **⚠ What the walk below must not lay into.** An arc is laid outside the walk, so the walk has
   // never known those stretches were taken — see `flightSpans`.
@@ -369,7 +379,7 @@ export function placeFormations(options: FormationOptions): Pickup[] {
       continue
     }
 
-    const pickup = chooseChainKind(rng)
+    const pickup = chooseChainKind(deal)
     const shape: FormationKind = pickup === 'shield' || rng() < 0.45 ? 'line' : 'wave'
     const count = CHAIN[pickup].min + Math.floor(rng() * (CHAIN[pickup].max - CHAIN[pickup].min + 1))
     const side = sideAwayFrom(obstacles, z, trackLength, seededSide)
@@ -474,13 +484,19 @@ export function flightSpans(
  * *contains* still leans the way that table says — and a chain of coins is longer than a chain of
  * fruit, which tilts the actual count further toward coins than the weights alone do. That is the
  * intent: coins are the thing a lap leaves behind.
+ *
+ * **⚠ That sentence was a description of a feature this function did not have.** It rolled three
+ * hardcoded thresholds — `0.5` coin, `0.85` fruit, else shield — and `PICKUP_WEIGHTS` was read by
+ * nothing at all: `chooseKind`, the one function that does read it, had **no callers**. So the
+ * shipped distribution was three literals, the table beside them was decoration, and adding a
+ * fourth kind to it laid **zero** of that kind on a lap while its neighbour at half the weight laid
+ * six. Found by counting a real lap after adding the medkit, which is the only way this class of
+ * defect ever surfaces — it is the fifth piece of authored state this project has caught doing
+ * nothing, after `cooldownMs`, `fanScale`, `arcRelaid` and `SFX.MILESTONE`.
+ *
+ * It is one `rng()` draw either way, so a seeded lap still advances its stream identically.
  */
-function chooseChainKind(rng: () => number): PickupKind {
-  const roll = rng()
-
-  if (roll < 0.5) return 'coin'
-  if (roll < 0.85) return 'fruit'
-
-  return 'shield'
+function chooseChainKind(deal: () => PickupKind): PickupKind {
+  return deal()
 }
 

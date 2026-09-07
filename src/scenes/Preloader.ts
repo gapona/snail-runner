@@ -1,10 +1,14 @@
 import * as Phaser from 'phaser'
 import { SFX_FILES, renderSfxUris } from '../audio/sfx'
+import { MUSIC_KEY, renderMusicUri } from '../audio/music'
 import { ensureSkyTextures, skyPlateKey, SKYLINE_TEXTURE, skyTextureKey } from '../road/Backdrop'
+import { BIOMES, groundPairForTheme } from '../road/biomes'
+import { getRoadTheme } from '../road/themes'
 import { DECOR_TEXTURES } from '../road/decorShapes'
 import { themeIds } from '../road/themes'
 import { t } from '../i18n/strings'
 import { OBSTACLE_ART_KEYS } from '../run/obstacleArt'
+import { UI_MASTER_KEYS } from '../ui/uiSprites'
 import { CRITTER_TEXTURE_KEYS } from '../run/critterArt'
 import { PICKUP_TEXTURES } from '../run/pickupArt'
 import { SNAIL_FRAMES, SNAIL_TEXTURE, SNAIL_TEXTURE_SIZE, snailFrameKey } from '../run/snailArt'
@@ -17,10 +21,27 @@ import { toCssColor } from '../ui/theme'
 import { uiScale } from '../ui/uiScale'
 
 /** The bar's geometry, in unscaled pixels. */
-const BAR = { maxWidth: 420, height: 16, radius: 8, margin: 28 } as const
+const BAR = { maxWidth: 420, height: 16, radius: 8, margin: 28, drop: 14 } as const
 
-/** Where the block sits, as fractions of viewport height. */
-const ROWS = { snail: 0.46, bar: 0.60, title: 0.72 } as const
+/**
+ * Where the block sits, as fractions of viewport height.
+ *
+ * **⚠ The title was under the bar and the whole screen was one line across the middle**, with an
+ * empty half above it and an empty half below. The wordmark is the thing the player is looking at
+ * while they wait, so it goes in the sky where the front screen puts it; the ground line is the
+ * bar's, and everything else is arranged around that one horizon.
+ */
+const ROWS = { bar: 0.68 } as const
+
+/**
+ * How much of the frame the mountain range fills, from its feet on the horizon upward.
+ *
+ * Named because the wordmark is placed against it: the title is centred in the sky *above* the
+ * range rather than on a row of its own, so on a short landscape frame — where the horizon is only
+ * 265px down and the range reaches to 148 — it cannot end up drawn over the peaks. A fixed row
+ * cleared them by nine pixels at 844x390, which is not a clearance, it is a coincidence.
+ */
+const SKYLINE_HEIGHT_FRACTION = 0.3
 
 /** The mascot's drawn width, as a fraction of the bar's own length. */
 const SNAIL_WIDTH_FRACTION = 0.34
@@ -59,6 +80,16 @@ const SLIME = { body: 0x9fc24a, core: 0xe8f7a6 } as const
 export class Preloader extends Phaser.Scene {
   private sky!: Phaser.GameObjects.Image
   private skyline?: Phaser.GameObjects.TileSprite
+  /**
+   * The ground the horizon stands on.
+   *
+   * **⚠ Without it the skyline stood on nothing.** The mountain strip is bottom-anchored to the
+   * bar's row, so everything below that row was the sky gradient's pale bottom — a range of peaks
+   * floating over open air, with the mascot crawling along the join. One filled band fixes it, and
+   * it is the biome's own ground through the theme's own light, so the loading screen is the same
+   * world the run opens in rather than a coloured rectangle that happens to be under a mountain.
+   */
+  private ground!: Phaser.GameObjects.Graphics
   private bar!: Phaser.GameObjects.Graphics
   private snail?: Phaser.GameObjects.Image
   private title?: Phaser.GameObjects.Text
@@ -68,6 +99,7 @@ export class Preloader extends Phaser.Scene {
   private progress = 0
   private elapsedMs = 0
   private failed: string[] = []
+  private musicFileFailed = false
 
   constructor() {
     super('Preloader')
@@ -79,15 +111,22 @@ export class Preloader extends Phaser.Scene {
     this.progress = 0
     this.elapsedMs = 0
     this.failed = []
+    this.musicFileFailed = false
 
     // Zero bytes and no theme file: `ensureSkyTextures` paints its gradient onto a canvas from the
     // active theme's own two sky colours. The road is deliberately not drawn — it is the expensive
     // half of the world and none of it is loaded yet.
     ensureSkyTextures(this)
     this.sky = this.add.image(0, 0, skyTextureKey(0)).setOrigin(0.5, 0)
+    this.ground = this.add.graphics()
     this.bar = this.add.graphics()
 
     if (this.textures.exists(SNAIL_TEXTURE)) this.createSnail()
+    // **⚠ And the range needs the same guard the mascot has.** Both are built from a
+    // `filecomplete` event, which does not fire for a texture the manager already holds — so on
+    // any entry where the strip is already loaded the horizon would have been drawn with nothing
+    // standing on it. The snail carried this guard and the skyline did not.
+    if (this.textures.exists(SKYLINE_TEXTURE)) this.createSkyline()
 
     // The mascot's remaining frames and the mountain strip both arrive during the load. Each is
     // picked up the moment it lands rather than waited for: the screen is already up.
@@ -98,10 +137,25 @@ export class Preloader extends Phaser.Scene {
       this.progress = progress
     })
     this.load.on(Phaser.Loader.Events.FILE_LOAD_ERROR, (file: Phaser.Loader.File) => {
+      // **The music is the one file whose absence is not fatal**, because there is a track that
+      // needs no file at all — see `create`. Everything else here is art the game cannot be played
+      // without, so it stops the handover.
+      if (file.key === MUSIC_KEY) {
+        this.musicFileFailed = true
+
+        return
+      }
       this.failed.push(file.key)
     })
 
     bindLayout(this, (width, height) => this.layout(width, height))
+
+    // See `tick` for why this is the game's clock and not the scene's.
+    const tick = (time: number, delta: number): void => this.tick(time, delta)
+
+    this.game.events.on(Phaser.Core.Events.STEP, tick)
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.game.events.off(Phaser.Core.Events.STEP, tick))
+    this.events.once(Phaser.Scenes.Events.DESTROY, () => this.game.events.off(Phaser.Core.Events.STEP, tick))
   }
 
   preload() {
@@ -138,13 +192,22 @@ export class Preloader extends Phaser.Scene {
     }
     for (const key of OBSTACLE_ART_KEYS) this.load.image(key, `assets/obstacle/${key}.png`)
     for (const key of CRITTER_TEXTURE_KEYS) this.load.image(key, `assets/critter/${key}.png`)
+    // The interface's own masters. Greyscale value maps -- `ui/uiSprites.ts` colours them at
+    // runtime, which is what lets the primary button take the active theme's accent.
+    for (const key of UI_MASTER_KEYS) this.load.image(key, `assets/ui/${key}.png`)
     for (const key of Object.values(PICKUP_TEXTURES).flat()) {
       this.load.image(key, `assets/pickup/${key}.png`)
     }
 
     this.load.setPath('assets')
     this.load.audio('sfx', 'audio/blip.wav')
-    this.load.audio('music', 'audio/blip.wav')
+    // **The music is a file again, and what changed is the provenance rather than the rule.** It
+    // went out once for being the one entry in `AUDIO-SOURCES.md` that could not satisfy
+    // CC0-or-self-generated: no source, no licence. It is self-generated — a Stable Audio render —
+    // and that is what the registry now records, so the rule is met rather than bent. What it
+    // costs is 1.85MB of the build's own ceiling, which is the trade a recording is worth against
+    // the chiptune bed in `music.ts` — still here, and still what plays if this file is missing.
+    this.load.audio(MUSIC_KEY, 'audio/music.mp3')
   }
 
   create() {
@@ -154,6 +217,19 @@ export class Preloader extends Phaser.Scene {
     // its art, so the honest outcome is a message and a retry.
     if (this.failed.length > 0) {
       this.showFailure()
+
+      return
+    }
+
+    // **⚠ A missing music file would otherwise crash the front screen, not merely silence it**:
+    // `playMusic` calls `soundManager.add(key)`, which throws on a key that is not in the cache.
+    // So the bed from `music.ts` is rendered and queued here, in a second load cycle — a cycle
+    // that only ever runs when the file did not arrive, which is why it is not paid for on boot.
+    if (this.musicFileFailed) {
+      console.warn('[preload] audio/music.mp3 did not load; falling back to the rendered loop')
+      this.load.audio(MUSIC_KEY, renderMusicUri())
+      this.load.once(Phaser.Loader.Events.COMPLETE, () => this.scene.start('MainMenu'))
+      this.load.start()
 
       return
     }
@@ -182,6 +258,7 @@ export class Preloader extends Phaser.Scene {
     // frame wider than it repeats instead of stretching into spires.
     this.skyline = this.add.tileSprite(0, 0, 1, 1, SKYLINE_TEXTURE).setOrigin(0.5, 1)
     // Behind the bar and the mascot, in front of the sky.
+    // Above the ground it stands on, below the bar the mascot crawls along.
     this.children.moveBelow(this.skyline, this.bar)
     this.layout(this.scale.width, this.scale.height)
   }
@@ -246,12 +323,38 @@ export class Preloader extends Phaser.Scene {
     this.layout(this.scale.width, this.scale.height)
   }
 
-  update(_time: number, delta: number): void {
+  /**
+   * One frame of the loading screen.
+   *
+   * ## ⚠ It is driven by the GAME's clock, and `update` is not called while a scene is loading
+   *
+   * This was `update`, and `update` never ran: Phaser steps a scene only once it is RUNNING, and a
+   * scene spends the whole of its own `preload` in LOADING. Measured in the running game —
+   * `elapsedMs` stayed at **0 across 60 stepped frames** while the loader's progress went to 0.371.
+   * So for the entire load the bar never filled, the mascot never took a step, and the title was
+   * never created, because all three are decided here. What the player got was a still frame with
+   * an empty bar on it, which is exactly how it was reported.
+   *
+   * `Phaser.Core.Events.STEP` fires on every frame the game takes whatever any scene's status is —
+   * the same channel `Boot` already uses for `POST_RENDER` — so the screen animates from the first
+   * frame of the load rather than from the last. Unbound on shutdown, or it keeps ticking a scene
+   * that has handed over.
+   */
+  private tick(_time: number, delta: number): void {
     this.elapsedMs += delta
 
     // Not once the screen has failed: the wordmark's own row is the retry button's now, and a
     // title created after `showFailure` would be laid out by a branch that no longer runs.
-    if (!this.title && !this.failure && isDisplayFontReady()) this.createTitle()
+    if (!this.title && !this.failure) this.createTitle()
+    // **The face is upgraded in place rather than waited for.** A `Text` does not repaint when a
+    // web font arrives after it has drawn — but it does when it is *told*, and `setFontFamily`
+    // dirties it. So the title exists from the first frame in whatever stack is current, and
+    // becomes Titan One the moment the file lands. The old gate waited for the real face and
+    // therefore drew nothing at all on a boot where the font failed.
+    if (this.title && isDisplayFontReady() && this.title.style.fontFamily !== getDisplayFontStack()) {
+      this.title.setFontFamily(getDisplayFontStack())
+      this.layout(this.scale.width, this.scale.height)
+    }
 
     this.drawBar()
   }
@@ -262,14 +365,30 @@ export class Preloader extends Phaser.Scene {
     this.sky.setPosition(width / 2, 0)
     this.sky.setDisplaySize(width, height)
 
+    // **The ground, drawn from the same pair the world's own first biome uses.** `groundPairForTheme`
+    // is what the road mesh bakes its verge from, so the band under the horizon here is the colour
+    // the player is about to be standing on rather than a guess at one.
+    const theme = getRoadTheme()
+    const [dark, light] = groundPairForTheme(BIOMES[0].ground, theme.road[0], theme.road[1], undefined, theme.groundLight)
+    const horizon = height * ROWS.bar
+
+    this.ground.clear()
+    this.ground.fillStyle(dark, 1)
+    this.ground.fillRect(0, horizon, width, height - horizon)
+    // A lighter strip along the top of it, which is what stops a flat fill reading as a wall: the
+    // ground nearest the horizon is the ground furthest away, and it is lighter for the same reason
+    // every distant surface in this game is.
+    this.ground.fillStyle(light, 1)
+    this.ground.fillRect(0, horizon, width, Math.max(2, (height - horizon) * 0.12))
+
     if (this.skyline) {
       // Its own aspect in both axes — a mountain has shape in both, and scaling them apart is what
       // turns peaks into spires. See `SKYLINE_LAYER`.
-      const tileScale = Math.max(0.25, (height * 0.3) / this.skyline.texture.getSourceImage().height)
+      const tileScale = Math.max(0.25, (height * SKYLINE_HEIGHT_FRACTION) / this.skyline.texture.getSourceImage().height)
 
       this.skyline.setTileScale(tileScale, tileScale)
-      this.skyline.setSize(width, height * 0.3)
-      this.skyline.setPosition(width / 2, height * ROWS.bar + BAR.height * scale)
+      this.skyline.setSize(width, height * SKYLINE_HEIGHT_FRACTION)
+      this.skyline.setPosition(width / 2, horizon)
     }
 
     if (this.title && !this.failure) {
@@ -278,14 +397,14 @@ export class Preloader extends Phaser.Scene {
       this.title.setFontSize(size)
       this.title.setStroke(toCssColor(INK), size * TITLE_INK.stroke)
       this.title.setShadow(0, size * TITLE_INK.shadowY, toCssColor(INK), 0, true, true)
-      this.title.setPosition(width / 2, height * ROWS.title)
+      this.title.setPosition(width / 2, height * (ROWS.bar - SKYLINE_HEIGHT_FRACTION) * 0.5)
     }
 
     if (this.failure) {
-      this.failure.text.setPosition(width / 2, height * ROWS.snail)
+      this.failure.text.setPosition(width / 2, height * (ROWS.bar - SKYLINE_HEIGHT_FRACTION) * 0.5)
       this.failure.text.setWordWrapWidth(Math.max(200, width - 80 * scale))
       this.failure.button.setFontSize(24 * scale)
-      this.failure.button.container.setPosition(width / 2, height * ROWS.title)
+      this.failure.button.container.setPosition(width / 2, height * ROWS.bar)
     }
 
     this.drawBar()
@@ -297,7 +416,13 @@ export class Preloader extends Phaser.Scene {
     const width = Math.min(BAR.maxWidth * scale, this.scale.width - BAR.margin * 2 * scale)
     const height = BAR.height * scale
 
-    return { x: this.scale.width / 2 - width / 2, y: this.scale.height * ROWS.bar - height / 2, width, height }
+    // **Below the horizon, not centred on it.** Centred, half the bar was in the sky and the mascot
+    // crawled along the join between the two — with the ground under it the bar is a road *across*
+    // the ground, which is what it is meant to read as, and the mountains behind it are standing on
+    // something rather than on the bar itself.
+    const y = this.scale.height * ROWS.bar + BAR.drop * uiScale(this.scale.width)
+
+    return { x: this.scale.width / 2 - width / 2, y, width, height }
   }
 
   private drawBar(): void {

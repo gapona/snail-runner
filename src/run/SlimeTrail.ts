@@ -2,8 +2,8 @@ import * as Phaser from 'phaser'
 import { DRAW_DISTANCE, ROAD_MESH_DEPTH, ROAD_WIDTH, SEGMENT_LENGTH } from '../road/constants'
 import { createScreenPoint, wrapZ, type ScreenPoint } from '../road/project'
 import { trackLengthOf, type Segment } from '../road/track'
-import { playerGroundInto } from './playerProjection'
-import { slimeFade, SLIME_NEAR_CULL_Z, type SlimePoint } from './slime'
+import { groundPointInto } from './groundProjection'
+import { slimeFade, SLIME_GLINT, SLIME_NEAR_CULL_Z, type SlimePoint } from './slime'
 
 /**
  * The slime trail, drawn as one ribbon of quads lying on the road.
@@ -29,15 +29,21 @@ import { slimeFade, SLIME_NEAR_CULL_Z, type SlimePoint } from './slime'
 export const SLIME_DEPTH = ROAD_MESH_DEPTH + 0.5
 
 /**
- * The two passes: a dull wet body and a narrower bright core.
+ * The three passes: a dull wet body, a narrower bright core, and the glints on top.
  *
  * **One flat colour reads as paint, not as slime.** What makes something look wet is a broad dull
  * area with a specular streak down the middle of it, and two fills is the cheapest way to have one.
  * The core is drawn at a fraction of the body's width and a little brighter than the snail's own
  * light green, so the trail reads as coming *off* the snail rather than as a road marking.
+ *
+ * **⚠ And two fills alone were still a stripe with a lighter stripe in it.** A wet surface catches
+ * light in *points*; the third pass is those — see `SLIME_GLINT`. The body's own colour is a little
+ * deeper and greener than it was, so the ribbon separates from the pale flagstone road it is
+ * mostly seen on rather than sitting on it at nearly the same value.
  */
-const BODY_COLOR = 0x9fc24a
-const CORE_COLOR = 0xe8f7a6
+const BODY_COLOR = 0x86bb32
+const CORE_COLOR = 0xd8f78a
+const GLINT_COLOR = 0xf6ffd6
 
 /** How much of the body's width the bright core takes. */
 const CORE_WIDTH = 0.42
@@ -111,6 +117,19 @@ export class SlimeTrail {
             alpha * 0.8,
           )
           this.usedLastFrame += 2
+
+          // **The glint sits on the pair, not on a point**, so it has two rows to be drawn between
+          // and comes out as a lozenge lying on the road rather than as a dot facing the camera —
+          // the same reason the ribbon is quads and not billboards.
+          if (edge.glint !== 0) {
+            const half = ((edge.rightX - edge.leftX) / 2) * SLIME_GLINT.size
+            const cx = (edge.leftX + edge.rightX) / 2 + ((edge.rightX - edge.leftX) / 2) * edge.glint
+            const px = (previous.rightX - previous.leftX) / 2
+            const pcx = (previous.leftX + previous.rightX) / 2 + px * edge.glint
+
+            this.quad(g, pcx - px * SLIME_GLINT.size, previous.y, cx - half, edge.y, cx + half, pcx + px * SLIME_GLINT.size, GLINT_COLOR, alpha * 0.75)
+            this.usedLastFrame += 1
+          }
         }
       }
 
@@ -171,7 +190,7 @@ export class SlimeTrail {
 
     if (!Number.isFinite(segment.s1.scale) || segment.s1.scale <= 0) return null
 
-    const ground = playerGroundInto(this.ground, segment.s1, segment.s2, wrapZ(point.z, trackLength))
+    const ground = groundPointInto(this.ground, segment.s1, segment.s2, wrapZ(point.z, trackLength))
 
     if (!Number.isFinite(ground.scale) || ground.scale <= 0) return null
 
@@ -181,14 +200,20 @@ export class SlimeTrail {
     const centreX = ground.x + widthScale * point.offsetX * ROAD_WIDTH
     const halfPx = widthScale * point.halfWidth * ROAD_WIDTH
     const alpha = point.strength * slimeFade(ahead)
+    // **The two edges swell independently**, which is what stops the ribbon reading as a painted
+    // stripe — see `SlimePoint.swellLeft`. The centre stays the player's own line: the trail's whole
+    // job is to record where they went, so only the width may wander.
+    const leftPx = halfPx * point.swellLeft
+    const rightPx = halfPx * point.swellRight
 
     return {
       y: ground.y,
-      leftX: centreX - halfPx,
-      rightX: centreX + halfPx,
-      coreLeftX: centreX - halfPx * CORE_WIDTH,
-      coreRightX: centreX + halfPx * CORE_WIDTH,
+      leftX: centreX - leftPx,
+      rightX: centreX + rightPx,
+      coreLeftX: centreX - leftPx * CORE_WIDTH,
+      coreRightX: centreX + rightPx * CORE_WIDTH,
       alpha,
+      glint: point.glint,
     }
   }
 
@@ -204,4 +229,5 @@ interface Edge {
   coreLeftX: number
   coreRightX: number
   alpha: number
+  glint: number
 }

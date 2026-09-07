@@ -21,7 +21,8 @@
  * are already made of, so a yellow warning was competing with the scenery it had to be spotted
  * against.
  */
-import { contrastRatio } from './color'
+import { contrastRatio, relativeLuminance } from './color'
+import { surfaceColour } from './paletteColour'
 
 export const THREAT_COLOR = 0xff2f43
 
@@ -428,33 +429,65 @@ export function blendColor(color: number, towards: number, amount: number): numb
 }
 
 /**
- * The colour a theme lends the interface's one loud control.
+ * **⚠ There is no theme accent any more, and this note is what is left of it.**
  *
- * **The Play button was a fixed cyan on all seven themes, including the two whose sky is cyan.**
- * `KIT.active` is the interface palette's "yours" accent and it is deliberately fixed — a UI that
- * changed colour with the world would need its contrast re-measured per theme (see
- * `ui/kitPalette.ts`). That argument is about *readouts*, which are read against a plate. It does
- * not cover the one control drawn straight over the sky.
+ * `themeAccent` and `accentFor` lent the front screen's two solid controls the active theme's
+ * **rung** — the transverse road marking — on the argument that `kitPalette.ts`'s "the interface
+ * palette is fixed" covers *readouts*, which are read against a plate, and not the one control
+ * drawn straight over the world. That argument still looks right and the result was reported on
+ * sight: on `day` the rung is a **cream**, and the Play button and the mode chip both carry pale
+ * type — a near-white name, a pale caption, a pale detail — so the whole control went to pale-on-
+ * pale and could not be read.
  *
- * Taken from the theme's **rung** — the transverse road marking. Three reasons, in order: it is
- * already the theme's own loud colour rather than a new one to author; it is already swept against
- * the reserved threat hue by `verify:road`, so this cannot smuggle a hazard-coloured button in; and
- * it is the slot that was just repainted to tell the themes apart, so a theme that reads as its own
- * on the road reads as its own on the button.
+ * **The check of the day passed it**, and that is the part worth keeping. `ACCENT_MIN_BACKDROP_
+ * CONTRAST` measured the **fill against the road** and `day`'s cream scored 1.47:1 over a 1.4
+ * floor. Nothing measured the **label against the fill**, which is the pair a player actually
+ * reads — the same shape as a floor that rejects a colour and hands back a worse one, which this
+ * same constant was corrected for one round earlier. A proxy that has never been checked against
+ * the thing it stands for is not a measurement of it.
  *
- * **Falls back to the interface accent when the theme's own would not read**, which is the whole
- * safety of borrowing a world colour for a control: `signal`'s rung is a near-white grey against a
- * near-white grey sky.
+ * So the accent is `KIT.active` on every theme and only the world behind it changes, which is what
+ * was asked for. `verify:ui` holds the pair that decides legibility — the label's ink against the
+ * fill — and prints the fill against every theme's road as a diagnostic rather than a gate.
+ *
+ * `accentContrast` and `accentBackdrop` survive as that instrument. Nothing in the game reads them.
  */
-export function themeAccent(): number {
-  const theme = getRoadTheme()
-  const rung = theme.road[4]
 
-  return contrastRatio(rung, theme.sky.bottom) >= ACCENT_MIN_SKY_CONTRAST ? rung : DEFAULT_ACCENT
+
+/**
+ * What the front screen's controls are actually drawn over, as relative luminance.
+ *
+ * **⚠ It is the near ROAD, and the whole of this round's second defect was that it used to be the
+ * sky.** `menuLayout.ts` puts the button band at 0.80–0.86 of the frame and `HORIZON_Y` is 0.62, so
+ * the buttons sit a long way *below* the horizon — over ground, not over air. And the road covers
+ * them: its projected half-width at the top of that band is 0.36 of the frame, so the road spans
+ * 72% of the width there against a widest-ever Play button of 66% (211px on a 320px frame). Neither
+ * control ever reaches the verge.
+ *
+ * Both asphalt shades are averaged, because the road alternates between them on the rumble beat and
+ * over a second the button is over each about equally — the same reasoning, and the same arithmetic,
+ * as `mascotPixels.roadLuminance`. Through `surfaceColour` rather than off the authored constant,
+ * because the bake lifts saturation and an authored value is not a colour anybody sees.
+ */
+function nearRoadLuminance(theme: RoadTheme): number {
+  const shades = [0, 1].map((i) =>
+    surfaceColour({ base: theme.road[i], family: 'road', fog: theme.fog, sky: theme.sky.bottom, amount: 0 }),
+  )
+
+  return (relativeLuminance(shades[0]) + relativeLuminance(shades[1])) / 2
 }
 
-/** How far the button has to stand off the sky it is drawn over. */
-export const ACCENT_MIN_SKY_CONTRAST = 1.8
 
-/** What a theme whose own accent would vanish into its sky falls back to: the interface's cyan. */
-export const DEFAULT_ACCENT = 0x4fd6e0
+/** How far a candidate stands off the road it will be drawn on. Exported so a check can sweep it. */
+export function accentContrast(color: number, behind: number = 0): number {
+  const own = relativeLuminance(color)
+
+  return (Math.max(own, behind) + 0.05) / (Math.min(own, behind) + 0.05)
+}
+
+/** The near road a theme's own controls are read against, for the checks and for the DEV report. */
+export function accentBackdrop(theme: RoadTheme): number {
+  return nearRoadLuminance(theme)
+}
+
+

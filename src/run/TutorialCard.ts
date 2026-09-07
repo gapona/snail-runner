@@ -59,6 +59,16 @@ export class TutorialCard {
   private frame = { width: 0, height: 0, scale: 1 }
   /** Where `draw` put the plate, so the pointer can leave its edge rather than its centre. */
   private box = { left: 0, right: 0, top: 0, bottom: 0 }
+  /**
+   * Whether a card is on screen and whether it has been answered, so `layout` can redraw it.
+   *
+   * **The plate and the three lines are placed in `draw`, and `draw` runs from `update`** — which is
+   * the run's own loop. Everything else on this screen is repositioned by `layout` and is therefore
+   * correct the instant a frame changes size; this would have been correct only on the next tick of
+   * a loop that a paused scene does not run at all. A paused scene still *renders*, so a rotation
+   * with a panel open over the run would leave the card drawn for the frame before it.
+   */
+  private shown: { done: boolean } | null = null
 
   constructor(scene: Phaser.Scene) {
     this.plate = scene.add.graphics().setDepth(HUD_DEPTH)
@@ -82,6 +92,19 @@ export class TutorialCard {
     return [this.plate, this.title, this.why, this.prompt, this.pointer]
   }
 
+  /**
+   * How far down the HUD's own top-left column reaches, in screen pixels.
+   *
+   * Set by the scene each frame from `Hud.blockBottom`, so the card cannot be laid over the fruit
+   * row and the lives — see `draw`. Zero until it is told, which is the right default: a card with
+   * no HUD under it belongs at `CARD_TOP`.
+   */
+  private hudBottom = 0
+
+  setHudBottom(y: number): void {
+    this.hudBottom = y
+  }
+
   layout(width: number, height: number): void {
     const scale = uiScale(width)
 
@@ -93,6 +116,9 @@ export class TutorialCard {
     // actually teaches anything — runs off the side of a phone. The plate is then sized from the
     // wrapped text, which is why the two are measured in that order.
     this.why.setWordWrapWidth(Math.min(width - 48 * scale, 460 * scale))
+    // The wrap width has just changed, so the reason's own height has too — and the plate is sized
+    // from it. Redrawn here rather than waited for, per `shown`.
+    if (this.shown) this.draw(this.shown.done)
   }
 
   /**
@@ -106,6 +132,7 @@ export class TutorialCard {
     const step = currentStep(state)
 
     if (!step || !cardVisible(step, distance)) {
+      this.shown = null
       this.setVisible(false)
 
       return
@@ -123,6 +150,7 @@ export class TutorialCard {
     // a line saying how to start it would be describing something that has already happened.
     this.prompt.setText(done ? '' : t(step.kind === 'read' ? 'tutorialContinue' : 'tutorialTryIt'))
     this.prompt.setVisible(!done)
+    this.shown = { done }
     this.draw(done)
     this.drawPointer(step.highlight && rectFor ? rectFor(step.highlight) : null, now)
   }
@@ -205,7 +233,13 @@ export class TutorialCard {
     const promptHeight = this.prompt.visible ? gap + this.prompt.height : 0
     const boxWidth = Math.max(this.title.width, this.why.width, this.prompt.width) + pad * 2
     const boxHeight = this.title.height + gap + this.why.height + promptHeight + pad * 2
-    const top = height * CARD_TOP
+    // **⚠ Never above whatever the HUD's own left column reaches.** The status block moved into
+    // the top band when the bottom one turned out to be the mascot's, and on a portrait frame both
+    // the block and this card are most of the width — so a fraction of the height alone would put
+    // the card straight over the fruit row. `hudBottom` is measured from the HUD rather than
+    // guessed, for the reason the highlight ring is: a card carrying its own idea of where the
+    // readouts are is a second opinion about it.
+    const top = Math.max(height * CARD_TOP, this.hudBottom + 10 * scale)
     const left = width / 2 - boxWidth / 2
 
     this.title.setPosition(width / 2, top + pad)

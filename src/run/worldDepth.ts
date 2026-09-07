@@ -21,6 +21,8 @@
  * uses** — distance from the camera in segments, negated.
  */
 
+import { segmentPercent } from '../road/track'
+
 /**
  * Per-category tiebreaks, in fractions of a segment.
  *
@@ -58,6 +60,16 @@ export const WORLD_LAYER = {
    * nothing may draw over it on its own row.
    */
   critter: 0.35,
+  /**
+   * A flyer's wings, just under its body.
+   *
+   * They are drawn BEHIND the creature: a wing sweeping across the thorax reads as a separate
+   * object stuck to the front of it, and the references all draw them behind. Its own slot rather
+   * than sharing `critter`'s, for the reason every tiebreak here exists -- two objects at one depth
+   * fall back to pool order, which is stable for two bodies and not at all stable for a wing and
+   * the body it belongs to.
+   */
+  critterWing: 0.34,
   player: 0.4,
   pickup: 0.5,
 } as const
@@ -72,6 +84,35 @@ export const WORLD_LAYER = {
  */
 export function worldDepth(distanceIndex: number, layer: number): number {
   return -distanceIndex + layer
+}
+
+/**
+ * Where an object sorts, given the segment it is in and its own position along the track.
+ *
+ * **⚠ Every pool used to answer this differently, and two of the answers were a whole segment
+ * apart.** The obstacle, pickup and ramp pools passed the bare segment index `n` — so an obstacle
+ * anywhere inside a segment sorted as though it stood on that segment's near edge — while the
+ * critter pool and `PlayerView` passed a *continuous* distance measured from the **camera**, which
+ * is a different origin again: the camera stands some way into its own base segment, and `n` counts
+ * from that segment's near edge rather than from the camera.
+ *
+ * Two errors compounding, and measured on the shipped constants: **a critter was drawn in front of
+ * an obstacle up to 208 world units BEHIND it, and behind one up to 189 units IN FRONT of it.** A
+ * segment is 200 units and a flyer is 686–1050 units wide, so a bee passing a barrier drew straight
+ * through it — reported three times as seeing the wings through the textures, which is exactly what
+ * a sprite sorted a segment out of place looks like.
+ *
+ * The fix is that there is one answer: **the origin is the base segment's near edge and the unit is
+ * a segment**, so an object's index is how many whole segments it is past that edge plus how far it
+ * stands into its own. Everything the camera can see is measured the same way, so no two pools can
+ * disagree — and because a common offset shifts every depth equally, it does not matter that the
+ * camera itself is not the origin, only that nobody uses a different one.
+ *
+ * `segmentsAhead` is the object's segment minus the base segment; `worldZ` is its own wrapped
+ * position along the track.
+ */
+export function distanceIndexOf(segmentsAhead: number, worldZ: number): number {
+  return segmentsAhead + segmentPercent(worldZ)
 }
 
 /**

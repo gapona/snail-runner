@@ -124,11 +124,42 @@ export const ROAD_EDGE = 1 - PLAYER_HALF_WIDTHS
 export const OFFROAD_LIMIT = 1 + PLAYER_HALF_WIDTHS
 
 /**
- * How much further than the road's edge a finger at the edge of the screen must be able to ask for.
+ * What share of the road's edge a finger at the edge of the screen must be able to ask for.
  *
  * One of the two bounds on how big the mascot can be drawn — see `PLAYER_REST_Y_FRACTION`.
+ *
+ * ## ⚠ It was 1.1 and is 0.98, which is the one number in this file that crossed 1
+ *
+ * At 1.1 a finger at the frame's edge could ask for **1.1 x `ROAD_EDGE`** — past the asphalt and out
+ * onto the verge — and that slack was the binding bound on how near the camera the snail could
+ * stand, i.e. on how big it is drawn. Reported: the mascot is about 5% of a portrait frame's height
+ * and gets lost against the road. Every other lever is closed (`PLAYER_BODY_H` lists them, and
+ * `verify:player` measures each), so this was the only one with anything in it, and spending it was
+ * the call taken.
+ *
+ * **What it buys is one quantum, not a proportion, and that is why 0.98 rather than 1.0.** The rest
+ * row is snapped to quarter-segments by `PLAYER_SEGMENT_PHASE`, so the bounds only matter through
+ * *which quantum they permit*: at 1.10, 1.00 and 0.99 the row lands on the same `PLAYER_Z` of 1650
+ * and the mascot is the same 41px on a 320x568 frame. 0.98 is the first value that reaches 1450 —
+ * **46px, +13.8%**, and 244px to 278px on a desktop.
+ *
+ * **What it costs is stated rather than rounded off: the outer 1.3% of the asphalt.** A finger at
+ * the very edge of the frame now asks for `offsetX 0.864` against a `ROAD_EDGE` of 0.875, so the
+ * last sliver of road cannot be *steered* to. Two things follow, and the first is not optional:
+ *
+ * - **The passability proof samples what the player can reach**, not what the asphalt measures —
+ *   see `REACHABLE_EDGE` and `sampleOffsets`. Without that, `provePassable` could certify a row
+ *   whose only gap is in the sliver, i.e. prove a row passable that nobody can pass. Today it is
+ *   *more* correct than it was: at 1.1 the samples were conservative by accident.
+ * - **The verge is now somewhere you slide, not somewhere you park.** The spring is underdamped by
+ *   design (6.6% overshoot), so a hard flick still carries the snail past `ROAD_EDGE` and
+ *   `OFFROAD_DRAG` still bites — it is a consequence of overshooting rather than a place to steer
+ *   to, which is arguably what a penalty zone should be.
+ *
+ * Pickups and ramps were checked against the new reach rather than assumed safe: `PICKUP_OFFSET.max`
+ * is 0.825 and `RAMP_MAX_OFFSET` 0.545, both comfortably inside 0.864.
  */
-export const STEER_REACH_MARGIN = 1.1
+export const STEER_REACH_MARGIN = 0.98
 
 /**
  * How far the ground at the player's own row falls below its flat position on the steepest descent
@@ -291,6 +322,72 @@ export function halfWidthsAtLane(screenFraction: number): number {
 
   return ((screenFraction - 0.5) * 2) / (scale * ROAD_WIDTH)
 }
+
+/**
+ * How much of each side of the frame already means full lock, as a fraction of its width.
+ *
+ * ## ⚠ The road's edge was at the screen's edge, and a finger cannot go there
+ *
+ * Reported from a phone: the snail cannot be steered to the very edge, and that is where coins and
+ * fruit are. Both halves are one number. `halfWidthsAtLane` maps the pointer linearly across the
+ * *whole* frame, so `REACHABLE_EDGE` sat at exactly 100% of it and the outermost pickup
+ * (`PICKUP_OFFSET.max`, 0.825) at **97.7% — nine pixels from the edge of a 383px screen**. A thumb
+ * cannot hold a position nine pixels from the bezel, and on most phones that strip belongs to the
+ * system's own edge gestures anyway.
+ *
+ * **It is an input-ergonomics number, not a geometric one, which is why it is applied here and not
+ * inside `halfWidthsAtLane`.** That function is the honest projection — a screen fraction read as
+ * half-widths on the player's row — and `STEER_REACH` is still `halfWidthsAtLane(1)`. What changes
+ * is only *where on the glass* the ends of that range are asked for: the outer 6% of each side
+ * saturates, so full lock arrives at 94% of the frame and the outermost pickup at 92%, i.e. **23px
+ * and 31px in** on the same 383px screen.
+ *
+ * Nothing else moves. `REACHABLE_EDGE` is unchanged, so `provePassable` samples exactly what it
+ * sampled, no row is re-proved, and the mascot's size — which is bounded by `PLAYER_Z`, not by this
+ * — is untouched. That is the whole reason to fix it here rather than by moving
+ * `STEER_REACH_MARGIN` back over 1, which would take the size with it.
+ *
+ * **6% and not more**: the band is dead travel, and a player who has learned that the left third of
+ * the screen means "left" should not find the outer sixth of it doing nothing. `verify:player`
+ * prints what it delivers in pixels at every supported frame.
+ */
+export const STEER_EDGE_MARGIN = 0.06
+
+/**
+ * A pointer's position across the frame, read as the `offsetX` it is asking for.
+ *
+ * `halfWidthsAtLane` with the ends of the travel brought in off the glass — see
+ * `STEER_EDGE_MARGIN`. This is what the input path uses; the bare conversion is what geometry uses.
+ */
+export function steerTarget(screenFraction: number): number {
+  const usable = 1 - 2 * STEER_EDGE_MARGIN
+  const t = (screenFraction - STEER_EDGE_MARGIN) / usable
+
+  return halfWidthsAtLane(Math.min(1, Math.max(0, t)))
+}
+
+/**
+ * The furthest `offsetX` a finger at the very edge of the frame can ask for.
+ *
+ * A *consequence* of where the player stands rather than a constant: it falls out of `PLAYER_Z`,
+ * which falls out of the two bounds. Stated so the rest of the game can ask the question rather
+ * than each caller re-deriving it from the projection.
+ */
+export const STEER_REACH = halfWidthsAtLane(1)
+
+/**
+ * The furthest `offsetX` the player can actually *be* at, which is the narrower of two facts.
+ *
+ * **⚠ This is the authority for anything the player has to be able to steer to**, and until
+ * `STEER_REACH_MARGIN` crossed 1 it was `ROAD_EDGE` by accident: the reach used to be 1.1x the
+ * asphalt, so sampling the asphalt was conservative and nobody had to notice which of the two was
+ * the real bound. It is the reach now, and the difference is 1.3% of the road.
+ *
+ * The one thing that must follow it is the passability proof — a row certified passable at an
+ * offset nobody can steer to is a row the game says is fair and is not. Obstacles, critters and
+ * scenery are deliberately *not* held to it: a thing to avoid may stand anywhere.
+ */
+export const REACHABLE_EDGE = Math.min(ROAD_EDGE, STEER_REACH)
 
 
 /**
@@ -467,6 +564,27 @@ export const FEVER_MAGNET_RATE = 20
 export const HIT_SPEED_LOSS = MAX_SPEED * 0.1
 export const RUN_LIVES = 3
 
+/**
+ * How many shields the player may carry at once.
+ *
+ * **⚠ There was no cap at all, and `addShield` simply incremented.** The readout that stood for it
+ * therefore had to guess a ceiling of its own — five pips and then a `+` — which is a count to read
+ * rather than a shape to glance at, i.e. the exact failure the lives are pips to avoid.
+ *
+ * One, because a shield is *the next mistake is free* and that sentence does not stack. Two shields
+ * is a second life bought at a pickup's price, on top of the three the run already grants, and the
+ * ceiling on carelessness is the one thing `RUN_LIVES` is for. It also makes the survivability row
+ * a fixed four elements at its longest, which is what lets that row be read as a length rather than
+ * counted — see `ui/lifeRow.ts`.
+ *
+ * **A shield the player cannot hold must never be laid on the road**: collecting one that does
+ * nothing is worse than there being none, because the player learns the pickup is unreliable rather
+ * than that they are full. A pickup the run has no room for is drawn dimmed and left where it is —
+ * see `UNAVAILABLE_ALPHA`.
+ * See `shieldWithheld` there and the check in `verify:player`.
+ */
+export const MAX_SHIELDS = 1
+
 
 /**
  * The fastest the game can ever go, in world units per second.
@@ -560,7 +678,31 @@ export const OBSTACLE_DEPTH = SEGMENT_LENGTH
  * | band       | range        | outcome                                             |
  * |------------|--------------|-----------------------------------------------------|
  * | `low`      | `[0, 230]`   | cleared by a jump — the apex puts the foot at 430    |
- * | `blocking` | `[0, 620]`   | **cannot** be jumped; must be gone around           |
+ * | `blocking` | `[0, 802]`   | **cannot** be jumped; must be gone around           |
+ *
+ * ## ⚠ `blocking` is taller than the snail ever gets, and 620 was not
+ *
+ * Reported from a phone: the tall barrier *looks* jumpable. It was, in the only sense a picture can
+ * be read — **at the apex the snail's own top is at `JUMP_APEX + PLAYER_BODY_H` = 740, and the
+ * barrier reached 620**, so the frame at the top of a jump showed the creature a clear 120 units
+ * above the thing it had just been stopped by. The collision was right (the *feet* are at 430,
+ * inside `[0, 620]`) and the frame said the opposite, which is the same class of defect as a hazard
+ * that hits from further away than it looks.
+ *
+ * So the height is derived rather than chosen: **above the highest the mascot ever reaches**, plus
+ * `BLOCKING_HEAD_CLEARANCE` of a body so the gap is legible rather than merely present — the same
+ * shape as the daylight the deleted `overhead` class kept under itself. That makes it 2.6 body
+ * heights where it was 2.0, and it is now impossible for a jump to *draw* clear of one.
+ *
+ * **What it costs is the note below, and this overrules it.** The heights were cut once for reading
+ * as an industrial estate, at `blocking` 520 against a body of 261 — the same 2.0 ratio the 620 had
+ * against today's 310. That was a call about bulk with no report behind it; this is a report about
+ * a rule the player cannot see obeyed, and a rule that cannot be read is not doing its job.
+ *
+ * **The art follows, it is not stretched.** `ObstacleSprites` maps the texture onto the world box,
+ * so the two renders were regenerated at the new proportion by `dev-assets/cc0-3d/barrier_render.py`
+ * — whose own `TARGETS` is this arithmetic restated. A 45% taller box under the old 1.10:1 panel is
+ * exactly the 41%-too-wide distortion that file exists to have fixed.
  *
  * **⚠ THERE WAS A THIRD CLASS AND IT WAS REMOVED, AND THIS NOTE IS THE ARGUMENT IT LOST.**
  * `overhead` was `[362, 560]`: run under on the ground, hit by jumping into it. The docstring here
@@ -587,9 +729,11 @@ export const OBSTACLE_DEPTH = SEGMENT_LENGTH
  * through. What actually binds is only this: `blocking` must reach above the apex. Everything past
  * that is bulk, and bulk was costing the read.
  */
+export const BLOCKING_HEAD_CLEARANCE = 0.2
+
 export const OBSTACLE_BANDS = {
   low: { yLow: 0, yHigh: 230 },
-  blocking: { yLow: 0, yHigh: 620 },
+  blocking: { yLow: 0, yHigh: Math.round(JUMP_APEX + PLAYER_BODY_H * (1 + BLOCKING_HEAD_CLEARANCE)) },
 } as const
 
 export type ObstacleKind = keyof typeof OBSTACLE_BANDS
@@ -637,6 +781,40 @@ export const REACTION_MS = 450
  * eight times for one mistake is not a difficulty setting.
  */
 export const HIT_INVULNERABLE_Z = (REACTION_MS / 1000) * MAX_ATTAINABLE_SPEED * 0.55
+
+/**
+ * How many lives a rewarded continue hands back, and how much road it hands them back on.
+ *
+ * **One life, not three.** A continue that restored the full set would double the length of every
+ * run for the price of one ad, which makes the ad the way the game is played rather than a thing a
+ * player may do — and it would put the leaderboard out of reach of anyone who does not watch them.
+ * What the offer is for is the one mistake that just ended the run, and one life is exactly that
+ * mistake given back.
+ *
+ * **The grace is four times an ordinary hit's**, and it is not generosity either: the snail comes
+ * back on the piece of road that killed it, at whatever speed the run was doing, with the rest of
+ * that row still standing. `HIT_INVULNERABLE_Z` covers a row; this has to cover the row *and* leave
+ * `REACTION_MS` of clear sight after it, or the continue is spent on a crash the player could not
+ * have answered — which is the exit-from-Fever failure read from a third direction.
+ */
+export const CONTINUE_LIVES = 1
+export const CONTINUE_GRACE_Z = HIT_INVULNERABLE_Z * 4
+
+/**
+ * How long a stage run coasts past its finish line before the result panel arrives.
+ *
+ * **A duration rather than a distance, which is the one place in this file that is the right unit.**
+ * Every window in this game is stated in world units precisely because a duration means a different
+ * number of *rows* at different speeds — but nothing is being spaced against this one. What it is
+ * about is how long the player looks at the line going past, which is a fact about watching rather
+ * than about the road, and a distance would make the moment shorter the faster the run was going.
+ *
+ * Set at the same 1000ms `PLAYER_DEATH_MS` is, because the two are one beat read from opposite ends:
+ * a crash and an arrival both need long enough to be seen and short enough that the panel does not
+ * feel late. Spelled out rather than imported — `playerDeath.ts` imports this file, so reading it
+ * back would be a cycle, and the same reason `DEFAULT_WEAPON_ID` was duplicated once before.
+ */
+export const FINISH_HOLD_MS = 1000
 
 /* ------------------------------------------------------------------ *
  * Feel: the spring, the camera, the hitstop

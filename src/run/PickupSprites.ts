@@ -8,8 +8,16 @@ import {
 import { billboardAppear, billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, SPRITE_SCALE } from '../road/constants'
 import type { Segment } from '../road/track'
 import { createPickupTextures, PICKUP_TEXTURES, pickupTexture } from './pickupArt'
-import { WORLD_LAYER, worldDepth } from './worldDepth'
-import { PICKUP_BOB, PICKUP_POOL_SIZE, PICKUP_SHADOW_LINK, pickupDrawWidth, type Pickup } from './pickups'
+import { distanceIndexOf, WORLD_LAYER, worldDepth } from './worldDepth'
+import {
+  PICKUP_BOB,
+  PICKUP_POOL_SIZE,
+  PICKUP_SHADOW_LINK,
+  pickupDrawWidth,
+  UNAVAILABLE_ALPHA,
+  type Pickup,
+  type PickupKind,
+} from './pickups'
 import {
   SHADOW_DARKEN,
   SHADOW_FOOTPRINT,
@@ -18,6 +26,7 @@ import {
   shadowLinkFade,
   shadowScale,
 } from './shadows'
+import { groundPointInto, type GroundPoint } from './groundProjection'
 
 /**
  * Every pickup on screen, from a fixed pool.
@@ -48,6 +57,8 @@ interface SlotState {
   cropped: boolean
 }
 
+const EMPTY_KINDS: ReadonlySet<PickupKind> = new Set()
+
 export class PickupSprites {
   /**
    * Everything this pool draws, for the scene's camera `ignore` lists.
@@ -74,6 +85,8 @@ export class PickupSprites {
   readonly shadowMarks: { x: number; y: number; owner: string }[] = []
 
   private readonly rect = createBillboardRect()
+  /** The interpolated ground point, reused per object. */
+  private readonly ground: GroundPoint = { x: 0, y: 0, w: 0, scale: 0 }
   /** A second scratch rect: the shadow's own projection, taken at height zero. */
   private readonly shadowRect = createBillboardRect()
 
@@ -106,6 +119,14 @@ export class PickupSprites {
     screenWidth: number,
     screenHeight: number,
     now: number,
+    /**
+     * Kinds the run has no room for — drawn dimmed rather than taken off the road.
+     *
+     * **Passed in rather than read here**, because it is a fact about the run and this class knows
+     * only how to draw. See `UNAVAILABLE_ALPHA` for the round in which these were deleted instead
+     * and what that cost.
+     */
+    useless: ReadonlySet<PickupKind> = EMPTY_KINDS,
   ): void {
     const previousUsed = this.usedLastFrame
     const capacity = this.slots.length
@@ -120,13 +141,20 @@ export class PickupSprites {
 
       if (!here || here.length === 0) continue
 
-      const ground = track[index].s1
+      const segment = track[index]
 
-      if (!Number.isFinite(ground.scale) || ground.scale <= 0) continue
+      if (!Number.isFinite(segment.s1.scale) || segment.s1.scale <= 0) continue
 
       const clip = clipY[n]
 
       for (const pickup of here) {
+        // **⚠ Interpolated across the segment, not read off its near edge** — see
+        // `groundProjection.ts`. `Segment.s1` is exact for a tree, which stands *at* that edge;
+        // this stands at its own `z` anywhere inside the segment, so drawing it from `s1` put the
+        // sprite and the world position up to one `SEGMENT_LENGTH` apart in depth.
+        const ground = groundPointInto(this.ground, segment.s1, segment.s2, pickup.z)
+        // Where it stands INSIDE its segment -- see `distanceIndexOf`.
+        const distanceIndex = distanceIndexOf(n, pickup.z)
         if (pickup.taken) continue
 
         // The bob is in world units, not screen pixels -- see `PICKUP_BOB`.
@@ -183,7 +211,18 @@ export class PickupSprites {
               )
             : null
 
-        this.place(this.slots[used], pickupTexture(pickup), rect, visible, n, shadowRect, height, link, clip)
+        this.place(
+          this.slots[used],
+          pickupTexture(pickup),
+          rect,
+          visible,
+          distanceIndex,
+          shadowRect,
+          height,
+          link,
+          clip,
+          useless.has(pickup.kind) ? UNAVAILABLE_ALPHA : 1,
+        )
         if (import.meta.env.DEV && this.slots[used].shadow.visible) {
           this.shadowMarks.push({ x: this.slots[used].shadow.x, y: this.slots[used].shadow.y, owner: `pickup#${pickup.id}` })
         }
@@ -225,6 +264,7 @@ export class PickupSprites {
     height: number,
     link: number,
     clip: number,
+    available: number,
   ): void {
     const image = slot.image
 
@@ -241,7 +281,10 @@ export class PickupSprites {
       slot.shadow.setVisible(true)
       slot.shadow.setPosition(shadowRect.x, shadowRect.y)
       slot.shadow.setSize(shadowRect.w * SHADOW_FOOTPRINT.width * scale, markHeight)
-      slot.shadow.setAlpha(shadowAlpha(height) * SHADOW_DARKEN * link * clipped)
+      // The mark dims with the icon: a full-strength shadow under a greyed pickup reads as the
+      // sprite failing to draw rather than as the pickup being inert — the same pairing the
+      // mascot's blink makes with its own shadow.
+      slot.shadow.setAlpha(shadowAlpha(height) * SHADOW_DARKEN * link * clipped * available)
       slot.shadow.setDepth(worldDepth(distanceIndex, WORLD_LAYER.shadow))
     } else {
       slot.shadow.setVisible(false)
@@ -264,7 +307,7 @@ export class PickupSprites {
     image.setDepth(worldDepth(distanceIndex, WORLD_LAYER.pickup))
     // Two independent terms: the haze it is seen through, and the fade it arrives with.
     // See `BILLBOARD_FADE_IN_FRACTION` for why they are not one number.
-    image.setAlpha((1 - billboardFog(distanceIndex) * MAX_BILLBOARD_FOG) * billboardAppear(distanceIndex))
+    image.setAlpha((1 - billboardFog(distanceIndex) * MAX_BILLBOARD_FOG) * billboardAppear(distanceIndex) * available)
 
     if (visibleFraction < 1) {
       image.setCrop(0, 0, image.frame.realWidth, Math.max(1, Math.round(image.frame.realHeight * visibleFraction)))

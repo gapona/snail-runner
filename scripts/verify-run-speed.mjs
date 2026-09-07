@@ -15,15 +15,19 @@
 import assert from 'node:assert/strict'
 import {
   addShield,
+  canTakeHeal,
   eatFruit,
+  heal,
   createRunState,
   earnCoin,
   isRunOver,
+  revive,
   runSeconds,
   stepRun,
   takeHit,
 } from '../src/run/runState.ts'
 import {
+  CONTINUE_LIVES,
   FEVER_SPEED_FACTOR,
   HIT_SPEED_LOSS,
   RUN_LIVES,
@@ -292,6 +296,34 @@ check('a shield absorbs one hit instead of a life, and is spent doing it', () =>
   assert.equal(state.lives, RUN_LIVES - 1, 'the next hit did not land')
 })
 
+check('a medkit puts a life back, up to the number a run starts with', () => {
+  let state = createRunState()
+
+  // **Worth nothing at full health, and that is the honest outcome rather than a defect** — which
+  // is why `canTakeHeal` exists: `RunScene` asks it while the pickup is still beyond the draw
+  // distance and withholds one the player has no room for, so a medkit is never driven through for
+  // no effect. A pickup that gave nothing would read as the game dropping it.
+  assert.equal(canTakeHeal(state), false, 'a full run has room for a medkit')
+  assert.deepEqual({ ...heal(state) }, { ...state }, 'a medkit at full health changed the run')
+
+  state = takeHit(takeHit(state))
+  assert.equal(state.lives, RUN_LIVES - 2)
+  assert.equal(canTakeHeal(state), true, 'a damaged run has no room for a medkit')
+
+  const speedBefore = state.speed
+
+  state = heal(state)
+  assert.equal(state.lives, RUN_LIVES - 1, 'the medkit gave back more or less than one life')
+  // **It answers a life and nothing else.** A hit costs speed *and* a life, and giving the speed
+  // back too would make this the only pickup worth having — the argument `addShield` is under.
+  assert.equal(state.speed, speedBefore, 'the medkit gave speed back as well as a life')
+
+  // **The cap is the starting count**, so a stretch of lucky road cannot turn three lives into a
+  // health bar: the lives are the ceiling on carelessness rather than the medium of exchange.
+  state = heal(heal(heal(state)))
+  assert.equal(state.lives, RUN_LIVES, `a medkit took the run past ${RUN_LIVES} lives`)
+})
+
 // The Fever ceiling, its duration, its landing and the guard are all `verify:fever`'s -- they are
 // one mechanism and splitting its assertions across two suites is how half of one gets forgotten.
 check('a fruit banks into the gauge and nothing else touches it', () => {
@@ -315,6 +347,35 @@ check('coins accumulate and are never fractional', () => {
   assert.equal(state.coins, Math.floor(state.coins))
 })
 
+check('a continue gives back the life and nothing else', () => {
+  let state = createRunState()
+
+  for (let i = 0; i < 12; i++) state = stepRun(state, 1000 / 60, { trackLength: TRACK })
+  state = earnCoin(eatFruit(state))
+  for (let i = 0; i < RUN_LIVES; i++) state = takeHit(state)
+  assert.ok(isRunOver(state), 'the fixture did not actually end the run')
+
+  const dead = state
+  const alive = revive(dead)
+
+  assert.equal(alive.lives, CONTINUE_LIVES)
+  assert.equal(isRunOver(alive), false)
+  // **Everything the run *is* survives, which is the whole difference between a continue and a
+  // restart.** A continue that reset the distance would be selling the player a new run under the
+  // old one's name; one that gave the speed back would make the last mistake of a run cheaper than
+  // every other mistake in it.
+  for (const field of ['z', 'distance', 'speed', 'coins', 'shields', 'ticks', 'stepRemainderMs']) {
+    assert.equal(alive[field], dead[field], `a continue changed ${field}, which is not its to change`)
+  }
+  assert.deepEqual(alive.fever, dead.fever, 'a continue reset the fruit gauge')
+
+  // A run that is still going has nothing to continue, and saying so here is what stops a stray
+  // second press handing out a life mid-run.
+  const running = createRunState()
+
+  assert.deepEqual(revive(running), running)
+})
+
 check('every mutator is pure', () => {
   // The whole module is values in, values out — which is what makes the run testable here at all,
   // and what stops a scene from half-applying a change.
@@ -325,6 +386,8 @@ check('every mutator is pure', () => {
   eatFruit(original)
   earnCoin(original)
   addShield(original)
+  heal(original)
+  revive(original)
   assert.deepEqual({ ...original }, snapshot)
 })
 

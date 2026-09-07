@@ -28,7 +28,9 @@ import {
   WAVE,
 } from '../src/run/formations.ts'
 import {
-  PICKUP_POOL_SIZE, PICKUP_HEIGHT, PICKUP_OFFSET, PICKUP_REACH_UNDERFOOT, reaches } from '../src/run/pickups.ts'
+  PICKUP_POOL_SIZE, PICKUP_HEIGHT, PICKUP_OFFSET, PICKUP_REACH_UNDERFOOT, reaches,
+  PICKUP_KINDS, PICKUP_WEIGHTS, createKindDeck,
+} from '../src/run/pickups.ts'
 import { createPlayerState, flightDuration, flightHeight, jump, stepPlayer } from '../src/run/playerMotion.ts'
 import { placeRunObstacles } from '../src/run/obstacles.ts'
 import { speedAfter } from '../src/run/runState.ts'
@@ -56,6 +58,90 @@ const TRACK = 286800
 const DT = 1000 / 60
 
 console.log('the flight solver is one function')
+
+check('\u26a0 a kind arrives on a schedule, not in clusters with droughts between them', () => {
+  // **This is the report**: *the medkits come four almost in a row and then there are none at all --
+  // can it be even, especially in endless?* An independent weighted draw does exactly that: `heal`
+  // is an eighth of the chains, and an eighth of ~33 chains rolled per chain clusters and droughts
+  // by construction. A lap is the only sample anybody plays, so the rate being right in the limit is
+  // not the same as the lap being right.
+  const total = PICKUP_KINDS.reduce((sum, kind) => sum + PICKUP_WEIGHTS[kind], 0)
+  const chains = 4000
+  const deal = createKindDeck(createRng(7))
+  const dealt = []
+
+  for (let i = 0; i < chains; i++) dealt.push(deal())
+
+  // The control: the i.i.d. draw this replaces, on the same weights and the same stream.
+  const iid = createRng(7)
+  const drawn = []
+
+  for (let i = 0; i < chains; i++) {
+    let roll = iid() * total
+    let kind = PICKUP_KINDS[PICKUP_KINDS.length - 1]
+
+    for (const candidate of PICKUP_KINDS) {
+      roll -= PICKUP_WEIGHTS[candidate]
+      if (roll <= 0) {
+        kind = candidate
+        break
+      }
+    }
+    drawn.push(kind)
+  }
+
+  const worstGap = (list, kind) => {
+    let last = -1
+    let worst = 0
+
+    list.forEach((entry, i) => {
+      if (entry !== kind) return
+      if (last >= 0) worst = Math.max(worst, i - last)
+      last = i
+    })
+
+    return worst
+  }
+  const longestRun = (list, kind) => {
+    let run = 0
+    let worst = 0
+
+    for (const entry of list) {
+      run = entry === kind ? run + 1 : 0
+      worst = Math.max(worst, run)
+    }
+
+    return worst
+  }
+  const rows = []
+
+  for (const kind of PICKUP_KINDS) {
+    const spacing = total / PICKUP_WEIGHTS[kind]
+    const gap = worstGap(dealt, kind)
+    const run = longestRun(dealt, kind)
+
+    // **The gap is bounded by the schedule rather than by luck.** A weighted round-robin puts a kind
+    // at most one full cycle apart -- `total / weight` chains, rounded up -- and never two of the
+    // same kind back to back unless its weight is more than half the deck.
+    assert.ok(gap <= Math.ceil(spacing) + 1, `${kind} goes ${gap} chains between appearances against a cycle of ${spacing.toFixed(1)}`)
+    // **A rare kind never repeats at all; a common one may deal twice.** The bound is a property of
+    // the scheduler rather than a taste: a kind holding close to half the deck (`coin` is 8 of 17)
+    // is owed another turn almost immediately, and forbidding that would mean forbidding the
+    // weights. What the report is about is the rare end, and there the rule is absolute.
+    assert.ok(run <= (PICKUP_WEIGHTS[kind] * 4 <= total ? 1 : 2), `${kind} deals ${run} in a row`)
+    // The counts are still the table's, or this has quietly re-weighted the lap.
+    const share = dealt.filter((entry) => entry === kind).length / chains
+
+    assert.ok(Math.abs(share - PICKUP_WEIGHTS[kind] / total) < 0.01, `${kind} is ${(share * 100).toFixed(1)}% of chains against ${((PICKUP_WEIGHTS[kind] / total) * 100).toFixed(1)}%`)
+    rows.push(`${kind} every ${spacing.toFixed(1)} chains: worst gap ${gap}, longest run ${run} (drawn i.i.d. it was ${worstGap(drawn, kind)} and ${longestRun(drawn, kind)})`)
+  }
+
+  // And the control has to be visibly worse somewhere, or this check is measuring nothing.
+  const iidWorst = Math.max(...PICKUP_KINDS.map((kind) => worstGap(drawn, kind) - Math.ceil(total / PICKUP_WEIGHTS[kind])))
+
+  assert.ok(iidWorst > 3, `the i.i.d. draw never overshoots its own cycle by more than ${iidWorst} chains`)
+  for (const row of rows) console.log(`    ${row}`)
+})
 
 check('the closed form is exactly what the fixed tick integrates', () => {
   // The whole arc rests on this. If `flightHeight` and `stepPlayer` disagree, the chain is laid on
@@ -223,6 +309,10 @@ console.log('lines and waves')
 check('a chain is homogeneous, and a fruit chain is shorter than a coin one', () => {
   assert.ok(CHAIN.fruit.max < CHAIN.coin.min, 'a fruit chain can be as long as a coin one')
   assert.equal(CHAIN.shield.max, 1, 'shields come in chains')
+  // **⚠ And the medkit for the same reason, which is worth asserting rather than assuming**: a row
+  // of the same restored life is not a row, and the second of a pair would be a pickup worth
+  // nothing at the instant it is driven through — the state `canTakeHeal` keeps off the road.
+  assert.equal(CHAIN.heal.max, 1, 'medkits come in chains')
 
   const obstacles = placeRunObstacles(4242, TRACK, 0)
   const pickups = placeFormations({
@@ -239,7 +329,9 @@ check('a chain is homogeneous, and a fruit chain is shorter than a coin one', ()
   const bound = chainSpacingZ(CHAIN.fruit.gapMs) * 1.5
   let runKind = null
   let runLength = 0
-  const lengths = { coin: [], fruit: [], shield: [] }
+  // Keyed off the kind table rather than written out, so a new kind is counted rather than
+  // crashing the walk — which is how `heal` announced itself.
+  const lengths = Object.fromEntries(PICKUP_KINDS.map((kind) => [kind, []]))
 
   for (let i = 0; i < sorted.length; i++) {
     const near = i > 0 && sorted[i].z - sorted[i - 1].z <= bound
@@ -257,10 +349,11 @@ check('a chain is homogeneous, and a fruit chain is shorter than a coin one', ()
 
   const longest = (kind) => Math.max(...lengths[kind], 0)
 
-  assert.ok(longest('fruit') <= CHAIN.fruit.max, `a fruit chain reached ${longest('fruit')}`)
-  assert.ok(longest('coin') <= CHAIN.coin.max, `a coin chain reached ${longest('coin')}`)
+  for (const kind of PICKUP_KINDS) {
+    assert.ok(longest(kind) <= CHAIN[kind].max, `a ${kind} chain reached ${longest(kind)} against a max of ${CHAIN[kind].max}`)
+  }
   console.log(
-    `    ${pickups.length} pickups on the lap; longest chain coin ${longest('coin')}, fruit ${longest('fruit')}, shield ${longest('shield')}`,
+    `    ${pickups.length} pickups on the lap; longest chain ${PICKUP_KINDS.map((k) => `${k} ${longest(k)}`).join(', ')}`,
   )
 })
 
@@ -492,6 +585,7 @@ check('⚠ nothing is laid on the ground under a flight, so a ramp is not two re
   let control = 0
   let withReservation = 0
   let without = 0
+  const shippedByKind = Object.fromEntries(PICKUP_KINDS.map((kind) => [kind, 0]))
 
   for (let seed = 1; seed <= 40; seed++) {
     const shipped = lay(launches, seed).filter((pickup) => pickup.arcOf === undefined)
@@ -501,6 +595,7 @@ check('⚠ nothing is laid on the ground under a flight, so a ramp is not two re
     control += underFlight(bare).length
     withReservation += shipped.length
     without += bare.length
+    for (const pickup of shipped) shippedByKind[pickup.kind]++
   }
 
   assert.equal(stranded, 0, `${stranded} ground pickups still lie under a flight`)
@@ -513,16 +608,28 @@ check('⚠ nothing is laid on the ground under a flight, so a ramp is not two re
   // it rather than abandoned, so the ground in front of a ramp keeps its coins — refusing the whole
   // chain instead cost 12% of a lap's pickups for 4.6% of the lap reserved, i.e. nearly three times
   // the ground the flight actually covers.
+  //
+  // **⚠ The bound went from 1.6 to 2.6 of the reserved ground when `PICKUP_WEIGHTS` went live, and
+  // what moved is the DENOMINATOR rather than the player's lap.** `without` is a counterfactual — a
+  // lap with no ramps at all — and the medkit's singles are zero-length chains, so the walk fits
+  // *more* chains into a lap that has no flights to skip: 96.5 pickups before, 99.7 now. Measured
+  // on the lap that actually ships, coins are unchanged (56.4 -> 56.9) and fruit falls 29.6 -> 25.8
+  // as the medkit takes chain slots, which is the cost of the fourth kind and is stated in
+  // `PICKUP_WEIGHTS`. The per-kind counts are printed for that reason: a ratio against a lap nobody
+  // plays is the wrong thing to read this off.
   const reserved = spans.reduce((total, span) => total + (span.toZ - span.fromZ), 0) / TRACK
   const lost = 1 - withReservation / without
 
   assert.ok(
-    lost < reserved * 1.6,
+    lost < reserved * 2.6,
     `the reservation costs ${(lost * 100).toFixed(1)}% of the lap's ground pickups for ${(reserved * 100).toFixed(1)}% of its ground`,
   )
   console.log(
     `    ${(control / 40).toFixed(1)} ground pickups a lap used to lie under the ${spans.length} flights and 0 do now; ` +
       `${(reserved * 100).toFixed(1)}% of the lap reserved costs ${(lost * 100).toFixed(1)}% of its ground pickups`,
+  )
+  console.log(
+    `    the lap that ships: ${PICKUP_KINDS.map((kind) => `${kind} ${(shippedByKind[kind] / 40).toFixed(1)}`).join(', ')}`,
   )
 })
 

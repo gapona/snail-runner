@@ -1,0 +1,87 @@
+{
+  "spec": {
+    "native height": "64",
+    "ink": "2 px  (0.031 of height)",
+    "band": "6 px  (0.094)",
+    "cheek": "13 px  (0.203)",
+    "radius": "19 px  (0.297)",
+    "cheek pressed": "3 px, sink 10 px",
+    "slice inset": "21 px all round",
+    "band / face": "1.253",
+    "cheek / face": "0.600",
+    "ink / face": "0.058"
+  },
+  "slice": 21,
+  "sprites": {
+    "ui-btn": {
+      "width": 192,
+      "height": 64,
+      "slice": "xy",
+      "insetX": 21,
+      "insetY": 21,
+      "pressed": false,
+      "sink": 0,
+      "clearedAlpha": 64
+    },
+    "ui-btn-pressed": {
+      "width": 192,
+      "height": 54,
+      "slice": "xy",
+      "insetX": 21,
+      "insetY": 21,
+      "pressed": true,
+      "sink": 10,
+      "clearedAlpha": 64
+    },
+    "ui-round": {
+      "width": 96,
+      "height": 96,
+      "slice": "none",
+      "insetX": 0,
+      "insetY": 0,
+      "pressed": false,
+      "sink": 0,
+      "clearedAlpha": 224
+    },
+    "ui-round-pressed": {
+      "width": 96,
+      "height": 96,
+      "slice": "none",
+      "insetX": 0,
+      "insetY": 0,
+      "pressed": true,
+      "sink": 10,
+      "clearedAlpha": 224
+    },
+    "ui-panel": {
+      "width": 256,
+      "height": 192,
+      "slice": "xy",
+      "insetX": 21,
+      "insetY": 21,
+      "pressed": false,
+      "sink": 0,
+      "clearedAlpha": 64
+    },
+    "ui-bar-frame": {
+      "width": 256,
+      "height": 40,
+      "slice": "x",
+      "insetX": 21,
+      "insetY": 0,
+      "pressed": false,
+      "sink": 0,
+      "clearedAlpha": 64
+    },
+    "ui-bar-fill": {
+      "width": 256,
+      "height": 40,
+      "slice": "x",
+      "insetX": 21,
+      "insetY": 0,
+      "pressed": false,
+      "sink": 0,
+      "clearedAlpha": 64
+    }
+  }
+}

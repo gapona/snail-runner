@@ -1,0 +1,532 @@
+{
+  "frog": {
+    "slot": "frog",
+    "license": "Gemini (Google) - service terms, NOT CC0",
+    "referencePose": "ground",
+    "inkFraction": 0.0141,
+    "targetContourPx": 3.9,
+    "worldHeight": 343.0,
+    "poses": {
+      "ground": {
+        "size": [
+          384,
+          200
+        ],
+        "aspect": 1.92,
+        "contourSourcePx": {
+          "p5": 13.0,
+          "median": 13.6,
+          "p95": 14.1
+        },
+        "contourDeliveredPx": 3.73,
+        "anchorEyes": [
+          0.5026,
+          0.1821
+        ],
+        "anchorCentroid": [
+          0.4988,
+          0.5663
+        ],
+        "scale": 0.2739,
+        "clearedAlpha": 1527,
+        "thickenedPx": 0,
+        "source": "references\\frog 1.jpg",
+        "eyeSpanSourcePx": 431,
+        "creatureScaleVsReference": 1.0,
+        "contourBeforeSourcePx": {
+          "p5": 12.4,
+          "median": 15.7,
+          "p95": 18.0
+        },
+        "files": [
+          "critter-frog-0.png",
+          "critter-frog-1.png"
+        ],
+        "worldWidth": 658.6,
+        "worldHeight": 343.0
+      },
+      "air": {
+        "size": [
+          330,
+          249
+        ],
+        "aspect": 1.325,
+        "contourSourcePx": {
+          "p5": 8.5,
+          "median": 9.0,
+          "p95": 9.5
+        },
+        "contourDeliveredPx": 3.69,
+        "anchorEyes": [
+          0.5009,
+          0.1402
+        ],
+        "anchorCentroid": [
+          0.4986,
+          0.4666
+        ],
+        "scale": 0.4099,
+        "clearedAlpha": 1533,
+        "thickenedPx": 0,
+        "source": "references\\frog 4.jpg",
+        "eyeSpanSourcePx": 288,
+        "creatureScaleVsReference": 0.6682,
+        "contourBeforeSourcePx": {
+          "p5": 5.4,
+          "median": 8.5,
+          "p95": 10.3
+        },
+        "files": [
+          "critter-frog-air.png"
+        ],
+        "worldWidth": 566.0,
+        "worldHeight": 427.0
+      }
+    },
+    "worldWidth": 658.6
+  },
+  "bee": {
+    "slot": "bee",
+    "license": "Gemini (Google) - service terms, NOT CC0",
+    "material": "references\\wasp 3.jpg",
+    "reference": "references\\wasp 1.jpg",
+    "inkFraction": 0.0141,
+    "targetContourPx": 3.9,
+    "scale": 0.6264,
+    "worldHeight": 310.0,
+    "checker": {
+      "wingPart": 1,
+      "wing": {
+        "found": true,
+        "translucent": false,
+        "square": 23,
+        "checkerPower": 363.7,
+        "partPower": 160.6,
+        "sampled": 46197,
+        "alpha": 0.335
+      },
+      "body": {
+        "found": true,
+        "translucent": false,
+        "square": 23,
+        "checkerPower": 363.7,
+        "partPower": 11.4,
+        "sampled": 30118,
+        "alpha": 0.823
+      }
+    },
+    "parts": {
+      "body": {
+        "size": [
+          199,
+          384
+        ],
+        "aspect": 0.518,
+        "contourSourcePx": {
+          "p5": 5.0,
+          "median": 5.8,
+          "p95": 14.4
+        },
+        "contourDeliveredPx": 3.65,
+        "anchorEyes": [
+          0.4995,
+          0.4656
+        ],
+        "anchorCentroid": [
+          0.4995,
+          0.4656
+        ],
+        "scale": 0.6264,
+        "clearedAlpha": 1246,
+        "thickenedPx": 0,
+        "contourBeforeSourcePx": {
+          "p5": 4.5,
+          "median": 8.5,
+          "p95": 58.6
+        },
+        "files": [
+          "critter-bee-0.png",
+          "critter-bee-1.png"
+        ]
+      },
+      "wing": {
+        "size": [
+          340,
+          176
+        ],
+        "aspect": 1.932,
+        "contourSourcePx": {
+          "p5": 5.0,
+          "median": 5.7,
+          "p95": 6.1
+        },
+        "contourDeliveredPx": 3.54,
+        "anchorEyes": [
+          0.5582,
+          0.4878
+        ],
+        "anchorCentroid": [
+          0.5582,
+          0.4878
+        ],
+        "scale": 0.6264,
+        "clearedAlpha": 771,
+        "thickenedPx": 0,
+        "contourBeforeSourcePx": {
+          "p5": 3.2,
+          "median": 7.8,
+          "p95": 9.5
+        },
+        "files": [
+          "critter-bee-wing.png"
+        ]
+      }
+    },
+    "wing": {
+      "hingeYInBody": 0.2867,
+      "assembled": [
+        1310,
+        641
+      ],
+      "assembledAspect": 2.0437,
+      "tipInBox": [
+        0.9765,
+        0.076
+      ],
+      "wingSpanInBox": 0.3887,
+      "bodyTopInBox": 0.053,
+      "bodyHeightInBox": 0.947,
+      "bodyBoxInReference": [
+        282,
+        607
+      ],
+      "restAngle": -18.23,
+      "symmetryDeltaDeg": 0.23,
+      "symmetryDeltaX": 0.0038,
+      "pivotToTipOverWidth": 0.9331,
+      "pivot": [
+        0.0353,
+        0.6002
+      ],
+      "drawnAngle": -11.8,
+      "restRotation": -6.43,
+      "wingAspect": 1.9318,
+      "hingeToBladeOverWidth": 0.0176,
+      "wingOverBody": 1.7085,
+      "bodyAspect": 0.5182,
+      "hingeInBody": [
+        0.6477,
+        0.2865
+      ],
+      "thoraxEdgeInBody": 0.9347,
+      "wingTuck": 0.18
+    },
+    "worldWidth": 160.7,
+    "bodyAspect": 0.518,
+    "assembly": {
+      "size": [
+        699,
+        410
+      ],
+      "aspect": 1.7049,
+      "bodyTop": 0.0634,
+      "bodyHeight": 0.9366,
+      "bodyLeft": 0.3577
+    }
+  },
+  "hornet": {
+    "slot": "hornet",
+    "license": "Gemini (Google) - service terms, NOT CC0",
+    "material": "references\\hornet 2.jpg",
+    "reference": "references\\hornet 1.jpg",
+    "inkFraction": 0.0141,
+    "targetContourPx": 4.24,
+    "scale": 0.6725,
+    "worldHeight": 310.0,
+    "checker": {
+      "wingPart": 1,
+      "wing": {
+        "found": true,
+        "translucent": false,
+        "square": 23,
+        "checkerPower": 395.6,
+        "partPower": 105.7,
+        "sampled": 15002,
+        "alpha": 0.483
+      },
+      "body": {
+        "found": false,
+        "translucent": false,
+        "reason": "opaque: no checker through this part",
+        "square": 23,
+        "checkerPower": 395.6,
+        "partPower": 0.0,
+        "sampled": 3593,
+        "alpha": 1.0
+      }
+    },
+    "parts": {
+      "body": {
+        "size": [
+          236,
+          384
+        ],
+        "aspect": 0.615,
+        "contourSourcePx": {
+          "p5": 5.0,
+          "median": 5.8,
+          "p95": 15.6
+        },
+        "contourDeliveredPx": 3.92,
+        "anchorEyes": [
+          0.4966,
+          0.4785
+        ],
+        "anchorCentroid": [
+          0.4966,
+          0.4785
+        ],
+        "scale": 0.6725,
+        "clearedAlpha": 3122,
+        "thickenedPx": 0,
+        "contourBeforeSourcePx": {
+          "p5": 1.0,
+          "median": 3.2,
+          "p95": 12.0
+        },
+        "files": [
+          "critter-hornet-0.png",
+          "critter-hornet-1.png"
+        ]
+      },
+      "wing": {
+        "size": [
+          435,
+          162
+        ],
+        "aspect": 2.685,
+        "contourSourcePx": {
+          "p5": 5.0,
+          "median": 5.8,
+          "p95": 12.0
+        },
+        "contourDeliveredPx": 3.92,
+        "anchorEyes": [
+          0.5582,
+          0.488
+        ],
+        "anchorCentroid": [
+          0.5582,
+          0.488
+        ],
+        "scale": 0.6725,
+        "clearedAlpha": 995,
+        "thickenedPx": 0,
+        "contourBeforeSourcePx": {
+          "p5": 1.0,
+          "median": 5.4,
+          "p95": 11.4
+        },
+        "files": [
+          "critter-hornet-wing.png"
+        ]
+      }
+    },
+    "wing": {
+      "hingeYInBody": 0.339,
+      "assembled": [
+        1264,
+        570
+      ],
+      "assembledAspect": 2.2175,
+      "tipInBox": [
+        0.9724,
+        0.1582
+      ],
+      "wingSpanInBox": 0.3434,
+      "bodyTopInBox": 0.0,
+      "bodyHeightInBox": 1.0,
+      "bodyBoxInReference": [
+        352,
+        570
+      ],
+      "restAngle": -13.74,
+      "symmetryDeltaDeg": 0.35,
+      "symmetryDeltaX": 0.0008,
+      "pivotToTipOverWidth": 0.9149,
+      "pivot": [
+        0.0398,
+        0.5732
+      ],
+      "drawnAngle": -9.48,
+      "restRotation": -4.26,
+      "wingAspect": 2.6852,
+      "hingeToBladeOverWidth": 0.0053,
+      "wingOverBody": 1.8432,
+      "bodyAspect": 0.6146,
+      "hingeInBody": [
+        0.6195,
+        0.3385
+      ],
+      "thoraxEdgeInBody": 0.7881,
+      "wingTuck": 0.1
+    },
+    "worldWidth": 190.5,
+    "bodyAspect": 0.615,
+    "assembly": {
+      "size": [
+        878,
+        384
+      ],
+      "aspect": 2.2865,
+      "bodyTop": 0.0,
+      "bodyHeight": 1.0,
+      "bodyLeft": 0.3656
+    }
+  },
+  "mosquito": {
+    "slot": "mosquito",
+    "license": "Gemini (Google) - service terms, NOT CC0",
+    "material": "references\\mosquito 2.jpg",
+    "reference": "references\\mosquito 1.jpg",
+    "inkFraction": 0.0141,
+    "targetContourPx": 4.68,
+    "scale": 0.6285,
+    "worldHeight": 310.0,
+    "checker": {
+      "wingPart": 0,
+      "wing": {
+        "found": true,
+        "translucent": false,
+        "square": 23,
+        "checkerPower": 496.0,
+        "partPower": 157.3,
+        "sampled": 24395,
+        "alpha": 0.437
+      },
+      "body": {
+        "found": false,
+        "reason": "too little membrane clear of ink to read",
+        "sampled": 49
+      }
+    },
+    "parts": {
+      "body": {
+        "size": [
+          287,
+          384
+        ],
+        "aspect": 0.747,
+        "contourSourcePx": {
+          "p5": 6.7,
+          "median": 51.0,
+          "p95": 144.4
+        },
+        "contourDeliveredPx": 32.05,
+        "anchorEyes": [
+          0.4944,
+          0.4978
+        ],
+        "anchorCentroid": [
+          0.4944,
+          0.4978
+        ],
+        "scale": 0.6285,
+        "clearedAlpha": 4502,
+        "thickenedPx": 14759,
+        "contourBeforeSourcePx": {
+          "p5": 0.0,
+          "median": 1.4,
+          "p95": 8.1
+        },
+        "files": [
+          "critter-mosquito-0.png",
+          "critter-mosquito-1.png"
+        ]
+      },
+      "wing": {
+        "size": [
+          410,
+          99
+        ],
+        "aspect": 4.141,
+        "contourSourcePx": {
+          "p5": 6.3,
+          "median": 7.0,
+          "p95": 18.6
+        },
+        "contourDeliveredPx": 4.4,
+        "anchorEyes": [
+          0.555,
+          0.4879
+        ],
+        "anchorCentroid": [
+          0.555,
+          0.4879
+        ],
+        "scale": 0.6285,
+        "clearedAlpha": 809,
+        "thickenedPx": 1407,
+        "contourBeforeSourcePx": {
+          "p5": 0.0,
+          "median": 2.8,
+          "p95": 4.5
+        },
+        "files": [
+          "critter-mosquito-wing.png"
+        ]
+      }
+    },
+    "wing": {
+      "hingeYInBody": 0.1323,
+      "assembled": [
+        1402,
+        762
+      ],
+      "assembledAspect": 1.8399,
+      "tipInBox": [
+        0.9176,
+        0.3445
+      ],
+      "wingSpanInBox": 0.3542,
+      "bodyTopInBox": 0.3084,
+      "bodyHeightInBox": 0.605,
+      "bodyBoxInReference": [
+        181,
+        461
+      ],
+      "restAngle": -3.87,
+      "symmetryDeltaDeg": 0.33,
+      "symmetryDeltaX": 0.0,
+      "pivotToTipOverWidth": 0.9146,
+      "pivot": [
+        0.0384,
+        0.6009
+      ],
+      "drawnAngle": -4.65,
+      "restRotation": 0.78,
+      "wingAspect": 4.1414,
+      "hingeToBladeOverWidth": 0.0018,
+      "wingOverBody": 1.4286,
+      "bodyAspect": 0.7474,
+      "hingeInBody": [
+        0.3781,
+        0.1328
+      ],
+      "thoraxEdgeInBody": 0.5087,
+      "wingTuck": 0.1
+    },
+    "worldWidth": 231.7,
+    "bodyAspect": 0.747,
+    "assembly": {
+      "size": [
+        719,
+        389
+      ],
+      "aspect": 1.8483,
+      "bodyTop": 0.0129,
+      "bodyHeight": 0.9871,
+      "bodyLeft": 0.3004
+    }
+  }
+}

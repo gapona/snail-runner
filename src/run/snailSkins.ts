@@ -101,29 +101,30 @@ export interface SnailSkin {
  * for every skin, because that number is a property of the colour space and will move again the day
  * the mascot is re-rendered.
  *
- * **⚠ The ladder no longer mirrors the themes', and the reason is what a skin actually is.** It ran
- * 300/600/900/1200, the themes' own prices, on the argument that the two catalogues sell the same
- * kind of thing. They do not: a theme repaints the whole frame -- sky, ground, props, road markings,
- * and now the Play button -- while a skin rotates one creature's hue and changes nothing else. The
- * dearest one asked more than the whole obstacle set costs to look at, for a difference a player
- * only sees on their own mascot.
+ * ## ⚠ The ladder has been cut twice, and the second cut is what makes it a *tier*
  *
- * The alternative was a visible feature per skin -- a shell shape, a pattern, an accessory -- and
- * that is the one thing this system is built to avoid: six frames per skin is six more drawings of
- * a creature whose identity is the entire product, i.e. five chances to draw a different animal.
- * See the module docstring. So the price moved instead, to where a recolour belongs: a fifth of a
- * capped run for the first and about two runs for the last.
+ * It first ran 300/600/900/1200, mirroring the themes' prices on the argument that the two
+ * catalogues sell the same kind of thing. They do not: a theme repaints the whole frame -- sky,
+ * ground, props, road markings, and now the Play button -- while a skin rotates one creature's hue
+ * and changes nothing else. That took it to 120/240/360/480.
  *
- * The old ladder mirrored the themes' deliberately — the two catalogues sell the same kind of
- * thing (a look, bought once, changing no number in the game) and pricing them differently would
- * say something about them that is not true.
+ * It was then reported again, and that report is why this file is no longer the whole wardrobe:
+ * *five snails differing only in hue is a weak reason to save 1200 coins.* The answer was not a
+ * visible feature per skin -- that is the one thing this system is built to avoid, for the reason
+ * in the module docstring -- but **a second layer of worn items**, which shipped for one round and
+ * was reported on sight as looking poor on the creature. It is gone, and what is left is priced for
+ * what it is.
+ *
+ * So a colour is a **starter cosmetic**: 60 to 150 against `COINS_PER_LAP`'s 104, i.e. each is
+ * about a lap and the whole set is four. `verify:skins` prints the ladder in laps rather than in
+ * coins — what a price *means* is how many runs it is.
  */
 export const SNAIL_SKINS: readonly SnailSkin[] = [
   { id: 'amber', titleKey: 'snail_amber', priceCoins: 0, icon: '\u{1F7E0}', shellHue: 62.1, footHue: 127 },
-  { id: 'fern', titleKey: 'snail_fern', priceCoins: 120, icon: '\u{1F7E2}', shellHue: 118, footHue: 150 },
-  { id: 'teal', titleKey: 'snail_teal', priceCoins: 240, icon: '\u{1F535}', shellHue: 180, footHue: 205 },
-  { id: 'indigo', titleKey: 'snail_indigo', priceCoins: 360, icon: '\u{1F7E3}', shellHue: 255, footHue: 285 },
-  { id: 'rose', titleKey: 'snail_rose', priceCoins: 480, icon: '\u{1F338}', shellHue: 302, footHue: 330 },
+  { id: 'fern', titleKey: 'snail_fern', priceCoins: 60, icon: '\u{1F7E2}', shellHue: 118, footHue: 150 },
+  { id: 'teal', titleKey: 'snail_teal', priceCoins: 90, icon: '\u{1F535}', shellHue: 180, footHue: 205 },
+  { id: 'indigo', titleKey: 'snail_indigo', priceCoins: 120, icon: '\u{1F7E3}', shellHue: 255, footHue: 285 },
+  { id: 'rose', titleKey: 'snail_rose', priceCoins: 150, icon: '\u{1F338}', shellHue: 302, footHue: 330 },
 ] as const
 
 /**
@@ -188,15 +189,50 @@ export function resolveSelectedSnail(selected: string, purchases: readonly strin
 export function recolour(color: number, skin: SnailSkin): number {
   const { L, a, b } = toOklab(color)
   const c = Math.hypot(a, b)
+  const family = snailColourFamily(color)
 
   // A near-neutral has no hue to rotate — this is the ink, the mouth, the eyes and the shell's
   // specular, and leaving them alone is what keeps every skin the same drawing.
-  if (c < 1e-4) return color
+  if (family === 'neutral') return color
 
   const hue = (Math.atan2(b, a) * 180) / Math.PI
-  const family = ((hue % 360) + 360) % 360 < SNAIL_HUE_SPLIT ? 'shell' : 'foot'
   const turn = family === 'shell' ? skin.shellHue - SNAIL_BASE_HUES.shell : skin.footHue - SNAIL_BASE_HUES.foot
   const turned = ((hue + turn) * Math.PI) / 180
 
   return fromOklab({ L, a: Math.cos(turned) * c, b: Math.sin(turned) * c })
 }
+
+/**
+ * Which of the render's two colour families a pixel belongs to, or neither.
+ *
+ * **⚠ The `foot` family is the green pad the mascot stands on, and it is 39% of the sprite.** That
+ * is not a detail: the render is a snail *on a spread of its own foot*, the pad reaches the full
+ * width of the canvas from row 104 down, and the creature above it is only half that wide. So the
+ * sprite's own silhouette — the thing an outline traces — is mostly the pad's outline, which is
+ * exactly how the mascot's contour came to be reported as *ringing the pad while leaving the shell
+ * separated from nothing*. Anything that wants the **creature** has to ask for it, and this is how.
+ *
+ * Split out of `recolour` rather than duplicated, so the family a pixel is recoloured as and the
+ * family it is masked as can never disagree. Read on the **base** art, before any rotation: a skin
+ * turns the pad's hue, so a test applied afterwards would find the pad somewhere different on every
+ * skin, and the mask has to be a property of the drawing rather than of the purchase.
+ */
+export function snailColourFamily(color: number): 'shell' | 'foot' | 'neutral' {
+  const { a, b } = toOklab(color)
+
+  if (Math.hypot(a, b) < PAD_MIN_CHROMA) return 'neutral'
+
+  const hue = (((Math.atan2(b, a) * 180) / Math.PI) % 360 + 360) % 360
+
+  return hue < SNAIL_HUE_SPLIT ? 'shell' : 'foot'
+}
+
+/**
+ * Below this chroma a hue angle is numerical noise, so the pixel belongs to neither family.
+ *
+ * The same escape the threat reservation grants and for the same reason — and it is what keeps the
+ * ink, the eyes and the shell's specular out of the pad mask. `recolour`'s own gate was `1e-4`,
+ * which is "has any hue at all"; a *mask* needs the stricter reading, or the contour would try to
+ * separate the creature from its own outline.
+ */
+export const PAD_MIN_CHROMA = 0.02

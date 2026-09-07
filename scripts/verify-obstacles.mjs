@@ -16,6 +16,7 @@
 //    the floor -- see `REACTION_MS`'s own docstring.
 import assert from 'node:assert/strict'
 import {
+  OBSTACLE_HALF_WIDTHS,
   OBSTACLE_POOL_SIZE,
   createObstacle,
   hits,
@@ -28,7 +29,7 @@ import {
   provePassable,
 } from '../src/run/obstacles.ts'
 import { difficultyAt, difficultyProgress, DIFFICULTY_TAU_Z } from '../src/run/difficulty.ts'
-import { WORLD_LAYER, worldDepth } from '../src/run/worldDepth.ts'
+import { distanceIndexOf, WORLD_LAYER, worldDepth } from '../src/run/worldDepth.ts'
 import {
   INK,
   INK_LIGHTNESS,
@@ -40,6 +41,7 @@ import {
   SNAIL_SHELL,
 } from '../src/run/artPalette.ts'
 import {
+  BLOCKING_HEAD_CLEARANCE,
   JUMP_APEX,
   OBSTACLE_BANDS,
   OBSTACLE_DEPTH,
@@ -101,6 +103,30 @@ check('the two classes produce exactly the expected outcomes, from the bands alo
     ['low', true, false], //   jump it
     ['blocking', true, true], //   go around it -- a jump does not help
   ])
+})
+
+check('an unjumpable barrier is drawn taller than the snail ever gets', () => {
+  // **⚠ The frame has to agree with the collision, and at 620 it did not.** A hit is the *feet*
+  // being inside the band, so `blocking` stopped a jump correctly with its top at 620 — while the
+  // snail's own top at the apex is `JUMP_APEX + PLAYER_BODY_H` = 740, i.e. the picture at the top
+  // of a jump showed the creature a clear 120 units above the thing that had just stopped it.
+  // Reported from a phone as the tall barrier looking jumpable. See `OBSTACLE_BANDS`.
+  const reach = JUMP_APEX + PLAYER_BODY_H
+  const top = OBSTACLE_BANDS.blocking.yHigh
+
+  assert.ok(top > reach, `blocking reaches ${top} against a mascot that reaches ${reach}: a jump draws clear of it`)
+  // Legible rather than merely present, which is the same rule the deleted `overhead` class kept
+  // its daylight under — and it is derived from the mascot, so a re-sized snail moves it.
+  assert.ok(
+    top - reach >= PLAYER_BODY_H * BLOCKING_HEAD_CLEARANCE - 1,
+    `the barrier clears the mascot's reach by ${(top - reach).toFixed(0)}, under the stated ${(PLAYER_BODY_H * BLOCKING_HEAD_CLEARANCE).toFixed(0)}`,
+  )
+  // And the class is still what it was: a jump has to fail against it, which is a statement about
+  // the feet and is what the shipped 620 got right.
+  assert.ok(top > JUMP_APEX, 'blocking no longer stops a jump at all')
+  // **The control is the height that shipped**, so this cannot pass by measuring nothing.
+  assert.ok(620 < reach, 'the shipped-before height clears the mascot, i.e. this check is vacuous')
+  console.log(`    blocking ${top} against a mascot reaching ${reach} (${(top / PLAYER_BODY_H).toFixed(2)} body heights, was ${(620 / PLAYER_BODY_H).toFixed(2)})`)
 })
 
 check('an obstacle carries its band rather than a flag naming its behaviour', () => {
@@ -463,6 +489,92 @@ check('500 simulated runs, and the reaction budget never falls below REACTION_MS
 
 console.log('draw order')
 
+check('two obstacles in a row are edge to edge or a snail apart, never half inside each other', () => {
+  // ⚠ Reported by pointing at a frame: a tall texture and a low one stuck together. `passableLine`
+  // cannot see it -- it asks whether a line exists THROUGH the row, which is just as true of two
+  // obstacles standing inside one another -- so nothing had ever asked.
+  const measure = (rows) => {
+    let overlapping = 0
+    let worst = 0
+    let mixed = 0
+
+    for (const row of rows) {
+      // A wall is edge to edge by construction and is the one arrangement that may be.
+      if (row.length >= 6 && row.every((o) => o.kind === 'low')) continue
+
+      let bad = false
+
+      for (let i = 0; i < row.length; i++) {
+        for (let j = i + 1; j < row.length; j++) {
+          const gap =
+            Math.abs(row[i].offsetX - row[j].offsetX) - (row[i].halfWidths + row[j].halfWidths)
+
+          if (gap >= 0) continue
+          bad = true
+          if (row[i].kind !== row[j].kind) mixed++
+          const share = -gap / (2 * Math.min(row[i].halfWidths, row[j].halfWidths))
+          if (share > worst) worst = share
+        }
+      }
+      if (bad) overlapping++
+    }
+
+    return { overlapping, worst, mixed, rows: rows.length }
+  }
+
+  const rowsOf = (obstacles) => {
+    const byZ = new Map()
+
+    for (const o of obstacles) {
+      if (!byZ.has(o.z)) byZ.set(o.z, [])
+      byZ.get(o.z).push(o)
+    }
+
+    return [...byZ.values()]
+  }
+
+  const shipped = []
+
+  for (let seed = 1; seed <= 5; seed++) shipped.push(...rowsOf(placeRunObstacles(seed, 286800)))
+
+  const now = measure(shipped)
+
+  // The control is the arrangement that shipped: independent offsets with nothing rejected.
+  const before = []
+  const rng = createRng(4242)
+
+  for (let i = 0; i < now.rows; i++) {
+    const row = []
+    const count = 1 + Math.floor(rng() * 3)
+
+    for (let k = 0; k < count; k++) {
+      const halfWidths =
+        OBSTACLE_HALF_WIDTHS.min + rng() * (OBSTACLE_HALF_WIDTHS.max - OBSTACLE_HALF_WIDTHS.min)
+      const reach = Math.max(0, ROAD_EDGE - halfWidths)
+
+      row.push({
+        kind: rng() < 0.11 ? 'blocking' : 'low',
+        offsetX: -reach + rng() * reach * 2,
+        halfWidths,
+      })
+    }
+    before.push(row)
+  }
+
+  const control = measure(before)
+
+  console.log(
+    `    ${now.rows} rows: ${now.overlapping} carry an overlapping pair ` +
+      `(was ${((control.overlapping / control.rows) * 100).toFixed(0)}%, worst ` +
+      `${(control.worst * 100).toFixed(0)}% inside, ${control.mixed} of them a tall on a low)`,
+  )
+  assert.equal(now.overlapping, 0, `${now.overlapping} rows have two obstacles occupying one piece of road`)
+  assert.ok(
+    control.overlapping / control.rows > 0.2,
+    'the unspaced placer no longer overlaps anything — the control has gone stale',
+  )
+})
+
 check('nearer always paints over farther, whatever the two things are', () => {
   // **The defect this replaces was measured in the running game**: every obstacle and every pickup
   // shared one flat depth, so equal depth fell back to display-list order, which is pool-slot
@@ -493,6 +605,71 @@ check('every tiebreak is smaller than one segment, which is what keeps distance 
 check('on the same segment, a pickup is never lost behind the obstacle beside it', () => {
   assert.ok(worldDepth(20, WORLD_LAYER.pickup) > worldDepth(20, WORLD_LAYER.obstacle))
   assert.ok(worldDepth(20, WORLD_LAYER.obstacle) > worldDepth(20, WORLD_LAYER.scenery))
+})
+
+check('two things on the road are ordered by which is actually nearer, not by whose segment it is', () => {
+  // ⚠ **The defect this was written for was reported three times as "the wings show through the
+  // textures", and it is a units bug rather than an art one.** The obstacle, pickup and ramp pools
+  // passed the bare segment index -- so an obstacle anywhere inside a segment sorted as though it
+  // stood on that segment's near edge -- while the critter pool and `PlayerView` passed a
+  // continuous index measured from the CAMERA, which stands some way into its own base segment.
+  // Two errors compounding, both up to a whole segment, on a road where a segment is 200 units and
+  // a flyer is 686-1050 wide.
+  //
+  // What is asserted is the property rather than either formula: of two things on the road, the
+  // nearer one paints over the farther one -- everywhere except inside the layer tiebreak's own
+  // window, which is what that tiebreak is for.
+  const tie = (WORLD_LAYER.critter - WORLD_LAYER.obstacle) * SEGMENT_LENGTH
+  const indexOf = (aheadOfCamera, intoBase) =>
+    distanceIndexOf(
+      Math.floor((aheadOfCamera + intoBase) / SEGMENT_LENGTH),
+      aheadOfCamera + intoBase,
+    )
+  // The arrangement that shipped, kept so the check is shown to be measuring something.
+  const shippedObstacleIndex = (aheadOfCamera, intoBase) =>
+    Math.floor((aheadOfCamera + intoBase) / SEGMENT_LENGTH)
+  const shippedCritterIndex = (aheadOfCamera) => aheadOfCamera / SEGMENT_LENGTH
+
+  const sweep = (obstacleIndex, critterIndex) => {
+    let worstBehind = 0
+    let worstAhead = 0
+
+    for (let intoBase = 0; intoBase < SEGMENT_LENGTH; intoBase += 5) {
+      for (let obstacleAhead = 1000; obstacleAhead < 4000; obstacleAhead += 7) {
+        const obstacleDepth = worldDepth(obstacleIndex(obstacleAhead, intoBase), WORLD_LAYER.obstacle)
+
+        for (let d = -600; d <= 600; d += 1) {
+          const critterAhead = obstacleAhead + d
+          const inFront =
+            worldDepth(critterIndex(critterAhead, intoBase), WORLD_LAYER.critter) > obstacleDepth
+
+          if (inFront && d > worstBehind) worstBehind = d
+          if (!inFront && -d > worstAhead) worstAhead = -d
+        }
+      }
+    }
+
+    return { worstBehind, worstAhead }
+  }
+
+  const now = sweep(indexOf, indexOf)
+  const before = sweep(shippedObstacleIndex, shippedCritterIndex)
+
+  console.log(
+    `    drawn in front while behind: ${now.worstBehind}u (was ${before.worstBehind}u); ` +
+      `drawn behind while in front: ${now.worstAhead}u (was ${before.worstAhead}u); ` +
+      `tiebreak window ${tie}u`,
+  )
+  assert.ok(
+    now.worstBehind <= tie + 1e-6,
+    `a critter is drawn in front of an obstacle ${now.worstBehind} units behind it, past the ${tie}-unit tiebreak`,
+  )
+  assert.ok(now.worstAhead === 0, `a critter is drawn behind an obstacle ${now.worstAhead} units in front of it`)
+  // The control has to keep failing, or this check has stopped measuring the thing it is about.
+  assert.ok(
+    before.worstBehind > SEGMENT_LENGTH || before.worstAhead > SEGMENT_LENGTH * 0.9,
+    'the shipped-before arrangement no longer misorders anything — the control has gone stale',
+  )
 })
 
 check('the snail sits between the segment behind it and the one ahead', () => {

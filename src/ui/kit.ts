@@ -5,6 +5,7 @@ import { isTap } from './gesture'
 import { ensureScrimTexture, SCRIM_TEXTURE } from './scrimTexture'
 import { percentFor, stepValue, valueFromX, xForValue } from './sliderMath'
 import { BUTTON_GEOMETRY, KIT, MIN_TOUCH, SLIDER_GEOMETRY, sliderHitHeight } from './kitPalette'
+import { bakeUiSprite, UI_CHEEK, UI_RADIUS, UI_SINK, UI_SLICE } from './uiSprites'
 import { uiScale } from './uiScale'
 
 /**
@@ -35,6 +36,18 @@ import { uiScale } from './uiScale'
  * exactly like the template's kit — see "Responsive Layout" in CLAUDE.md for the two hit-area traps
  * every interactive widget here has to handle, and which each of them does.
  */
+
+/**
+ * The pale outer rim the engine strokes around every sprite, in pixels.
+ *
+ * Measured on the references at ~3 px on a 46 px button; kept absolute rather than scaled, for the
+ * same reason the contour and the lip are: a nine-slice never scales its corners, so every fixed
+ * feature of this language is a fixed number of pixels at any drawn size.
+ */
+const RIM_STROKE = 3
+
+/** The label's dark stroke, as a fraction of its own face -- see `TITLE_INK`'s argument. */
+const LABEL_INK = 0.17
 
 /** Plate opacity, and the rim's thickness as a fraction of the smaller viewport axis. */
 const PLATE_ALPHA = 0.9
@@ -126,14 +139,12 @@ export interface KitButton {
   setPrimary(primary: boolean): void
   setEnabled(enabled: boolean): void
   setMinWidth(width: number): void
-  /** Repaints a `solid` button's fill — see `themeAccent`. A no-op on every other variant. */
-  setFill(fill: number): void
 }
 
 export function kitButton(
   scene: Phaser.Scene,
   text: string,
-  options?: { primary?: boolean; muted?: boolean; fontSize?: number; fontFamily?: string; solid?: boolean; fill?: number },
+  options?: { primary?: boolean; muted?: boolean; fontSize?: number; fontFamily?: string; solid?: boolean },
 ): KitButton {
   const label = scene.add
     .text(0, 0, text, {
@@ -142,8 +153,21 @@ export function kitButton(
       color: css(KIT.rim),
     })
     .setOrigin(0.5)
+  // Three layers, in this order: the engine's pale rim, the sprite, the label.
+  //
+  // **The rim is a stroke and not pixels**, which is `ART-STYLE.md`'s one deliberate omission from
+  // the generated art: it is the thinnest feature on the object and the first thing any renderer
+  // smears, and the engine knows the exact box and radius so it can draw it perfectly even. It goes
+  // UNDER the sprite so the sprite's own contour covers the inner half of the stroke and what is
+  // left is a clean outer edge.
+  const rim = scene.add.graphics()
   const background = scene.add.graphics()
-  const container = scene.add.container(0, 0, [background, label])
+  const container = scene.add.container(0, 0, [rim, background, label])
+  let sprite: Phaser.GameObjects.NineSlice | null = null
+
+  // Tracked rather than read back off the Text: Phaser stores `style.fontSize` as a CSS string, so
+  // the stroke width -- a fraction of the face -- cannot be computed from it without parsing.
+  let fontSize = options?.fontSize ?? 20
 
   let primary = options?.primary ?? false
   /**
@@ -157,10 +181,18 @@ export function kitButton(
    * game's whole idiom is hard-edged anyway.
    */
   const solid = options?.solid ?? false
-  // **Only the solid variant takes a colour from the world.** Every other widget is read against a
-  // plate and stays on the fixed interface palette for the reason `kitPalette.ts` states; this one
-  // is drawn straight over the sky, which is the case that argument does not cover.
-  let fill = options?.fill ?? KIT.active
+  /**
+   * What a `solid` or `primary` button is painted in, and it is **fixed**.
+   *
+   * **⚠ It used to be a caller's override, and `MainMenu` lent it the active theme's rung.** The
+   * argument was that this is the one control drawn straight over the world rather than on a plate,
+   * so it should belong to the world — and on `day` that made the Play button and the mode chip a
+   * pale cream under a near-white label, reported as unreadable. What the check of the day measured
+   * was the *fill against the road*, which the cream passed at 1.47:1; **nothing measured the label
+   * against the fill**, and that is what a player reads. The accent is the interface's own cyan on
+   * every theme now, and only the world behind it changes.
+   */
+  const fill = KIT.active
   /**
    * The third tier, and the kit had only two.
    *
@@ -181,14 +213,88 @@ export function kitButton(
   let width = 0
   let height = 0
 
+  /**
+   * The face a tier is painted in.
+   *
+   * The four tiers the kit already had map onto `ART-STYLE.md`'s four button classes without any
+   * call site changing: `solid`/`primary` is the accent, `muted` is the tertiary slate, disabled is
+   * the refusing grey, and everything else is the navigation blue. **None of them is a caller's to
+   * choose** — see `fill` for the round in which one of them was and what it cost.
+   */
+  function faceColour(): number {
+    if (!enabled) return KIT.disabled
+    if (solid || primary) return fill
+    if (muted) return KIT.btnMuted
+    return KIT.btnFace
+  }
+
+  /**
+   * The shipped look: one nine-slice, the engine's rim under it, the label on top.
+   *
+   * Returns false when the masters have not loaded, which is not hypothetical — `Preloader` draws
+   * its own retry button, and a scene forced to start early under the stepping harness gets the
+   * same. The caller then falls back to the kit's original drawing rather than to nothing.
+   *
+   * **The sink is a position, not a repaint.** The pressed master is `UI_SINK` px shorter and is
+   * placed with its bottom edge where the resting one's was, so the button visibly sits down onto
+   * its own lip. That is the half of "pressed" a tint cannot reach, and it is why the pressed state
+   * is a second sprite rather than a darker draw — see ART-STYLE.md.
+   */
+  function drawSprite(): boolean {
+    const sunk = pressed && enabled
+    const key = bakeUiSprite(scene, 'btn', sunk, faceColour())
+
+    if (!key) return false
+
+    const sink = sunk ? UI_SINK : 0
+    const boxHeight = Math.max(height - sink, MIN_TOUCH - sink)
+
+    if (!sprite) {
+      sprite = scene.add.nineslice(
+        0, 0, key, undefined, width, boxHeight, UI_SLICE, UI_SLICE, UI_SLICE, UI_SLICE,
+      )
+      container.addAt(sprite, 1)
+    } else {
+      sprite.setTexture(key)
+      sprite.setSlices(width, boxHeight, UI_SLICE, UI_SLICE, UI_SLICE, UI_SLICE)
+    }
+    sprite.setPosition(0, sink / 2)
+
+    rim.clear()
+    rim.lineStyle(RIM_STROKE, KIT.rim, enabled ? 0.85 : 0.4)
+    rim.strokeRoundedRect(-width / 2, -height / 2 + sink, width, boxHeight, UI_RADIUS)
+
+    // **Centred on the FACE, not on the sprite.** The lip is the bottom `UI_CHEEK` px of a resting
+    // button, so a label centred in the whole box sits low by half of it. Pressed, the face's own
+    // centre has moved down by exactly the sink, which is what carries the label with the shape.
+    label.setY(sunk ? (UI_SINK - (UI_CHEEK - UI_SINK)) / 2 : -UI_CHEEK / 2)
+    return true
+  }
+
   function redraw(): void {
     const scale = uiScale(scene.scale.width)
 
     width = Math.max(label.width + BUTTON.padX * 2 * scale, MIN_TOUCH, minWidth)
     height = Math.max(label.height + BUTTON.padY * 2 * scale, MIN_TOUCH)
 
+    // The sprite path is the shipped look; the graphics below it is what a scene drawing before
+    // `Preloader` has finished falls back to. **Both have to reach the hit-area block at the end**,
+    // which is why this is a flag rather than an early return — the first version returned here and
+    // took a fully sized, fully visible button's own input with it.
+    const drewSprite = drawSprite()
+
     const accent = !enabled ? KIT.disabled : primary ? KIT.active : muted ? KIT.muted : KIT.rim
-    const fill = primary && enabled ? KIT.active : KIT.plate
+    // **⚠ This used to be called `fill`, which shadowed the solid variant's own colour and drew an
+    // invisible button.** The outer `fill` is what a `solid` button is painted in; this one is the
+    // wash behind an *outlined* button,
+    // and for anything not `primary` that wash is `KIT.plate` — the panel's own colour. With the two
+    // sharing a name, `solid` read the wash: a plate-coloured fill on a plate, under a label already
+    // drawn in `KIT.plate` because the solid variant expects a bright fill behind it. The result was
+    // a correctly sized, correctly positioned, fully clickable rectangle with nothing visible in it,
+    // which is exactly how the result screen's `Again` was reported. It survived because the only
+    // other two `solid` callers pass `primary: true` as well, and `primary` is the one case where
+    // the shadowed value happens to equal the real one.
+    const wash = primary && enabled ? KIT.active : KIT.plate
     const fillAlpha = primary && enabled ? (pressed ? 0.34 : hovered ? 0.24 : 0.16) : muted ? (pressed ? 0.6 : 0.32) : pressed ? 0.9 : 0.72
     const halfW = width / 2
     const halfH = height / 2
@@ -196,7 +302,10 @@ export function kitButton(
 
     background.clear()
 
-    if (solid && enabled) {
+    if (drewSprite) {
+      // Nothing more to paint. The label still has to be coloured and the hit area still has to be
+      // recomputed, so the common tail below runs either way.
+    } else if (solid && enabled) {
       const drop = SOLID_SHADOW * scale
       // Pressed sinks onto its own shadow, which is the whole travel a flat button has.
       const sink = pressed ? drop : 0
@@ -209,7 +318,7 @@ export function kitButton(
       background.strokeRoundedRect(-halfW, -halfH + sink, width, height, radius)
       label.setY(sink)
     } else {
-      background.fillStyle(fill, fillAlpha)
+      background.fillStyle(wash, fillAlpha)
       background.fillRoundedRect(-halfW, -halfH, width, height, radius)
       background.lineStyle(
         Math.max(1.5, 2 * scale),
@@ -221,7 +330,9 @@ export function kitButton(
 
     // The primary button carries one extra mark rather than a different shape: a diamond at each
     // end, which is the shields' own glyph and the kit's way of saying "this is the one".
-    if (primary && enabled && !solid) {
+    // Only on the fallback: on the sprite path the tier is said by the face colour and the lip,
+    // and a diamond on top of that would be a third statement of the same thing.
+    if (primary && enabled && !solid && !drewSprite) {
       background.fillStyle(KIT.active, 0.9)
       for (const x of [-halfW + 10 * scale, halfW - 10 * scale]) {
         const size = 4 * scale
@@ -231,7 +342,17 @@ export function kitButton(
       }
     }
 
-    label.setColor(css(!enabled ? KIT.muted : solid ? KIT.plate : muted && !hovered ? KIT.muted : KIT.rim))
+    if (drewSprite) {
+      // **White with a dark stroke, on every tier and every face.** The primary button's face
+      // comes from the theme, so no fixed label colour can be guaranteed to read on it — a stroke
+      // is legible against whatever is behind it, which is the same argument the front screen's
+      // wordmark is under and the reason the measured scrim was deleted there.
+      label.setColor('#ffffff')
+      label.setStroke(css(KIT.plate), Math.max(2, fontSize * LABEL_INK))
+      label.setAlpha(enabled ? 1 : 0.65)
+    } else {
+      label.setColor(css(!enabled ? KIT.muted : solid ? KIT.plate : muted && !hovered ? KIT.muted : KIT.rim))
+    }
     container.setSize(width, height)
 
     // Both hit-area traps, in the one branch the whole kit shares: a `Container`'s origin is fixed
@@ -269,14 +390,9 @@ export function kitButton(
 
   redraw()
 
-  const setFill = (next: number): void => {
-    fill = next
-    redraw()
-  }
 
   return {
     container,
-    setFill,
     label,
     get width() {
       return width
@@ -289,6 +405,7 @@ export function kitButton(
       redraw()
     },
     setFontSize(size) {
+      fontSize = size
       label.setFontSize(size)
       redraw()
     },
@@ -717,6 +834,13 @@ export interface KitRow {
    * not currently using. The row cannot tell those apart — only the scene knows whether there is
    * anything to select — so the default reads as the selectable case and a caller with no selector
    * says so. Getting this wrong shows the player a `Select` that does nothing.
+   *
+   * **⚠ The state column is about 76px wide at scale 1** — it is right-aligned 12px from the row's
+   * edge and the price is right-aligned 88px from it — so a long override draws straight through
+   * the price. Every state this widget ships with fits (`Buy`, `Owned`, `Select`, `In use`,
+   * `Locked`); a caller wanting to say more than two words belongs in the *title*, which is
+   * left-aligned and has the rest of the row. Found by looking at a frame of the stage picker,
+   * because nothing here measures a column against its own text.
    */
   setContent(title: string, price: string, state: RowState, actionLabel?: string): void
   layout(width: number, height: number, scale: number): void
@@ -735,10 +859,23 @@ export function kitRow(scene: Phaser.Scene, title: string, price: string, state:
   let current: RowState = state
   let override: string | undefined
 
+  /**
+   * What the right-hand column reads for each state.
+   *
+   * **⚠ `'locked'` fell through to `Buy` for as long as this widget has existed.** `RowState` has
+   * four values and this handled three, so a locked row invited the player to buy the thing it was
+   * refusing. It was invisible because every caller until now passed an `override` for exactly that
+   * state — the shop says `Locked`, the level list named the level that opens it — so the default
+   * was never reached. Found the first time a caller left it to the widget.
+   *
+   * The general form is one this project keeps meeting: **a default nothing has ever taken is a
+   * default nobody has ever checked.**
+   */
   function stateLabel(value: RowState): string {
     if (override !== undefined) return override
     if (value === 'selected') return t('selected')
     if (value === 'owned') return t('select')
+    if (value === 'locked') return t('shopLocked')
 
     return t('buy')
   }

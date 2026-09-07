@@ -3,7 +3,16 @@
 // (the lock scale and the repeat policy). Neither imports phaser. Plain assertions, no
 // framework, via the register-ts-loader.mjs + ts-extensionless-loader.mjs setup.
 import assert from 'node:assert/strict'
-import { existsSync, statSync } from 'node:fs'
+import {
+  MUSIC,
+  MUSIC_KEY,
+  MUSIC_LENGTH_MS,
+  musicNotes,
+  noteHz,
+  renderMusic,
+} from '../src/audio/music.ts'
+import { TIER_COUNT } from '../src/run/nearMiss.ts'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import {
   encodeWav,
   FADE_TEARDOWN_GAP_MS,
@@ -16,6 +25,15 @@ import {
 import {
   createRepeatState,
   STREAK_BASE_HZ,
+  NEAR_MISS_BASE_HZ,
+  NEAR_MISS_STREAK_CEILING,
+  NEAR_MISS_STREAK_SEMITONES,
+  NEAR_MISS_TIER_SEMITONES,
+  NEAR_MISS_TIERS,
+  nearMissDetuneCents,
+  nearMissGain,
+  NEAR_MISS_TIER_GAIN,
+  nearMissFrequency,
   STREAK_STEPS,
   STREAK_SEMITONES_PER_STEP,
   streakDetuneCents,
@@ -262,6 +280,216 @@ check('eight simultaneous impacts collapse to one sound, not eight', () => {
 
   // ...but a second volley 400ms later is heard.
   assert.notEqual(nextRepeat(state, 5400), null)
+})
+
+check('the near-miss ladder climbs twice and stops before it shrieks', () => {
+  // **⚠ The one number this check exists for: where the top of the ladder actually lands.** Two
+  // ladders share one sample — five rungs of manoeuvre and a streak with no bound of its own — and
+  // their spans add. At two semitones each that is 8 + 12 = 20 semitones over the base, so the base
+  // is what decides whether the top is a reward or an alarm.
+  const bottom = nearMissFrequency(0, 0)
+  const top = nearMissFrequency(NEAR_MISS_TIERS - 1, 99)
+  const harmonicTop = top * Math.pow(2, 7 / 12)
+
+  assert.equal(bottom, NEAR_MISS_BASE_HZ, 'the bottom of the ladder is not the tone that was rendered')
+  console.log(
+    `    near miss ${bottom.toFixed(0)}Hz at the bottom, ${top.toFixed(0)}Hz at the top ` +
+      `(${(Math.log2(top / bottom) * 12).toFixed(0)} semitones), harmonic reaching ${harmonicTop.toFixed(0)}Hz`,
+  )
+
+  // A tone whose fundamental passes ~1.2kHz starts reading as a beep rather than as an instrument,
+  // and its harmonic is what actually hurts: this holds the partial the ear hears loudest.
+  assert.ok(top < 1200, `the top of the ladder is ${top.toFixed(0)}Hz, which is a beep rather than a note`)
+  assert.ok(harmonicTop < 2400, `the top harmonic is ${harmonicTop.toFixed(0)}Hz, i.e. it shrieks`)
+
+  // **The cap is on the ceiling, not on the step**, which is the half a smaller interval would have
+  // got wrong: the first few passes are the ones a player hears as a run, so the step has to stay
+  // audible and the climb simply stops.
+  assert.equal(NEAR_MISS_STREAK_SEMITONES, 2, 'the streak step shrank instead of the ceiling being capped')
+  // The two intervals must differ, or their sum degenerates -- see the aliasing note on the module.
+  assert.notEqual(
+    NEAR_MISS_TIER_SEMITONES,
+    NEAR_MISS_STREAK_SEMITONES,
+    'the two ladders share an interval, so a cheap pass deep in a streak sounds like a dear one at its start',
+  )
+  assert.equal(
+    nearMissDetuneCents(0, NEAR_MISS_STREAK_CEILING),
+    nearMissDetuneCents(0, 500),
+    'the streak keeps climbing past its ceiling',
+  )
+  assert.equal(
+    Math.log2(nearMissFrequency(0, NEAR_MISS_STREAK_CEILING) / bottom) * 12,
+    12,
+    'the streak does not span exactly an octave',
+  )
+})
+
+check('every rung and every streak step is a distinct pitch, and rungs stay ordered', () => {
+  // A ladder whose rungs the ear cannot separate is not feedback, which is the whole reason the
+  // rejected sixth manoeuvre ("through the one gap in a wall") was rejected.
+  const heard = new Set()
+
+  for (let tier = 0; tier < NEAR_MISS_TIERS; tier++) {
+    let previousStep = -1
+
+    for (let step = 0; step <= NEAR_MISS_STREAK_CEILING; step++) {
+      const cents = nearMissDetuneCents(tier, step)
+
+      assert.ok(cents > previousStep, `tier ${tier} step ${step} did not rise above the step below it`)
+      previousStep = cents
+      heard.add(cents)
+    }
+
+    // A dearer manoeuvre at the same point in a streak always sounds higher than a cheaper one.
+    if (tier > 0) {
+      assert.ok(
+        nearMissDetuneCents(tier, 0) > nearMissDetuneCents(tier - 1, 0),
+        `rung ${tier} is not above rung ${tier - 1}`,
+      )
+    }
+  }
+
+  // Every step of both ladders is at least a semitone from its neighbour, which is the interval
+  // below which two notes stop reading as different notes at all.
+  const sorted = [...heard].sort((a, b) => a - b)
+
+  for (let i = 1; i < sorted.length; i++) {
+    assert.ok(sorted[i] - sorted[i - 1] >= 100, `two positions on the ladder are ${sorted[i] - sorted[i - 1]} cents apart`)
+  }
+  const combinations = NEAR_MISS_TIERS * (NEAR_MISS_STREAK_CEILING + 1)
+
+  console.log(`    ${sorted.length} distinct pitches over ${combinations} rung/streak combinations`)
+  // **⚠ Equal intervals collapsed this to 11 of 35** and made a cheap pass six into a streak
+  // indistinguishable from the dearest manoeuvre at the start of one. Two thirds is what unequal
+  // intervals buy; the rest is separated by weight rather than by pitch.
+  assert.ok(
+    sorted.length >= combinations * 0.55,
+    `${sorted.length} of ${combinations} rung/streak pairs are audibly distinct, i.e. the ladders alias`,
+  )
+
+  // The rung is carried on a second channel precisely because pitch cannot separate every pair: a
+  // dearer manoeuvre is always *fuller*, whatever the streak has done to its pitch.
+  let previousGain = 0
+
+  for (let tier = 0; tier < NEAR_MISS_TIERS; tier++) {
+    const gain = nearMissGain(tier)
+
+    assert.ok(gain > previousGain, `rung ${tier} is not louder than the rung below it`)
+    previousGain = gain
+  }
+  assert.ok(previousGain <= 1.6, `the top rung is ${previousGain.toFixed(2)}x the bottom, which is a shout`)
+  console.log(`    the dearest rung plays at ${previousGain.toFixed(2)}x the cheapest, so weight separates what pitch cannot`)
+})
+
+check('the audible ladder has one rung per manoeuvre the game can tell apart', () => {
+  // `src/audio/` must not import the run's rules, so the rung count is a constant there and this is
+  // what stops the two drifting: a sixth manoeuvre with no sound to put it on would ship silent.
+  assert.equal(NEAR_MISS_TIERS, TIER_COUNT, 'the ladder and the scoring disagree about how many rungs there are')
+})
+
+console.log('the music loop')
+
+check('⚠ the music file ships WITH a registry row, which is the rule it once failed', () => {
+  // The rule is CC0 or self-generated, and a track that satisfies neither is one of the commonest
+  // reasons a Playables submission is rejected. This file was pulled once for exactly that — no
+  // source, no licence — and is back because the missing fact arrived: it is a Stable Audio
+  // render, i.e. self-generated. **What is asserted is the row, not the sound**: nothing else in
+  // the build reads `AUDIO-SOURCES.md`, so a file that quietly reappears with no provenance is a
+  // file nobody would notice until a reviewer did.
+  const file = 'public/assets/audio/music.mp3'
+
+  assert.ok(existsSync(file), `${file} is missing — the front screen would throw on an empty cache`)
+  const bytes = statSync(file).size
+  const registry = readFileSync('AUDIO-SOURCES.md', 'utf8')
+
+  assert.ok(registry.includes('audio/music.mp3'), 'the music file has no row in AUDIO-SOURCES.md')
+  assert.ok(
+    /Stable Audio/i.test(registry) && /self-generated/i.test(registry),
+    'the music row does not state what generated it',
+  )
+  // It is one file against an 8MB build ceiling that this same track once broke on its own, so the
+  // size is held here rather than left to `check-bundle.mjs` to report as a total nobody can
+  // attribute. A quarter of the ceiling is the most a single bed is worth.
+  assert.ok(bytes < 2 * 1024 * 1024, `music.mp3 is ${(bytes / 1024 / 1024).toFixed(2)}MB, a quarter of the whole build`)
+  // Not in either SFX list, because it is neither an effect nor a one-shot — `audio.ts` retains a
+  // single instance of it and mutes it in place.
+  assert.ok(!Object.values(SFX).includes(MUSIC_KEY), 'the music key is declared as an effect')
+  for (const path of Object.values(SFX_FILES)) {
+    assert.ok(!path.includes('music'), `${path} ships music as an effect`)
+  }
+  console.log(`    ${MUSIC_KEY}: ${(bytes / 1024 / 1024).toFixed(2)}MB shipped, Stable Audio render`)
+})
+
+check('⚠ and the rendered loop is still live, because a missing file must not crash the menu', () => {
+  // `playMusic` calls `soundManager.add(key)`, which throws on a key that is not in the cache — so
+  // a music file that 404s takes the front screen with it rather than merely silencing it.
+  // `Preloader.create` renders this loop into that gap. It is the fallback the sky plates and the
+  // procedural sprites already have, arriving in the one place a throw was the alternative.
+  const preloader = readFileSync('src/scenes/Preloader.ts', 'utf8')
+
+  assert.ok(preloader.includes("this.load.audio(MUSIC_KEY, 'audio/music.mp3')"), 'the file is not what is loaded')
+  assert.ok(preloader.includes('renderMusicUri()'), 'the rendered loop has no caller — it is dead state')
+  console.log(`    fallback: ${(MUSIC_LENGTH_MS / 1000).toFixed(2)}s of ${MUSIC.bars} bars at ${MUSIC.bpm}bpm, rendered`)
+})
+
+check('⚠ the loop joins to itself without a click, which is what the wrap is for', () => {
+  // A track rendered by truncation ends on whatever the last note was doing, so the join back to
+  // the start is a step — and a step in a waveform is a click, once per loop, forever. `renderTrack`
+  // folds an overrunning tail onto the head instead, so the sound crossing the seam is the same
+  // sound on both sides of it.
+  const samples = renderMusic()
+  const seam = Math.abs(samples[samples.length - 1] - samples[0])
+  // Against the loudest step the track takes anywhere inside itself: a seam is only a click if it
+  // is bigger than the ordinary motion of the waveform around it.
+  let worst = 0
+
+  for (let i = 1; i < samples.length; i++) worst = Math.max(worst, Math.abs(samples[i] - samples[i - 1]))
+
+  assert.ok(seam <= worst, `the seam steps ${seam.toFixed(4)} against a worst interior step of ${worst.toFixed(4)}`)
+  console.log(`    seam ${seam.toFixed(5)} against a worst interior step of ${worst.toFixed(4)}`)
+})
+
+check('⚠ the mix does not clip, and stays under the loudest one-shot', () => {
+  // Clamped rather than normalised (see `renderTrack`), so a mix that ran hot would flatten into
+  // distortion silently. And it is a *bed*: the sounds that matter have to cut through it, so its
+  // peak is held under the quietest levelled effect rather than merely under 1.
+  const samples = renderMusic()
+  let peak = 0
+  let energy = 0
+
+  for (const v of samples) {
+    peak = Math.max(peak, Math.abs(v))
+    energy += v * v
+  }
+
+  const rms = Math.sqrt(energy / samples.length)
+
+  assert.ok(peak < 1, `the music mix clips at ${peak.toFixed(3)}`)
+  assert.ok(peak <= 0.6, `the music peaks at ${peak.toFixed(3)}, which is an effect's loudness rather than a bed's`)
+  console.log(`    ${musicNotes().length} notes, peak ${peak.toFixed(3)}, rms ${rms.toFixed(4)}`)
+})
+
+check('the loop is deterministic and its bars line up with its own tempo', () => {
+  // Byte-identical between two renders, for the reason every other sound here is: "did the audio
+  // change?" has to be answerable by comparison.
+  const a = renderMusic()
+  const b = renderMusic()
+
+  assert.equal(a.length, b.length, 'two renders of the loop are different lengths')
+  for (let i = 0; i < a.length; i += 997) assert.equal(a[i], b[i], `the loop is not deterministic at sample ${i}`)
+
+  // The length is bars times beats times the tempo, and nothing may drift from that: a note is
+  // scheduled at a multiple of the beat, so a length that was not would put the last bar short.
+  const notes = musicNotes()
+
+  for (const note of notes) {
+    assert.ok(note.atMs >= 0 && note.atMs < MUSIC_LENGTH_MS, `a note is scheduled at ${note.atMs}ms, outside the loop`)
+  }
+  // Equal temperament, checked at the one octave everything else is derived from.
+  assert.ok(Math.abs(noteHz('A4') - 440) < 1e-9, 'A4 is not 440Hz')
+  assert.ok(Math.abs(noteHz('A3') - 220) < 1e-9, 'an octave down is not half the frequency')
+  assert.ok(Math.abs(noteHz('C5') / noteHz('C4') - 2) < 1e-9, 'an octave is not a doubling')
+  console.log(`    ${notes.length} notes, all inside ${(MUSIC_LENGTH_MS / 1000).toFixed(2)}s, deterministic`)
 })
 
 console.log(`${passed} checks passed`)

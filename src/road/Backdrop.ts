@@ -496,6 +496,13 @@ export class Backdrop {
    * what a vignette on a wide frame should be, and what a circular one would not be.
    */
   private drawVignette(): void {
+    // **Skipped outright while the effect is off**, rather than drawn at alpha 0: a transparent
+    // full-frame image is still a texture per theme and a draw call per frame for nothing. See
+    // `VIGNETTE_MAX_ALPHA`.
+    this.vignette.setVisible(VIGNETTE_MAX_ALPHA > 0)
+
+    if (VIGNETTE_MAX_ALPHA <= 0) return
+
     ensureVignetteTexture(this.vignette.scene)
     this.vignette.setTexture(vignetteTextureKey())
     this.vignette.setPosition(this.width / 2, this.height / 2)
@@ -633,7 +640,22 @@ const VIGNETTE_TEXTURE_SIZE = 512
 
 /** Where the falloff starts, as a fraction of the radius, and how dark it gets at the very edge. */
 const VIGNETTE_INNER_STOP = 0.55
-const VIGNETTE_MAX_ALPHA = 0.34
+/**
+ * How dark the frame's corners get -- **0, i.e. the vignette is off.**
+ *
+ * **⚠ Reported by pointing at the front screen: take the darkening out of the corners.** It was
+ * 0.34, and what that buys is a photographic frame: a lens darkens its own corners, and a game
+ * drawn in flat cel bands under a cartoon sun does not have a lens. On a bright daylight theme it
+ * read as the picture being dirty at the edges rather than as focus, which is the same objection
+ * that removed the measured scrim, the button strip and the pickups' bright rim from this screen
+ * -- **a contrast device is judged on a frame, not on the argument for it.**
+ *
+ * **A knob at 0 rather than deleted code**, the line `GROUND_ALTERNATION` and `DECAL_DENSITY` are
+ * both on: the generator is correct, it is per theme, and a theme that wants its own corners back
+ * is one number rather than a rebuilt lifecycle. `Backdrop` skips the draw entirely while it is 0,
+ * so what an off vignette costs is nothing rather than a transparent full-frame image.
+ */
+const VIGNETTE_MAX_ALPHA = 0
 
 /** Texture key for the active theme's vignette. Per theme, because its colour is per theme. */
 function vignetteTextureKey(): string {
@@ -674,18 +696,6 @@ export function ensureVignetteTexture(scene: Phaser.Scene): void {
   context.fillStyle = gradient
   context.fillRect(0, 0, size, size)
 
-  // **The crescent is cut out of the finished disc, not drawn as a second shape.** A moon is the
-  // same object as the sun with a bite taken out of it and no corona -- so what makes it a moon is
-  // one `destination-out` arc, and every other property (the two whiten stops, the halo tail, the
-  // theme's own glow colour, which on `night` is already a cold blue) is the sun's arithmetic
-  // untouched. Drawing a separate crescent would be a second object to keep lit the same way.
-  if (getRoadTheme().moon) {
-    context.globalCompositeOperation = 'destination-out'
-    context.beginPath()
-    context.arc(half + half * MOON_BITE.offset, half - half * MOON_BITE.rise, half * MOON_BITE.radius, 0, Math.PI * 2)
-    context.fill()
-    context.globalCompositeOperation = 'source-over'
-  }
 
   canvasTexture.refresh()
 }
@@ -784,6 +794,28 @@ export function ensureSunTexture(scene: Phaser.Scene): void {
   context.clearRect(0, 0, size, size)
   context.fillStyle = gradient
   context.fillRect(0, 0, size, size)
+
+  // **⚠ The crescent is cut out of the finished disc, and it was being cut out of the VIGNETTE.**
+  // The block below sat inside `ensureVignetteTexture`, one function up, where it did two wrong
+  // things at once on the one theme that reads it: it punched a transparent hole in the corner
+  // darkening and it left the moon a full disc. Neither is visible to any check here — the sun is
+  // a generated texture, so nothing measures its pixels, and a hole in a vignette is a *brighter*
+  // corner, which reads as the effect simply being weak. Found while switching the vignette off,
+  // i.e. by reading the code around the thing being changed rather than by looking at `night`.
+  //
+  // A moon is the same object as the sun with a bite taken out of it and no corona, so what makes
+  // it a moon is one `destination-out` arc and every other property — the two whiten stops, the
+  // halo tail, the theme's own glow colour, which on `night` is already a cold blue — is the sun's
+  // arithmetic untouched. Drawing a separate crescent would be a second object to keep lit the
+  // same way.
+  if (getRoadTheme().moon) {
+    context.globalCompositeOperation = 'destination-out'
+    context.beginPath()
+    context.arc(half + half * MOON_BITE.offset, half - half * MOON_BITE.rise, half * MOON_BITE.radius, 0, Math.PI * 2)
+    context.fill()
+    context.globalCompositeOperation = 'source-over'
+  }
+
   canvasTexture.refresh()
 }
 

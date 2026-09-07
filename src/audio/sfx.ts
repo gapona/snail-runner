@@ -6,6 +6,11 @@
  */
 import { renderToneUri, type ToneSpec } from './synth'
 
+// The music key moved to `music.ts` with the track itself. It lived here on the reasoning that this
+// file is the game's sound vocabulary and music is part of it — true, and it stopped being where the
+// track *is* the moment the loop became arithmetic rather than a file. One module owns the tune, its
+// key and its rendering, which is what every other sound in the set already has.
+
 export const SFX = {
   /**
    * The rising tone as coins are taken in a row. The main sound of the game.
@@ -16,6 +21,16 @@ export const SFX = {
    * fixed interval per step.
    */
   STREAK: 'sfx-streak',
+  /**
+   * A pass close enough to have been a decision — the ladder the reward is actually delivered on.
+   *
+   * **The sound is the feedback here, not the number.** At the moment a close pass happens the
+   * player is looking at the road, not at a readout: what a flying `+24` can tell them is that
+   * *something* was scored, and only a pitch can tell them *which manoeuvre* and *how far into a
+   * streak* without moving their eyes. So this is one sample climbing two ladders at once — see
+   * `nearMissDetuneCents`.
+   */
+  NEAR_MISS: 'sfx-near-miss',
   /** Leaving the ground. Short and rising, so the ear files it as "up". */
   JUMP: 'sfx-jump',
   /** Coming back down. The jump's mirror: low, falling, and shorter. */
@@ -35,12 +50,20 @@ export const SFX = {
   BOOST: 'sfx-boost',
   RUN_OVER: 'sfx-run-over',
   /**
-   * Every thousand points.
+   * Reaching a milestone, which in this game is reaching a **new biome**.
    *
-   * An unbounded distance has no landmarks in it — the number simply gets longer — so this is
-   * the only thing in the run that says "you have got somewhere" without the run ending. Short
-   * and high, so it lands *over* the impacts rather than among them: it is a punctuation mark,
-   * not an event on the road.
+   * An unbounded distance has no landmarks in it — the number simply gets longer — so this is the
+   * only thing in a run that says "you have got somewhere" without the run ending.
+   *
+   * **⚠ It was declared for "every thousand points", given a tone, and never played once.** The
+   * score it punctuated was deleted when the HUD was rebuilt (distance became the only number), and
+   * the sound stayed behind — the fourth whole piece of authored state this project has found doing
+   * nothing, after `cooldownMs`, `fanScale` and `arcRelaid`. It is pointed at the biome boundary
+   * now, which is a landmark the world actually has.
+   *
+   * The only **chord** in the set: two notes a fifth apart arriving together, where every other
+   * reward here is a single tone. A boundary is not a bigger pickup, it is a different kind of
+   * event, and the ear files a chord as an arrival rather than as a collection.
    */
   MILESTONE: 'sfx-milestone',
   PICKUP: 'sfx-pickup',
@@ -90,6 +113,92 @@ export const STREAK_SEMITONES_PER_STEP = 2
  * spent out of — see `STREAK_SEMITONES_PER_STEP`.
  */
 export const STREAK_STEPS = 8
+
+/**
+ * The near-miss ladder: where it starts, how far a rung and a streak step each move it, and where
+ * it stops climbing.
+ *
+ * **⚠ Two ladders on one sample, which is why the base is low.** A pass carries both *which
+ * manoeuvre* (five rungs) and *how far into a streak* (unbounded), and pitch is the only channel
+ * that can say both at once without the player looking away from the road. Their spans add: eight
+ * semitones of rung on top of an octave of streak is twenty semitones, and a tone that starts where
+ * the coin does would end the run somewhere nobody wants to be. Starting at 294 Hz puts the very
+ * top at 932 Hz — under the coin's own first step, and a third of the way to where its ladder ends.
+ *
+ * **The streak's contribution is capped, and the cap is on the CEILING rather than on the step.** A
+ * streak runs to thirty and beyond; at two semitones each that is four octaves, which is not a
+ * reward, it is a smoke alarm. Shrinking the step instead would make the first few passes — the
+ * ones a player actually hears as a run — indistinguishable from each other, which is the half of
+ * the ladder that does the work. So the step stays audible and the climb simply stops.
+ *
+ * **⚠ The two intervals are deliberately different, and equal ones aliased.** Both ladders started
+ * at two semitones, which made the sum degenerate: 35 combinations collapsed to **11 distinct
+ * pitches**, and a cheap manoeuvre six passes into a streak sounded *identical* to the dearest
+ * manoeuvre at the start of one. That is this project's own "a term that measures nothing" arriving
+ * in the audio: the formula was right and the quantity carried less than it claimed. Three against
+ * two takes it to 21, and what separates what is left is the second channel below.
+ */
+export const NEAR_MISS_BASE_HZ = 262
+export const NEAR_MISS_TIER_SEMITONES = 3
+export const NEAR_MISS_STREAK_SEMITONES = 2
+
+/**
+ * How many streak steps the pitch keeps climbing for, after which it holds.
+ *
+ * Six, so the streak spans exactly an octave — the interval the ear reads as "the same note, higher"
+ * and therefore the one that reads as *the same thing, further along* rather than as a new event.
+ */
+export const NEAR_MISS_STREAK_CEILING = 6
+
+/**
+ * How many rungs the ladder has.
+ *
+ * Deliberately a constant here rather than an import of `nearMiss.ts`'s `TIER_COUNT`: `src/audio/`
+ * must not depend on the run's rules, and `verify:audio` asserts the two are equal so a sixth rung
+ * cannot appear with no sound to put on it.
+ */
+export const NEAR_MISS_TIERS = 5
+
+/**
+ * How much to detune a near miss, in cents, for a rung and a place in the streak.
+ *
+ * One sample and a detune, for `streakDetuneCents`' reason: five rungs times seven streak positions
+ * would be thirty-five rendered tones and thirty-five cache entries for a sound the player hears as
+ * one instrument.
+ *
+ * **A hit needs no case here.** The streak resets to zero on damage (`breakStreak`), so the next
+ * pass is at the bottom of the ladder by construction — the drop the player hears is the mechanic,
+ * not a sound effect standing in for it.
+ */
+export function nearMissDetuneCents(tier: number, streakIndex: number): number {
+  const rung = Math.max(0, Math.min(NEAR_MISS_TIERS - 1, Math.floor(tier)))
+  const step = Math.max(0, Math.min(NEAR_MISS_STREAK_CEILING, Math.floor(streakIndex)))
+
+  return (rung * NEAR_MISS_TIER_SEMITONES + step * NEAR_MISS_STREAK_SEMITONES) * 100
+}
+
+/**
+ * How much louder a dearer manoeuvre is played, as a multiple of the sound's own gain.
+ *
+ * **The rung is carried on two channels, and this is the one that cannot alias.** Pitch alone
+ * cannot separate every (rung, streak) pair — their ladders share a scale and inevitably meet — and
+ * the brief asked for the dear manoeuvres to be *higher and fuller*, which is two channels stated
+ * as one sentence. Loudness is the second: it depends on the rung only, so however far into a
+ * streak the player is, a ramp always arrives with more weight than a squeeze.
+ *
+ * Modest, because this plays several times a second on a busy stretch: the top rung is half again
+ * as loud as the bottom, not twice.
+ */
+export const NEAR_MISS_TIER_GAIN = 0.125
+
+export function nearMissGain(tier: number): number {
+  return 1 + Math.max(0, Math.min(NEAR_MISS_TIERS - 1, Math.floor(tier))) * NEAR_MISS_TIER_GAIN
+}
+
+/** The frequency a rung and a streak position actually sound at — for tests and for tuning by ear. */
+export function nearMissFrequency(tier: number, streakIndex: number): number {
+  return NEAR_MISS_BASE_HZ * Math.pow(2, nearMissDetuneCents(tier, streakIndex) / 1200)
+}
 
 /** Cents of detune applied to repeated sounds, and how close together two may play. */
 export const VARIATION_CENTS = 60
@@ -169,6 +278,25 @@ export interface SfxAsset {
  */
 export const SFX_ASSETS: readonly SfxAsset[] = [
   {
+    key: SFX.NEAR_MISS,
+    // **A brush, not a chime.** It plays several times a second on a busy stretch, so it has to be
+    // short enough to stack without smearing and quiet enough that a run of them is a rhythm rather
+    // than an alarm. The fifth is what puts it in the reward family — every reward in this set
+    // carries a harmonic and nothing in the impact family does — while the low base leaves the
+    // twenty semitones of headroom the two ladders need. It rises, because what it reports is a
+    // thing the player did well.
+    spec: {
+      waveform: 'triangle',
+      frequency: NEAR_MISS_BASE_HZ,
+      sweepTo: NEAR_MISS_BASE_HZ * 1.18,
+      durationMs: 95,
+      attackMs: 2,
+      releaseMs: 62,
+      gain: 0.22,
+      harmonicSemitones: 7,
+    },
+  },
+  {
     key: SFX.JUMP,
     // Rises, and is the only rise in the impact family: a jump is a thing the player did, so it
     // has to be distinguishable from a pickup (also rising, but in the reward family, brighter
@@ -209,9 +337,12 @@ export const SFX_ASSETS: readonly SfxAsset[] = [
   },
   {
     key: SFX.MILESTONE,
-    // A fifth above the boost chime and half its length: related to it by interval, so the two
-    // read as the same family, and short enough that several in a row do not become a melody.
-    spec: { waveform: 'triangle', frequency: 784, sweepTo: 1568, durationMs: 200, attackMs: 4, releaseMs: 150, gain: 0.24, harmonicSemitones: 7 },
+    // **⚠ Re-voiced when the key was repointed at the biome boundary.** It was a short bright
+    // chime, which is right for a number ticking over and wrong for arriving somewhere: it sat in
+    // the pickups' own register and read as one more collection. Lower, longer, and the only reward
+    // in the set that does not sweep — an arrival is a place, not a motion — with the fifth left in,
+    // because that is what makes it a chord rather than a blip.
+    spec: { waveform: 'triangle', frequency: 392, durationMs: 520, attackMs: 6, releaseMs: 340, gain: 0.3, harmonicSemitones: 7 },
   },
 ]
 
@@ -334,6 +465,11 @@ export const SFX_FILES: Readonly<Record<string, string>> = {
 export const PICKUP_DETUNE_CENTS: Readonly<Record<string, number>> = {
   fruit: 0,
   shield: -300,
+  // **A minor third below the shield, i.e. the bottom of the three.** The two defensive pickups
+  // are a class and are pitched as one — down from the fruit — and within it the medkit is the
+  // lower because it is the one that answers a mistake already made. Three semitones again, for
+  // the reason the ladder uses them: it is the smallest interval a player counts without training.
+  heal: -600,
 }
 
 /** Renders every *generated* sound to a `data:` URI, for the Preloader to hand to Phaser's loader. */

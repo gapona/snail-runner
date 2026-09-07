@@ -22,14 +22,17 @@ import { runFixedSteps } from '../race/fixedStep'
 import { FIXED_STEP_MS } from '../race/constants'
 import { wrapZ } from '../road/project'
 import {
+  CONTINUE_LIVES,
   FEVER_SPEED_ACCEL,
   HIT_SPEED_LOSS,
+  MAX_SHIELDS,
   RUN_LIVES,
   SPEED_ACCEL,
   SPEED_BASE,
   SPEED_CAP,
 } from './constants'
 import { addFruit as bankFruit, createFeverState, feverSpeedFactor, stepFever, type FeverState } from './fever'
+import { createTally, type QuestKind } from './quests'
 
 export interface RunState {
   /** Where the camera is on the closed track, in world units, always `[0, trackLength)`. */
@@ -54,6 +57,28 @@ export interface RunState {
   shields: number
   /** Coins collected this run. Banked into the save when the run ends. */
   coins: number
+  /**
+   * What skill has been worth this run, in points — close passes and the streaks they build.
+   *
+   * **⚠ This field was deleted once and is back for the reason it went.** It held "distance plus
+   * what the pickups paid", which nothing in the game read: the save, `sendScore` and the result
+   * screen all record `distance`, so it was a third number saying one of the other two's things.
+   * What is different now is that there is something to say. Distance is how far you got; this is
+   * what you were willing to go near to get there, and no other number in the run carries it.
+   *
+   * Stored rather than derived, because unlike distance it cannot be recomputed from anything: it
+   * is the sum of decisions the player already made. See `nearMiss.ts`.
+   */
+  bonus: number
+  /**
+   * What this run has done, per quest kind — fruit taken, close passes made, Fevers entered, ramps
+   * ridden.
+   *
+   * **Tallied in the run and applied to the board once, at the end.** A quest advanced per event
+   * would be a save write per fruit; and the board is read on the front screen, which is the only
+   * place a quest can be claimed anyway. See `quests.ts`.
+   */
+  tally: Record<QuestKind, number>
   /**
    * The fruit gauge and the Fever it pays for — see `fever.ts`.
    *
@@ -93,7 +118,15 @@ export interface RunStepOptions {
   drag?: number
 }
 
-/** A run at the start line, at `SPEED_BASE`, having travelled nothing. */
+/**
+ * A run at the start line, at `SPEED_BASE`, having travelled nothing.
+ *
+ * **⚠ It used to take a `target`, and there was a mode that ended at one.** Five stages — 300m to
+ * 2200m — each a distance to reach, riding the same curve, the same road and the same placer, with
+ * `RunState.target` as their entire mechanical cost. They are removed: this game is the endless
+ * run, and what a player who wants to put a run down needs is not a shorter run but the ability to
+ * stop and come back. See `suspend.ts`, which is what replaced it.
+ */
 export function createRunState(): RunState {
   return {
     z: 0,
@@ -104,6 +137,8 @@ export function createRunState(): RunState {
     lives: RUN_LIVES,
     shields: 0,
     coins: 0,
+    bonus: 0,
+    tally: createTally(),
     fever: createFeverState(),
     over: false,
   }
@@ -140,14 +175,92 @@ export function takeHit(state: RunState): RunState {
   return { ...state, speed, lives, over: lives <= 0 }
 }
 
-/** Grants a one-hit absorber. */
+/**
+ * Puts a finished run back on the road: one life, and the flag that ended it cleared.
+ *
+ * **Only the two fields that ended the run move.** `distance`, `coins`, `speed`, the fever gauge
+ * and the fixed step's own remainder are all left exactly as the crash left them — that is what
+ * "continue from where you stopped" means, and rebuilding any of them here would make the continue
+ * a second, shorter run wearing the first one's score.
+ *
+ * The speed the fatal hit docked is *not* given back either. A hit costs speed and a life, in that
+ * order (`takeHit`), and a continue buys back the life; buying back the speed as well would make
+ * the last mistake of a run cheaper than every other mistake in it.
+ *
+ * Pure, and takes no view on whether the player earned it — `adPolicy.ts` owns that question.
+ */
+export function revive(state: RunState): RunState {
+  if (!state.over) return state
+
+  return { ...state, lives: CONTINUE_LIVES, over: false }
+}
+
+/**
+ * Grants a one-hit absorber, up to `MAX_SHIELDS`.
+ *
+ * **⚠ This used to have no ceiling**, which is what made the readout for it a counter rather than a
+ * shape: nothing bounded how many `◆` could end up in the corner, so the HUD carried a cap of its
+ * own and a `+` past it. The rule belongs here, where the state is, and the readout is a length
+ * again because of it.
+ *
+ * Clamped rather than refused, so a caller that has not asked `canTakeShield` first cannot produce
+ * a state the row could not draw. What stops the player *collecting* a shield they cannot hold is
+ * that one is never laid in front of them — see `canTakeShield`.
+ */
 export function addShield(state: RunState): RunState {
-  return { ...state, shields: state.shields + 1 }
+  return { ...state, shields: Math.min(MAX_SHIELDS, state.shields + 1) }
+}
+
+/**
+ * Whether a shield would be worth anything to this run right now.
+ *
+ * **Asked before one is drawn, not before it is collected.** A pickup the player drives through and
+ * is given nothing for reads as the game dropping it; a pickup that was never there reads as
+ * nothing at all, which is the honest outcome when there is nothing to give. See `RunScene`'s
+ * dimming rule, which draws a pickup the run has no room for inert rather than taking it away.
+ */
+export function canTakeShield(state: RunState): boolean {
+  return state.shields < MAX_SHIELDS
+}
+
+/**
+ * Puts a life back, up to the number a run starts with.
+ *
+ * **Capped at `RUN_LIVES` rather than uncapped**, so a stretch of lucky road cannot turn the three
+ * lives into a health bar — the lives are "the ceiling on carelessness, not the medium of
+ * exchange", and a cap is what keeps that true. It is worth nothing at full health, which is honest
+ * and is why `canTakeHeal` exists: a medkit the player has no room for is drawn dimmed and passed
+ * through rather than collected for no effect — see `UNAVAILABLE_ALPHA`.
+ *
+ * The cap is the *starting* count and not the count a continue left behind: a continue is bought,
+ * and a road that refilled it would be selling the same thing twice.
+ */
+export function heal(state: RunState): RunState {
+  return { ...state, lives: Math.min(RUN_LIVES, state.lives + 1) }
+}
+
+/** Whether a medkit would be worth anything to this run right now. See `canTakeShield`. */
+export function canTakeHeal(state: RunState): boolean {
+  return state.lives < RUN_LIVES
 }
 
 /** Banks one fruit, which may start a Fever. All of the rule is in `fever.ts`. */
 export function eatFruit(state: RunState): RunState {
   return { ...state, fever: bankFruit(state.fever) }
+}
+
+/** Adds one to a quest tally. The only way a run reports what it did. */
+export function tally(state: RunState, kind: QuestKind, amount = 1): RunState {
+  if (!(amount > 0)) return state
+
+  return { ...state, tally: { ...state.tally, [kind]: state.tally[kind] + amount } }
+}
+
+/** Banks what a close pass was worth. */
+export function earnBonus(state: RunState, points: number): RunState {
+  if (!(points > 0)) return state
+
+  return { ...state, bonus: state.bonus + Math.round(points) }
 }
 
 /** Banks one coin. */

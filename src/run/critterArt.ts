@@ -41,12 +41,13 @@ export const CRITTER_FRAMES = 2
  * about is cadence.
  */
 export const CRITTER_STEP_UNITS: Record<CritterKind, number> = {
-  beetle: 60,
-  ladybird: 60,
-  spider: 42,
   frog: 90,
-  bee: 12,
-  wasp: 10,
+  // A flyer's body does not step: both of its frames are the same drawing and the motion is in the
+  // wings, which `critterWings.ts` rotates. The number is here because the table is keyed by kind
+  // and a gap would be a lookup that returns undefined; it is never read for a flyer.
+  bee: 1,
+  hornet: 1,
+  mosquito: 1,
 }
 
 /** The texture key for one pose of one kind. */
@@ -55,9 +56,37 @@ export function critterFrameKey(kind: CritterKind, index: number): string {
 }
 
 /** Every key this module owns, for a loader or a camera list that wants the set. */
-export const CRITTER_TEXTURE_KEYS: readonly string[] = CRITTER_KIND_IDS.flatMap((kind) =>
-  Array.from({ length: CRITTER_FRAMES }, (_, i) => critterFrameKey(kind, i)),
-)
+/**
+ * The key a kind's second, tucked drawing lands under, for the top of a hop.
+ *
+ * **⚠ There is no procedural fallback for it, and that is deliberate.** Every other critter texture
+ * is drawn by `createCritterTextures` when the PNG fails to load; a tucked pose is a supplied
+ * drawing with no geometry behind it, so inventing one would put a shape on screen that nobody has
+ * seen. `CritterSprites` checks the texture exists and stays on the deformed ground pose when it
+ * does not — the hop still reads, it just stops being tucked at the top.
+ */
+export function critterAirKey(kind: CritterKind): string {
+  return `critter-${kind}-air`
+}
+
+/** The kinds that ship one. Only the frog so far — see `CRITTER_AIR_POSES`. */
+export const CRITTER_AIR_KINDS: readonly CritterKind[] = ['frog']
+
+/** The key a flyer's single wing drawing lands under. Mirrored and rotated in the engine. */
+export function critterWingKey(kind: CritterKind): string {
+  return `critter-${kind}-wing`
+}
+
+/** The kinds that ship one — the three flyers. */
+export const CRITTER_WING_KINDS: readonly CritterKind[] = ['bee', 'hornet', 'mosquito']
+
+export const CRITTER_TEXTURE_KEYS: readonly string[] = [
+  ...CRITTER_KIND_IDS.flatMap((kind) =>
+    Array.from({ length: CRITTER_FRAMES }, (_, i) => critterFrameKey(kind, i)),
+  ),
+  ...CRITTER_AIR_KINDS.map(critterAirKey),
+  ...CRITTER_WING_KINDS.map(critterWingKey),
+]
 
 /**
  * The drawing canvas, in pixels.

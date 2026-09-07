@@ -11,9 +11,12 @@
 import assert from 'node:assert/strict'
 import { HORIZON_Y } from '../src/road/constants.ts'
 import { SUN, sunCenterX, sunSize } from '../src/road/constants.ts'
+import { PLAYER_REST_Y_FRACTION } from '../src/run/constants.ts'
 import {
   buttonBand,
   intersects,
+  mascotFeetRow,
+  mascotLift,
   MENU_ENTRY,
   MENU_ZONES,
   obstacleBand,
@@ -208,6 +211,106 @@ check('⚠ the wordmark clears the sun on every frame, and stays inside its own 
   console.log(
     `    ${pushedFrames} of ${VIEWPORTS.length} frames put the sun over the wordmark and are pushed clear by ` +
       `${worstClearance.toFixed(1)}px at the tightest; unbounded, ${unboundedOverlaps} of them leave the title no room at all`,
+  )
+})
+
+console.log('the mascot stands as far up the road as it has to, and no further')
+
+/**
+ * The lift's own constants, restated because they live on `MainMenu`'s `MASCOT` — which imports
+ * `phaser` as a value and is therefore unreachable from here. Same reason `verify:ui` restates
+ * `uiScale`.
+ */
+const LIFT = { minZ: 2.4, maxZ: 6, clearance: 14 }
+
+/**
+ * Roughly where the Play stack's top lands, for a frame — the row the mascot has to clear.
+ *
+ * The real one is `MainMenu.stackTop`: the button band's centre, clamped hard above the nav bar.
+ * What is restated here is the clamped branch, which is the one that binds on every frame narrow
+ * enough for this check to be about.
+ */
+function stackTopFor(height, scale) {
+  const stack = (66 + 10 + 44) * scale
+
+  return Math.min(buttonBand(height).centre - stack / 2, height - 61 * scale - 10 * scale - stack)
+}
+
+check('⚠ the lift is solved per frame, and a roomy frame keeps the composition it had', () => {
+  let lifted = 0
+  let unlifted = 0
+
+  for (const [width, height] of VIEWPORTS) {
+    const scale = Math.min(1, Math.max(0.8, width / 400))
+    const top = stackTopFor(height, scale)
+    const lift = mascotLift({
+      height,
+      stackTop: top,
+      clearance: LIFT.clearance * scale,
+      horizon: HORIZON_Y,
+      rest: PLAYER_REST_Y_FRACTION,
+      minZ: LIFT.minZ,
+      maxZ: LIFT.maxZ,
+    })
+
+    assert.ok(lift.z >= LIFT.minZ, `${width}x${height}: the lift went under its own floor`)
+    assert.ok(lift.z <= LIFT.maxZ, `${width}x${height}: the lift went over its own ceiling`)
+
+    if (lift.z > LIFT.minZ) lifted += 1
+    else unlifted += 1
+
+    if (!lift.clears) continue
+
+    // The feet land exactly where they were asked to, i.e. `clearance` above the stack.
+    const feet = mascotFeetRow(height, HORIZON_Y, PLAYER_REST_Y_FRACTION, lift.z)
+
+    assert.ok(
+      feet <= top - LIFT.clearance * scale + 0.5,
+      `${width}x${height}: the feet land at ${feet.toFixed(1)} against a stack top of ${top.toFixed(1)}`,
+    )
+    // And never past the horizon, which is the asymptote rather than a rule anybody enforces.
+    assert.ok(feet > height * HORIZON_Y, `${width}x${height}: the feet passed the vanishing point`)
+  }
+
+  assert.ok(lifted > 0, 'no supported frame needs a lift, so the derivation is doing nothing')
+  assert.ok(unlifted > 0, 'every frame is lifted, so the floor is doing nothing')
+  console.log(`    ${lifted} of ${VIEWPORTS.length} frames are lifted; the other ${unlifted} keep the floor`)
+})
+
+check('⚠ ONE lift cannot serve every frame, which is what the derivation replaced', () => {
+  // The control is the constant this shipped as: 3.6, picked to clear the button on the frame it
+  // was reported from. Measured live at 320x568 it left a **0px** gap — the pad touching the
+  // button's rim — which is what a constant does at the narrow end of a range it was tuned at the
+  // middle of.
+  const CONSTANT = 3.6
+  let touching = 0
+  let overshot = 0
+
+  for (const [width, height] of VIEWPORTS) {
+    const scale = Math.min(1, Math.max(0.8, width / 400))
+    const top = stackTopFor(height, scale)
+    const feet = mascotFeetRow(height, HORIZON_Y, PLAYER_REST_Y_FRACTION, CONSTANT)
+    const gap = top - feet
+    const solved = mascotLift({
+      height,
+      stackTop: top,
+      clearance: LIFT.clearance * scale,
+      horizon: HORIZON_Y,
+      rest: PLAYER_REST_Y_FRACTION,
+      minZ: LIFT.minZ,
+      maxZ: LIFT.maxZ,
+    })
+
+    if (gap < LIFT.clearance * scale) touching += 1
+    // A frame the solve leaves at its floor is one the constant was pushing up the road for nothing.
+    if (solved.z <= LIFT.minZ && CONSTANT > LIFT.minZ) overshot += 1
+  }
+
+  assert.ok(touching > 0, 'the constant clears every frame, so the derivation bought nothing at the narrow end')
+  assert.ok(overshot > 0, 'the constant is needed on every frame, so it costs nothing at the wide end')
+  console.log(
+    `    a constant ${CONSTANT} leaves ${touching} of ${VIEWPORTS.length} frames inside the clearance and ` +
+      `lifts ${overshot} that did not need it at all`,
   )
 })
 

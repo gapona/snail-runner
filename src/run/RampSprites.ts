@@ -9,7 +9,8 @@ import { billboardAppear, billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, ROAD_W
 import type { Segment } from '../road/track'
 import { INK, OBSTACLE_MATERIALS } from './artPalette'
 import { RAMP_HEIGHT, type Ramp } from './ramp'
-import { WORLD_LAYER, worldDepth } from './worldDepth'
+import { distanceIndexOf, WORLD_LAYER, worldDepth } from './worldDepth'
+import { groundPointInto, type GroundPoint } from './groundProjection'
 
 /** The one texture, drawn rather than loaded — a ramp has no render and needs none. */
 export const RAMP_TEXTURE = 'ramp-wedge'
@@ -179,6 +180,8 @@ export class RampSprites {
   private readonly slots: Phaser.GameObjects.Image[]
   private readonly cropped: boolean[]
   private readonly rect = createBillboardRect()
+  /** The interpolated ground point, reused per object. */
+  private readonly ground: GroundPoint = { x: 0, y: 0, w: 0, scale: 0 }
 
   constructor(scene: Phaser.Scene, poolSize = RAMP_POOL_SIZE) {
     createRampTexture(scene)
@@ -207,11 +210,16 @@ export class RampSprites {
 
       if (!here || here.length === 0) continue
 
-      const ground = track[index].s1
+      const segment = track[index]
 
-      if (!Number.isFinite(ground.scale) || ground.scale <= 0) continue
+      if (!Number.isFinite(segment.s1.scale) || segment.s1.scale <= 0) continue
 
       for (const ramp of here) {
+        // **⚠ Interpolated across the segment, not read off its near edge** — see
+        // `groundProjection.ts`. `Segment.s1` is exact for a tree, which stands *at* that edge;
+        // this stands at its own `z` anywhere inside the segment, so drawing it from `s1` put the
+        // sprite and the world position up to one `SEGMENT_LENGTH` apart in depth.
+        const ground = groundPointInto(this.ground, segment.s1, segment.s2, ramp.z)
         if (used >= this.slots.length) break
 
         const rect = billboardRectInto(
@@ -233,7 +241,8 @@ export class RampSprites {
         image.setVisible(true)
         image.setPosition(rect.x, rect.y)
         image.setDisplaySize(rect.w, rect.h)
-        image.setDepth(worldDepth(n, WORLD_LAYER.obstacle))
+        // Where it stands INSIDE its segment -- see `distanceIndexOf`.
+        image.setDepth(worldDepth(distanceIndexOf(n, ramp.z), WORLD_LAYER.obstacle))
         // The same distance haze obstacles and pickups take, so a ramp does not read as pasted onto
         // a faded world — and the same combat ceiling, because lining up on one is a thing the
         // player has to be able to do at range.

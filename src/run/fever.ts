@@ -65,7 +65,16 @@ import {
  * drop the invulnerability. With no invulnerability to drop it is a phase nothing branches on, so
  * it is gone rather than left as dead state.
  */
-export type FeverPhase = 'idle' | 'active' | 'easing'
+/**
+ * The phases, as a list, with the type derived from it.
+ *
+ * **A list rather than a bare union, because a saved run carries one.** `resolveSuspended` has to
+ * ask whether a stored string is a phase, and a union alone cannot be asked at runtime — deriving
+ * the type from the list is what stops the two from disagreeing the day a phase is added.
+ */
+export const FEVER_PHASES = ['idle', 'active', 'easing'] as const
+
+export type FeverPhase = (typeof FEVER_PHASES)[number]
 
 export interface FeverState {
   /** Fruit banked toward the next Fever, `0..FEVER_FRUIT_TARGET`. */

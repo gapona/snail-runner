@@ -46,7 +46,12 @@ const MIN_RING_RATIO = 0.1
 // generator's own matte. Both of this file's rules are properties of that pipeline, so a sprite it
 // produced is exactly what should be held to them. Obstacles and pickups predate the split and are
 // still outside; widening to them is a separate measurement, not a free line.
-const ROOTS = ['public/assets/decor', 'public/assets/fx', 'public/assets/critter']
+const ROOTS = [
+  'public/assets/decor',
+  'public/assets/fx',
+  'public/assets/critter',
+  'public/assets/ui',
+]
 
 /** Decodes an 8-bit, non-interlaced, colour-type-6 PNG into `{ width, height, data }` (RGBA). */
 const lightness = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b
@@ -77,14 +82,42 @@ function ringRatioOf({ width, height, data }) {
         }
       }
 
-      if (!touchesFilled) continue
+      // ⚠ A filled pixel counts as "inner" only when it touches the RING, not when it touches
+      // another filled pixel. The two are wildly different populations and the second is the whole
+      // interior of the sprite — so what this measured was the transparent ring against the
+      // sprite's average brightness, while its own docstring says "against the pixels it touches".
+      //
+      // It passed everything shipped because those sprites are soft-edged and their interiors are
+      // not far off their edges. The case that exposed it is a UI button: a 2 px dark contour
+      // around a large bright face scores 0.08 against the interior and 0.98 against its own edge,
+      // i.e. it was failed for being correctly flooded in ink. Median over the shipped set goes
+      // 0.754 -> 0.997 with the comparison fixed, which is what a flooded ring should read.
+      let touchesRing = false
+
+      if (filled) {
+        for (const [dx, dy] of [
+          [-1, 0],
+          [1, 0],
+          [0, -1],
+          [0, 1],
+        ]) {
+          if (data[at(x + dx, y + dy) + 3] === 0) {
+            touchesRing = true
+            break
+          }
+        }
+      }
+
+      if (!touchesFilled && !touchesRing) continue
 
       const value = lightness(data[i], data[i + 1], data[i + 2])
 
       if (filled) {
+        if (!touchesRing) continue
         innerSum += value
         innerCount++
       } else {
+        if (!touchesFilled) continue
         ringSum += value
         ringCount++
       }

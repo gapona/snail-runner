@@ -76,5 +76,6 @@
   "critter_frog_0": "critter_frog_0_geo",
   "critter_frog_1": "critter_frog_1_geo",
   "critter_wasp_0": "critter_wasp_0_geo",
-  "critter_wasp_1": "critter_wasp_1_geo"
+  "critter_wasp_1": "critter_wasp_1_geo",
+  "pick_heal": "pickup_heal_lp"
 }

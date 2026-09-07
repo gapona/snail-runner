@@ -79,7 +79,26 @@ export function bindAction(scene: Phaser.Scene, action: string, sources: ActionS
     // during a scene that has since been replaced would still satisfy a distance test here.
     const pressedAt = new Map<number, { x: number; y: number }>()
 
-    const onDown = (pointer: Phaser.Input.Pointer) => {
+    // **⚠ A press that landed on a widget is not a screen tap, and Phaser hands us the list.**
+    // `POINTER_DOWN` is emitted with the objects the pointer was over, so a HUD button on this
+    // screen no longer also fires the whole-screen action underneath it. Written down in this
+    // project long before there was anything to catch: *"once a HUD exists a tap on a HUD button
+    // will also move the ship unless the handler learns to ignore pointers already consumed by a
+    // game object"*. The run's exit button is the first one, and without this a tap on it would
+    // jump as well as leave.
+    //
+    // The *release* is filtered the same way rather than only the press: a finger that pressed on
+    // open road and lifted on the button has still made a jump gesture, so what is tested is where
+    // it went down — which is why the record is dropped rather than consulted.
+    const overWidget = (over: Phaser.GameObjects.GameObject[] | undefined) => (over?.length ?? 0) > 0
+
+    const onDown = (pointer: Phaser.Input.Pointer, currentlyOver?: Phaser.GameObjects.GameObject[]) => {
+      if (overWidget(currentlyOver)) {
+        pressedAt.delete(pointer.id)
+
+        return
+      }
+
       // **A mouse fires here and a finger fires on release**, which is the same split
       // `bindSteering` makes and for the same reason: a mouse steers by hovering, so its button is
       // free and a press means one thing only. A finger steers by being held, so every steer starts

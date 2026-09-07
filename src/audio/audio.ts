@@ -2,7 +2,7 @@ import * as Phaser from 'phaser'
 import { YTEvents, isAudioEnabled } from '../platform/yt'
 import { getState, mutate } from '../save/store'
 import { teardownDelayMs } from './synth'
-import { clampVolume, gainFor, isSilent } from './volume'
+import { clampVolume, gainFor, isSilent, musicGainFor } from './volume'
 
 /**
  * Sound/music manager sitting on top of Phaser's SoundManager. Scenes must go through
@@ -60,7 +60,7 @@ function applyMusicAudibility(): void {
   currentMusic?.setMute(!effectiveMusic())
   // Volume as well as mute: the mute is what the platform and the switch drive, the volume is what
   // the slider drives, and a track already playing has to answer to both without being restarted.
-  if (currentMusic) currentMusic.volume = gainFor(getState().settings.musicVolume)
+  if (currentMusic) currentMusic.volume = musicGainFor(getState().settings.musicVolume)
 }
 
 /**
@@ -123,7 +123,7 @@ export function playMusic(key: string, seekSeconds = 0): void {
   currentMusic = soundManager.add(key, {
     loop: true,
     seek: seekSeconds,
-    volume: gainFor(getState().settings.musicVolume),
+    volume: musicGainFor(getState().settings.musicVolume),
   }) as MutableSound
   currentMusic.play()
   applyMusicAudibility()

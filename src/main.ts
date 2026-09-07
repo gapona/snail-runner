@@ -64,7 +64,11 @@ await Promise.race([whenDisplayFontReady(), new Promise((resolve) => setTimeout(
 // rather than having an opinion of its own. A player looks at the character before they look at the
 // scenery, and the free skin standing in row one is what says the tab is a wardrobe rather than a
 // paywall.
-setCatalog([...buildSnailCatalog(), ...buildThemeCatalog()])
+// **⚠ The skins are not in the shop any more, and that is the point of the garage.** Two places to
+// buy one thing is two places to keep in step, and the shop's row could never do the job anyway:
+// what sells a mascot is the mascot, at full height, which is a screen rather than a list entry.
+// `buildSnailCatalog` is kept — it is what would put them back if the garage ever went away.
+setCatalog([...buildThemeCatalog()])
 
 // The interface palette, before any scene creates a widget: every factory in `ui/theme.ts` reads
 // `getTheme()` at *creation* time, so a widget already on screen never retints itself. The

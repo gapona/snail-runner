@@ -176,3 +176,77 @@ export function obstacleBand(height: number): Band {
 export function intersects(top: number, bottom: number, into: Band): boolean {
   return bottom > into.top && top < into.bottom
 }
+
+/**
+ * How far up the road the front screen's mascot must stand for its feet to clear a row.
+ *
+ * **⚠ This replaced a constant, and the constant was wrong at both ends of the range of frames.**
+ * The band the creature has to fit into is between the horizon — which its feet approach and can
+ * never pass — and the top of the Play stack, and that band is 46px on a 320x568 frame against a
+ * 75px mascot, and 158px on a desktop. One lift for both leaves the phone's pad *touching* the
+ * button (measured at 0px) and spends 38px of sky on a desktop that had 44px of clearance already.
+ *
+ * The arithmetic is the projection's own, inverted. A mascot standing `z` times the run's distance
+ * has its feet at `horizon + (rest - horizon) / z` of the frame, because the offset from the
+ * horizon goes as `1 / z` — so asking for a row gives back the `z` that puts them there.
+ *
+ * - **Clamped into `[minZ, maxZ]`**, and the floor is what makes a roomy frame keep exactly the
+ *   composition it had: without it a desktop would be pushed *down* the road to spend its slack.
+ * - **`clears` is false when the row asked for is at or above the horizon**, i.e. when no `z` does
+ *   it at all. That is the honest answer on a short landscape frame, and it is a better question
+ *   than "does the stack fit under where the mascot happens to be" — which is what the caller used
+ *   to ask, against a feet row that is now solved rather than fixed.
+ *
+ * Pure, and in this file rather than in the scene, because it is a statement about the frame's own
+ * zones — and because a rule a `verify:` script cannot reach is a rule nobody is checking.
+ */
+export function mascotLift(spec: {
+  /** The viewport's height in pixels. */
+  readonly height: number
+  /** The row the feet have to end up above — the Play stack's own top edge, in pixels. */
+  readonly stackTop: number
+  /** How much road is left showing under the pad, in pixels. */
+  readonly clearance: number
+  /**
+   * The vanishing row and where a run's own mascot stands, both as fractions of the frame's height.
+   *
+   * Arguments rather than this file's own `MENU_ZONES.BAND_BOTTOM`, which happens to carry the same
+   * 0.62: the horizon is the *projection's* number and the rest row is solved from it, so a copy
+   * here would be two constants agreeing by coincidence — which is exactly what `verify:menu`
+   * asserts against a real `HORIZON_Y` rather than a local one.
+   */
+  readonly horizon: number
+  readonly rest: number
+  /** The composition's own distance, and how far the lift may go. */
+  readonly minZ: number
+  readonly maxZ: number
+}): { z: number; clears: boolean } {
+  const above = spec.stackTop - spec.clearance - spec.height * spec.horizon
+
+  if (above <= 0) return { z: spec.maxZ, clears: false }
+
+  const z = (spec.height * (spec.rest - spec.horizon)) / above
+
+  return { z: Math.min(Math.max(z, spec.minZ), spec.maxZ), clears: z <= spec.maxZ }
+}
+
+/** Where a mascot standing `z` times the run's distance puts its feet, in pixels. */
+export function mascotFeetRow(height: number, horizon: number, rest: number, z: number): number {
+  return height * (horizon + (rest - horizon) / z)
+}
+
+/**
+ * How wide the secondary control under Play may be drawn, as a share of Play itself.
+ *
+ * **The hierarchy's one arithmetic rule, and it is inherited from the control this replaced.** The
+ * mode chip carried the same number for the same reason: weight is carried by the tier — a muted
+ * face against a solid one — and width has to be a *rule*, or a longer label would quietly grow the
+ * secondary control past the primary one and invert the hierarchy the first time somebody
+ * translated it. `New run` is much shorter than `Play` is wide, so this binds on nothing today and
+ * is the guard for the day it does.
+ */
+export const SECONDARY_WIDTH_OF_PLAY = 0.82
+
+export function secondaryMaxWidth(playWidth: number): number {
+  return playWidth * SECONDARY_WIDTH_OF_PLAY
+}

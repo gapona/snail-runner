@@ -71,6 +71,44 @@ const en = {
   upgradeShot: 'Extra shot',
   upgradeDamage: 'Damage',
   shopTopup: '\u{1F3AC} +{n} coins',
+  // The ad catalogue's own names — see `shop/adCatalog.ts`. One per offer, so the list can be
+  // rendered from the table rather than from three labels scattered across two scenes.
+  adTopup: 'Coin top-up',
+  /**
+   * Putting a run down and picking it up — see `run/suspend.ts`.
+   *
+   * **`resumeRun` replaces `play` on the button rather than sitting beside it**, because it is the
+   * same control doing the same thing to a run that already exists. What sits beside it is
+   * `newRun`, the only thing the player might want that resuming does not do — and it is drawn only
+   * when there is a run to abandon, so a screen with nothing suspended is one button.
+   *
+   * **⚠ Not `continueRun`, which is taken and means something else**: that one is the rewarded ad
+   * on the result screen, i.e. buying a life back on a run that has *ended*. Two labels a player
+   * would read as the same word, on two screens, meaning two different things — so the one added
+   * here is named for what it is.
+   */
+  resumeRun: 'Continue',
+  newRun: 'New run',
+  /**
+   * The quest board — see `ui/questBoard.ts`.
+   *
+   * **A label names the verb and never the sum.** They read `Collect 14 fruit` beside a counter
+   * saying `6/14`, i.e. the target twice, with the row's widest column spent on the repetition.
+   */
+  questsTitle: 'Quests',
+  questFruit: 'Collect fruit',
+  questNearMiss: 'Close passes',
+  questFever: 'Enter Fever',
+  questRamp: 'Ride ramps',
+  questCollect: 'COLLECT',
+  adDouble: 'Double coins',
+  adContinue: 'Continue run',
+  // What is left of a limited offer, and what it reads when nothing is.
+  adLeft: '{n} left',
+  adSpent: 'None left today',
+  // The coin-priced continue. It says the price on the button, because a player who has just lost a
+  // run is not going to hunt for what it costs.
+  continueCoins: '\u{2764} Continue · {n} \u{1FA99}',
   // Rail shooter strings. Added to both dictionaries in the same commit, which the
   // `Record<StringKey, string>` typing on `es` makes a build error rather than a blank label.
   start: 'Click to start',
@@ -147,7 +185,9 @@ const en = {
   resultCoins: '\u{1FA99} +{n} coins',
   resultCoinsMax: '\u{1FA99} +{n} coins (max)',
   again: 'Again',
-  continueRun: '\u{1F3AC} Continue',
+  // The rewarded continue. It names what it buys — the run — rather than reading `Continue`, which
+  // on a screen that also offers `Again` is two words for the same thing to anyone reading fast.
+  continueRun: '\u{1F3AC} Continue run',
   select: 'Select',
   selected: 'In use',
   // The settings screen's own strings. `percent` is a format rather than a word, and it is a
@@ -254,6 +294,20 @@ const es: Record<StringKey, string> = {
   upgradeShot: 'Disparo extra',
   upgradeDamage: 'Daño',
   shopTopup: '\u{1F3AC} +{n} monedas',
+  adTopup: 'Monedas extra',
+  resumeRun: 'Continuar',
+  newRun: 'Nueva partida',
+  questsTitle: 'Misiones',
+  questFruit: 'Recoge fruta',
+  questNearMiss: 'Pasa cerca',
+  questFever: 'Entra en Fiebre',
+  questRamp: 'Usa rampas',
+  questCollect: 'COBRAR',
+  adDouble: 'Duplicar monedas',
+  adContinue: 'Seguir el recorrido',
+  adLeft: 'Quedan {n}',
+  adSpent: 'No quedan hoy',
+  continueCoins: '\u{2764} Seguir · {n} \u{1FA99}',
   start: 'Toca para empezar',
   // A brand name is not translated; the key exists in both dictionaries because the type demands
   // it, and both hold the same word on purpose.
@@ -304,7 +358,7 @@ const es: Record<StringKey, string> = {
   resultCoins: '\u{1FA99} +{n} monedas',
   resultCoinsMax: '\u{1FA99} +{n} monedas (máx)',
   again: 'Otra vez',
-  continueRun: '\u{1F3AC} Continuar',
+  continueRun: '\u{1F3AC} Seguir el recorrido',
   select: 'Elegir',
   selected: 'En uso',
   audio: 'Audio',

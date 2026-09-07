@@ -64,6 +64,20 @@ export interface LapLayoutOptions {
   segmentCount: number
   /** Builds a lap's contents. Called once per lap, at the moment the cursor enters it. */
   build: (lapOffset: number) => LapContent
+  /**
+   * Which lap the run is starting on — `0` for a run from the start line.
+   *
+   * **⚠ For a resumed run, and it is a lap rather than a distance on purpose.** A snapshot puts the
+   * player back at some distance mid-lap (see `suspend.ts`); handing that distance straight to a
+   * layout built at lap 0 would make the first `advance` walk every segment of every lap in between
+   * and call `build` once per lap boundary on the way — tens of layout generations in one frame of
+   * `create`, for road nobody will ever see.
+   *
+   * Starting the *cursor* at the lap boundary instead costs one lap of the walk it was always going
+   * to do and no extra builds at all: the ground is filled with this lap and `pending` holds the
+   * next, which is exactly the arrangement a fresh run starts in.
+   */
+  startLap?: number
 }
 
 /** Groups anything with a `z` by the segment index it stands on. */
@@ -108,14 +122,16 @@ export class LapLayout {
   constructor(options: LapLayoutOptions) {
     this.options = options
 
-    const first = options.build(0)
+    const startLap = Math.max(0, Math.floor(options.startLap ?? 0))
+    const startOffset = startLap * options.trackLength
 
-    this.fill(first)
-    // Lap 1 is built up front rather than at the first boundary: the cursor starts writing within
-    // the first couple of segments of the run, and a build is the most expensive thing this class
-    // does. Doing it here puts it in the scene's `create`, beside every other one.
-    this.pending = this.index(options.build(options.trackLength))
-    this.writerLap = 1
+    this.fill(options.build(startOffset))
+    // The next lap is built up front rather than at the first boundary: the cursor starts writing
+    // within the first couple of segments, and a build is the most expensive thing this class does.
+    // Doing it here puts it in the scene's `create`, beside every other one.
+    this.pending = this.index(options.build(startOffset + options.trackLength))
+    this.writerLap = startLap + 1
+    this.writtenTo = startOffset
   }
 
   /**

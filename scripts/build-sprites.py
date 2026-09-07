@@ -328,6 +328,156 @@ def count_soft(image: Image.Image) -> int:
     return int(((a > 0) & (a < 255)).sum())
 
 
+# ---------------------------------------------------------------------------
+# The moss cap
+# ---------------------------------------------------------------------------
+
+# A cap pixel: clearly green-cyan and clearly saturated, which on a warm rock is the lichen
+# material and nothing else. Measured over the whole shipped decor set, the rock props carry
+# 1.7-24% of their opaque pixels in this band and the plants carry 79-100% of theirs — two
+# populations with nothing between them, which is what makes a hue gate safe here.
+MOSS_HUE = (120.0, 190.0)
+MOSS_MIN_SATURATION = 0.20
+
+# A prop is a *plant* rather than a capped rock if the band is most of it. Plants are left alone.
+MOSS_PLANT_SHARE = 0.35
+
+# ...and it is a *cool* object rather than a capped warm one if its body is in the band's own family.
+# The crystals are cyan-green all the way through: their "moss" is the mineral, and repainting it
+# would be repainting the prop. Measured as the mean hue of the pixels that are NOT in the band.
+MOSS_WARM_BODY_HUE = (330.0, 90.0)
+
+# How far down from a column's own crown the cap is allowed to reach, as a share of the sprite's
+# height. Past this the material is not a cap: it is an interior face of the model showing through.
+MOSS_CAP_DEPTH = 0.14
+
+
+def _hue_sat(r: int, g: int, b: int) -> tuple[float, float]:
+    mx, mn = max(r, g, b), min(r, g, b)
+    d = mx - mn
+    if mx == 0 or d == 0:
+        return 0.0, 0.0
+    if mx == r:
+        hue = (((g - b) / d) % 6) * 60
+    elif mx == g:
+        hue = ((b - r) / d + 2) * 60
+    else:
+        hue = ((r - g) / d + 4) * 60
+    return hue, d / mx
+
+
+def strip_stray_moss(image: Image.Image) -> tuple[Image.Image, int]:
+    """Repaints cap-coloured pixels that are not on the object's crown.
+
+    **⚠ Reported off a frame, and it is a modelling artefact rather than a styling choice.** Several
+    of the low-poly rocks are stacks of truncated cones, and where an upper section is narrower than
+    the one under it the lower section's own top face is left exposed — rendered in the cap material,
+    it draws as a hard horizontal green band straight through the middle of the rock. `dune_spire` is
+    the clearest case: its moss ran from the very top down to 48% of the sprite with its centre of
+    mass at 42%, i.e. the band a player pointed at, and `rid_cairn`, `dune_bone`, `cry_geode` and
+    `coa_stack` all carried a weaker version of the same thing.
+
+    The rule is per *column*, not a single height: a cap belongs on whatever the object's own top
+    edge is at that x, so a sloping crown keeps its moss and a ledge halfway down a mass does not.
+
+    **A stray run is interpolated across, not filled from one side.** Copying the pixel below leaves
+    the ledge's own dark shading behind as a grey seam — the band in a different colour, which is the
+    same defect with the hue taken out. Ramping between the body pixel above the run and the one
+    below it puts the face's own gradient back through the gap, and the gap closes.
+
+    Two families are left alone, both by measurement rather than by a list of names: **plants**,
+    which are 79-100% band-coloured by this test, and **cool-bodied props** like the crystals, whose
+    body sits in the same hue family as the band and whose "moss" is the mineral itself.
+    """
+    px = image.load()
+    w, h = image.size
+    moss = set()
+    opaque = 0
+    warm = 0
+    cool = 0
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a < 40:
+                continue
+            opaque += 1
+            hue, sat = _hue_sat(r, g, b)
+            if sat >= MOSS_MIN_SATURATION and MOSS_HUE[0] <= hue <= MOSS_HUE[1]:
+                moss.add((x, y))
+                continue
+            lo, hi = MOSS_WARM_BODY_HUE
+            if hue >= lo or hue <= hi:
+                warm += 1
+            else:
+                cool += 1
+
+    if not opaque or not moss:
+        return image, 0
+    if len(moss) / opaque > MOSS_PLANT_SHARE:
+        return image, 0
+    if warm <= cool:
+        return image, 0
+
+    crown = {}
+    for x in range(w):
+        for y in range(h):
+            if px[x, y][3] >= 40:
+                crown[x] = y
+                break
+
+    depth = MOSS_CAP_DEPTH * h
+    stray = sorted((x, y) for (x, y) in moss if x in crown and y - crown[x] > depth)
+    if not stray:
+        return image, 0
+
+    strayset = set(stray)
+    by_column: dict[int, list[int]] = {}
+    for (x, y) in stray:
+        by_column.setdefault(x, []).append(y)
+
+    for x, ys in by_column.items():
+        ys.sort()
+        runs = []
+        run = [ys[0]]
+        for y in ys[1:]:
+            if y == run[-1] + 1:
+                run.append(y)
+            else:
+                runs.append(run)
+                run = [y]
+        runs.append(run)
+
+        for run in runs:
+            top, bottom = run[0], run[-1]
+            above = None
+            for probe in range(top - 1, -1, -1):
+                if (x, probe) not in strayset and px[x, probe][3] >= 40:
+                    above = px[x, probe][:3]
+                    break
+            below = None
+            for probe in range(bottom + 1, h):
+                if (x, probe) not in strayset and px[x, probe][3] >= 40:
+                    below = px[x, probe][:3]
+                    break
+            if above is None and below is None:
+                continue
+            if above is None:
+                above = below
+            if below is None:
+                below = above
+            span = len(run) + 1
+            for i, y in enumerate(run, start=1):
+                t = i / span
+                px[x, y] = (
+                    round(above[0] + (below[0] - above[0]) * t),
+                    round(above[1] + (below[1] - above[1]) * t),
+                    round(above[2] + (below[2] - above[2]) * t),
+                    px[x, y][3],
+                )
+
+    return image, len(stray)
+
+
 def process(
     image: Image.Image,
     long_side: int,
@@ -437,8 +587,12 @@ def build_decor(slots: list[str], report: list) -> None:
         if src is None:
             report.append((slot, "SKIPPED — no pick"))
             continue
+        # **At full resolution and before `process`**, for the reason `strip_plate` runs there: a
+        # hue test on already-resampled pixels is a hue test on blends, and the repaint has to
+        # happen before the downscale builds the prop's final edges out of them.
+        source, stray = strip_stray_moss(Image.open(src).convert("RGBA"))
         image, meta = process(
-            Image.open(src),
+            source,
             LONG_SIDE["decor"],
             desaturate=DESATURATE,
             strip_background=True,
@@ -448,7 +602,7 @@ def build_decor(slots: list[str], report: list) -> None:
         image.save(dst, "PNG", optimize=True)
         report.append((slot, f"{dst.stat().st_size // 1024}KB {meta['size'][0]}x{meta['size'][1]} "
                              f"aspect {meta['aspect']} plate {meta['platePx']} "
-                             f"threat {meta['threatMoved']}"))
+                             f"threat {meta['threatMoved']} stray-moss {stray}"))
 
 
 # The obstacle slot in the renders, and the texture key the game declares for it.
@@ -542,6 +696,13 @@ PICKUP_KEYS = {
     # thing they give are one product with a table to memorise. See `pickups.ts`.
     "pick_shield": "pickup-shield",
     "pick_coin": "pickup-coin",
+    # **⚠ Geometry rather than a render, and NOT red -- see `dev-assets/cc0-3d/medkit_render.py`.**
+    # A cross is a symbol before it is an object, which is the failure "this checkpoint draws
+    # objects, not symbols" is about; and the classic white-box-with-a-warm-red-cross wears the one
+    # colour this game reserves, so it would come back from `threat_guard` brown, exactly as the
+    # rejected strawberry did. It takes the reservation's lightness escape instead: a deep oxblood
+    # case with a near-white cross.
+    "pick_heal": "pickup-heal",
     # **Four fruits, not the five the plan asks for, and the fifth is written down rather than
     # fudged.** They are chosen by SILHOUETTE and not by species -- a bunch, an arc, a circle and a
     # teardrop -- and the missing one is the plan's wedge. Three candidates were rendered and all

@@ -309,8 +309,12 @@ check('a pickup across the road is on the line by the time it arrives', () => {
 
 console.log('the set')
 
-check('boost is gone, and the three that are left are three different sentences', () => {
-  assert.deepEqual([...PICKUP_KINDS].sort(), ['coin', 'fruit', 'shield'])
+check('boost is gone, and every kind that is left is a different sentence', () => {
+  // **⚠ `heal` is the fourth and it was paid for out of `shield`'s share**, so what this asserts is
+  // the *fruit share* rather than a list of three: `FEVER_FRUIT_TARGET` is tuned against how much
+  // road a full gauge is, and a kind added to the total rather than taken out of an existing share
+  // is what would move it. See `PICKUP_WEIGHTS`.
+  assert.deepEqual([...PICKUP_KINDS].sort(), ['coin', 'fruit', 'heal', 'shield'])
   assert.equal(PICKUP_WEIGHTS.boost, undefined, 'boost is still in the weight table')
   for (const kind of PICKUP_KINDS) assert.ok(PICKUP_WEIGHTS[kind] > 0, `${kind} is never laid`)
 

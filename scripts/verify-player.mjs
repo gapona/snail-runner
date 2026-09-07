@@ -34,7 +34,9 @@ import {
   PLAYER_REST_Y_FRACTION,
   PLAYER_WIDTH,
   PLAYER_Z,
+  REACHABLE_EDGE,
   ROAD_EDGE,
+  STEER_REACH,
   STEER_REACH_MARGIN,
   FEVER_SPEED_FACTOR,
   HIT_INVULNERABLE_Z,
@@ -43,13 +45,20 @@ import {
   SPEED_CAP,
   halfWidthsAtLane,
   playerResponse,
+  steerTarget,
+  STEER_EDGE_MARGIN,
 } from '../src/run/constants.ts'
 import { FIXED_STEP_MS } from '../src/race/constants.ts'
 import { billboardRectInto, createBillboardRect } from '../src/road/billboard.ts'
-import { playerGroundInto } from '../src/run/playerProjection.ts'
+import { groundPointInto } from '../src/run/groundProjection.ts'
 import {
   slimeFade,
   slimeIntensity,
+  slimeSwell,
+  slimeGlint,
+  SLIME_SWELL,
+  SLIME_GLINT,
+  SLIME_HALF_WIDTH,
   SLIME_MAX_POINTS,
   SLIME_NEAR_CULL_Z,
   SLIME_SPACING_Z,
@@ -75,9 +84,23 @@ import {
   isDying,
   startPlayerDeath,
 } from '../src/run/playerDeath.ts'
+import { addShield, canTakeShield, createRunState, takeHit } from '../src/run/runState.ts'
+import { MAX_SHIELDS, RUN_LIVES } from '../src/run/constants.ts'
 import { groundYAt, trackLengthOf } from '../src/road/track.ts'
+import { PICKUP_OFFSET } from '../src/run/pickups.ts'
+
+/**
+ * How far in from the frame's edge the furthest thing the player must reach has to sit.
+ *
+ * A thumb held against the bezel is not a position anyone can hold, and the outer strip of a phone
+ * screen belongs to the system's own edge gestures. 24px is about a finger's own width of margin —
+ * a regression threshold measured on 2026-09-06, not a derived one.
+ */
+const MIN_EDGE_REACH_PX = 24
+import { RAMP_MAX_OFFSET } from '../src/run/ramp.ts'
+import { PASSABILITY_OFFSETS } from '../src/run/obstacles.ts'
 import { HORIZON_Y } from '../src/road/constants.ts'
-import { CAMERA_DEPTH, CAMERA_HEIGHT, ROAD_WIDTH, SEGMENT_LENGTH } from '../src/road/constants.ts'
+import { CAMERA_DEPTH, CAMERA_HEIGHT, ROAD_WIDTH, SEGMENT_LENGTH, SPRITE_SCALE } from '../src/road/constants.ts'
 import {
   SHIELD_BREATH,
   SHIELD_BUBBLE_SPAN,
@@ -202,14 +225,226 @@ check('halfWidthsAtLane and playerScreenFraction are inverses', () => {
   }
 })
 
-check('the whole road is reachable from inside the frame', () => {
-  // If the asphalt's edge sat outside `[0, 1]` of screen fraction, part of the road would be
-  // unreachable by any finger position -- the lane would be narrower than the road without
-  // anything saying so.
-  const edge = playerScreenFraction(ROAD_EDGE)
+check('⚠ what a finger can reach is what the passability proof samples', () => {
+  // **⚠ The whole road used to be reachable and is not any more, deliberately.** `STEER_REACH_MARGIN`
+  // crossed 1 to buy the mascot a quantum of size, so a finger at the very edge of the frame asks
+  // for `STEER_REACH` and the last sliver of asphalt cannot be steered to.
+  //
+  // What that makes load-bearing is that the *proof* follows the reach: `provePassable` certifies a
+  // row at `OFFSETS`, and a line through ground nobody can steer to is not a line. This is the
+  // assertion that keeps the two together.
+  const edge = playerScreenFraction(REACHABLE_EDGE)
 
-  assert.ok(edge < 1 && edge > 0.5, `the road's edge is at screen fraction ${edge.toFixed(3)}`)
-  console.log(`    the asphalt's edge (offsetX ${ROAD_EDGE.toFixed(3)}) sits at ${(edge * 100).toFixed(1)}% across the frame`)
+  assert.ok(edge <= 1 + 1e-9 && edge > 0.5, `the reachable edge is at screen fraction ${edge.toFixed(3)}`)
+  assert.ok(
+    Math.abs(STEER_REACH - halfWidthsAtLane(1)) < 1e-12,
+    'STEER_REACH is not what a finger at the frame edge actually asks for',
+  )
+  assert.equal(REACHABLE_EDGE, Math.min(ROAD_EDGE, STEER_REACH), 'the reachable edge is not the narrower of the two facts')
+  // The proof's own samples, read back from the module that makes them rather than restated here.
+  const widest = Math.max(...PASSABILITY_OFFSETS)
+
+  assert.ok(
+    Math.abs(widest - REACHABLE_EDGE) < 1e-9,
+    `the passability proof samples out to ${widest.toFixed(4)} against a reach of ${REACHABLE_EDGE.toFixed(4)}`,
+  )
+
+  // **Everything the player is required to reach has to be inside it.** Obstacles are not: a thing
+  // to avoid may stand anywhere, and that asymmetry is the whole reason `REACHABLE_EDGE` is only
+  // the authority for the proof.
+  assert.ok(PICKUP_OFFSET.max < REACHABLE_EDGE, `a pickup can be laid at ${PICKUP_OFFSET.max.toFixed(3)}, past the reach`)
+  assert.ok(RAMP_MAX_OFFSET < REACHABLE_EDGE, `a ramp can be laid at ${RAMP_MAX_OFFSET.toFixed(3)}, past the reach`)
+
+  // **The control is the arrangement this replaces**: sampling the asphalt while the reach is
+  // narrower than it, which is what would certify a row nobody can pass.
+  assert.ok(ROAD_EDGE > REACHABLE_EDGE, 'the reach covers the whole road, so this check is measuring nothing')
+  console.log(
+    `    a finger at the frame's edge reaches offsetX ${STEER_REACH.toFixed(4)} of a ${ROAD_EDGE.toFixed(4)} road` +
+      ` — the outer ${(((ROAD_EDGE - STEER_REACH) / ROAD_EDGE) * 100).toFixed(1)}% is spent, and the proof samples the rest`,
+  )
+  console.log(
+    `    inside it: pickups to ${PICKUP_OFFSET.max.toFixed(3)}, ramps to ${RAMP_MAX_OFFSET.toFixed(3)}`,
+  )
+})
+
+check('⚠ the outermost pickup can be reached without a finger on the bezel', () => {
+  // **This is the report**: on a phone the snail could not be steered to the very edge, and that is
+  // where coins and fruit are laid. Both halves are the same number — the pointer used to map
+  // linearly across the *whole* frame, so full lock was at 100% of it and the outermost pickup at
+  // 97.7%, i.e. **nine pixels from the edge of a 383px screen**. A thumb cannot hold that, and on
+  // most phones the strip belongs to the system's own edge gestures.
+  const at = (target) => {
+    let lo = 0.5
+    let hi = 1
+
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2
+
+      if (steerTarget(mid) < target) lo = mid
+      else hi = mid
+    }
+
+    return (lo + hi) / 2
+  }
+  // The mapping is what it always was, with the ends brought in off the glass: same maximum, same
+  // `REACHABLE_EDGE`, same passability proof. Asserted, because a deadzone that quietly narrowed
+  // the reach would be a row nobody can pass wearing an ergonomics fix.
+  assert.ok(Math.abs(steerTarget(1) - STEER_REACH) < 1e-9, 'the deadzone moved the reach itself')
+  assert.ok(Math.abs(steerTarget(0) + STEER_REACH) < 1e-9, 'the deadzone is not symmetric')
+  assert.ok(Math.abs(steerTarget(0.5)) < 1e-9, 'the centre of the frame is no longer the centreline')
+  for (let i = 1; i <= 40; i++) {
+    assert.ok(steerTarget(i / 40) >= steerTarget((i - 1) / 40) - 1e-12, 'the mapping is not monotonic')
+  }
+
+  const rows = []
+  const failedBefore = []
+
+  for (const width of [320, 375, 383, 844, 1280]) {
+    const pickupPx = (1 - at(PICKUP_OFFSET.max)) * width
+    const lockPx = (1 - at(REACHABLE_EDGE)) * width
+    // The old mapping, as the control: the bare projection, which is what shipped.
+    const wasPx = (1 - (0.5 + (0.5 * PICKUP_OFFSET.max) / STEER_REACH)) * width
+
+    assert.ok(pickupPx >= MIN_EDGE_REACH_PX, `the outer pickup is ${pickupPx.toFixed(0)}px from the edge at ${width}px`)
+    failedBefore.push(wasPx < MIN_EDGE_REACH_PX)
+    rows.push(`${width}px: pickup ${pickupPx.toFixed(0)}px in (was ${wasPx.toFixed(0)}), full lock ${lockPx.toFixed(0)}px in`)
+  }
+  // **The control is the mapping that shipped, and it is asserted on the frames the report came
+  // from.** It clears the floor on a desktop — 29px at 1280 — which is why this was a mobile
+  // report and not a general one: the same 2.3% of the frame is nine pixels on a phone.
+  assert.ok(failedBefore.filter(Boolean).length >= 3, 'the shipped-before mapping cleared the floor everywhere, so this measures nothing')
+  for (const row of rows) console.log(`    ${row}`)
+  console.log(`    the outer ${(STEER_EDGE_MARGIN * 100).toFixed(0)}% of each side is full lock`)
+})
+
+
+/**
+ * The frames the mascot's size is accepted at, narrowest first, and the render it is drawn from.
+ *
+ * The texture size is an external fact — the shipped `snail-0.png` — exactly as `MASCOT_ASPECT` is,
+ * and the contour's drawn width is a function of it.
+ */
+const MASCOT_FRAMES = [
+  [320, 568],
+  [375, 667],
+  [1080, 1920],
+  [844, 390],
+  [1920, 945],
+]
+/** What the mascot is, as a share of the frame's width, at every one of them. */
+const MASCOT_WIDTH_SHARE = 0.145
+
+/** The mascot's drawn box, through the game's own projection and billboard. */
+function mascotDrawnBox(width, height, z = PLAYER_Z) {
+  const ground = projectInto(
+    createScreenPoint(),
+    { x: 0, y: 0, z },
+    0,
+    CAMERA_HEIGHT,
+    0,
+    CAMERA_DEPTH,
+    width,
+    height,
+    ROAD_WIDTH,
+  )
+  const rect = billboardRectInto(
+    createBillboardRect(),
+    ground,
+    0,
+    0,
+    PLAYER_WIDTH / SPRITE_SCALE,
+    PLAYER_BODY_H / SPRITE_SCALE,
+    width,
+    height,
+  )
+
+  return { w: rect.w, h: rect.h, feet: rect.y }
+}
+
+/** `PLAYER_Z` for a rest row, which is `PLAYER_REST_Y_FRACTION`'s own solve read backwards. */
+function zForRestRow(rest) {
+  return CAMERA_DEPTH / ((2 * (rest - HORIZON_Y)) / CAMERA_HEIGHT)
+}
+
+/**
+ * `PLAYER_Z_SOLVED`'s own snap: the row is quantised to quarter-segments so the depth sort has a
+ * stable tiebreak, which is why a bound only matters through the quantum it permits.
+ */
+function snapZ(raw) {
+  return (Math.ceil(raw / SEGMENT_LENGTH - 0.25) + 0.25) * SEGMENT_LENGTH
+}
+
+/** The `offsetX` a finger at the very edge of the screen asks for, at that distance. */
+function edgeReach(z) {
+  return 1 / ((CAMERA_DEPTH / z) * ROAD_WIDTH)
+}
+
+check('⚠ how much of a frame the mascot is, and what every lever that could change it is worth', () => {
+  // **Written before the constant moves, which is the whole point of it.** Reported: the snail is
+  // about 5% of a portrait frame's height and gets lost against the road, with the instruction to
+  // grow it *in portrait* via the camera or `PLAYER_Z` rather than by scaling the sprite. This
+  // measures what is actually there and what each lever would buy, so the decision is taken against
+  // numbers rather than against an impression — and so that a later attempt starts from a floor.
+  const rows = []
+
+  for (const [w, h] of MASCOT_FRAMES) {
+    const box = mascotDrawnBox(w, h)
+
+    // **The one invariant, and it is the answer to "small in portrait".** Everything on this road is
+    // scaled by the frame's WIDTH, so the mascot is the same share of it at every viewport; what
+    // differs is the share of the *height*, because a portrait frame is tall. That is a property of
+    // the projection rather than of any constant.
+    assert.ok(
+      Math.abs(box.w / w - MASCOT_WIDTH_SHARE) < 1e-3,
+      `the mascot is ${((box.w / w) * 100).toFixed(1)}% of the width at ${w}x${h}, not ${(MASCOT_WIDTH_SHARE * 100).toFixed(1)}%`,
+    )
+    rows.push(
+      `${String(w).padStart(4)}x${String(h).padEnd(4)} ${box.w.toFixed(0).padStart(4)}x${box.h.toFixed(0).padStart(3)}px` +
+        `  ${((box.w / w) * 100).toFixed(1)}% of width  ${((box.h / h) * 100).toFixed(1)}% of height`,
+    )
+  }
+
+  const steering = HORIZON_Y + CAMERA_HEIGHT / (2 * ROAD_WIDTH * ROAD_EDGE * STEER_REACH_MARGIN)
+  const descent = 1 - MAX_DESCENT_DROP
+  const headroom = Math.min(steering, descent) - PLAYER_REST_Y_FRACTION
+
+  // **The rest row is at its bound**, which is what closes the one lever that costs nothing: the
+  // snap to `PLAYER_SEGMENT_PHASE` has already spent what the bounds left.
+  assert.ok(headroom >= 0, `the rest row is ${(-headroom).toFixed(4)} past its own bound`)
+  assert.ok(
+    headroom < 0.02,
+    `the rest row has ${headroom.toFixed(4)} of headroom left, i.e. the mascot could be grown for free and is not`,
+  )
+
+  // **⚠ The steering lever has been spent, and this is the assertion that says there is nothing
+  // left.** `PLAYER_SEGMENT_PHASE` snaps the row to quarter-segments, so the bounds only matter
+  // through *which quantum they permit* — and the row now sits on the same quantum the descent
+  // bound permits, which is the last one either bound allows. Standing the snail as near as the
+  // descent rule alone would is worth exactly zero further pixels.
+  const [narrowW, narrowH] = MASCOT_FRAMES[0]
+  const now = mascotDrawnBox(narrowW, narrowH)
+  const atDescent = mascotDrawnBox(narrowW, narrowH, snapZ(zForRestRow(descent)))
+
+  assert.ok(
+    atDescent.w <= now.w + 1e-6,
+    `the descent bound would give a further ${(atDescent.w - now.w).toFixed(1)}px, i.e. the row has not reached its quantum`,
+  )
+  // ...and the next quantum in is genuinely past both bounds, so this is a wall rather than a
+  // rounding. One quarter-segment nearer is what the snap would take if either bound allowed it.
+  const nextIn = PLAYER_Z - SEGMENT_LENGTH
+  const restNextIn = HORIZON_Y + (CAMERA_DEPTH * CAMERA_HEIGHT) / (2 * nextIn)
+
+  assert.ok(
+    restNextIn > Math.min(steering, descent),
+    `a quarter-segment nearer is still inside the bounds at rest ${restNextIn.toFixed(4)}, i.e. the row is not at its wall`,
+  )
+
+  for (const row of rows) console.log(`    ${row}`)
+  console.log(`    bounds: steering ${steering.toFixed(4)}, descent ${descent.toFixed(4)}, shipped ${PLAYER_REST_Y_FRACTION.toFixed(4)} (${headroom.toFixed(5)} left)`)
+  console.log(
+    `    the row is on the last quantum both bounds allow: one segment nearer needs rest ${restNextIn.toFixed(4)}` +
+      ` against a bound of ${Math.min(steering, descent).toFixed(4)}, and the mascot is ${now.w.toFixed(0)}px at ${narrowW}x${narrowH}`,
+  )
 })
 
 check('⚠ the row the player rests on is solved, and it is what sizes the mascot', () => {
@@ -442,7 +677,10 @@ check('it is a spring, not a teleport', () => {
 })
 
 check('it converges without diverging, and the overshoot stays inside 20%', () => {
-  const target = halfWidthsAtLane(0.85)
+  // `steerTarget`, not `halfWidthsAtLane`: the input path brings the ends of the travel in off the
+  // glass (`STEER_EDGE_MARGIN`), and a check that restates the bare projection here would be
+  // measuring the spring against a target the spring was never given.
+  const target = steerTarget(0.85)
   let state = createPlayerState()
   const peaks = []
   let crossed = false
@@ -569,12 +807,26 @@ check('no input can push the snail past the hard limit', () => {
       `a target at ${fraction} reached offsetX ${state.offsetX}, past the limit of ${OFFROAD_LIMIT}`,
     )
   }
+  // **⚠ And the pointer path can no longer ASK for past the reach**, which is new: `steerTarget`
+  // saturates at both ends, so a fraction outside the frame is full lock rather than a request to
+  // stand further out. The wall below is therefore reached through `targetOffsetX`, which is the
+  // path a scripted mover uses — see `PlayerInput`.
+  for (const fraction of [-8, 2, 40]) {
+    assert.ok(Math.abs(steerTarget(fraction)) <= STEER_REACH + 1e-9, `a fraction of ${fraction} asks for past the reach`)
+  }
 })
 
 check('velocity does not wind up against the wall', () => {
   // The defect this prevents: the spring keeps accumulating while the snail is pinned, and it
   // lurches away the instant the target comes back inside.
-  const pinned = hold(40, 3000)
+  // Driven by `targetOffsetX` rather than by a fraction: the pointer path saturates at the reach
+  // now (`steerTarget`), and the reach is inside `OFFROAD_LIMIT`, so a fraction can no longer pin
+  // the snail against the wall at all. What is under test is the wall, not the input.
+  let pinned = createPlayerState()
+
+  for (let i = 0; i < Math.round(3000 / FIXED_STEP_MS); i++) {
+    pinned = stepPlayer(pinned, { targetOffsetX: OFFROAD_LIMIT * 3, active: true }, FIXED_STEP_MS)
+  }
 
   assert.ok(Math.abs(pinned.vx) < 1e-6, `pinned against the wall with ${pinned.vx} of stored velocity`)
 
@@ -598,9 +850,22 @@ check('the verge is reachable, and is where off-road begins', () => {
   assert.equal(isOffRoad(ROAD_EDGE + 1e-6), true)
   assert.equal(isOffRoad(-(ROAD_EDGE + 1e-6)), true, 'the left verge must count too')
 
-  const far = hold(40, 4000)
+  // **⚠ The verge is reached by the spring's OVERSHOOT, not by holding a finger there**, and this
+  // check used to say otherwise: it drove a fraction of 40 — a finger notionally forty frames off
+  // the screen — which the old linear mapping extrapolated far past the road. That stopped being a
+  // thing the input can produce when `STEER_REACH_MARGIN` crossed 1 (full lock is 0.864 against an
+  // asphalt edge of 0.875) and cannot be produced at all now that `steerTarget` saturates. What is
+  // true is what `STEER_REACH_MARGIN`'s own note says: a hard flick carries the snail out there.
+  let flicked = hold(0, 2000)
+  let peak = 0
 
-  assert.ok(isOffRoad(far.offsetX), 'a finger held off the frame does not reach the verge at all')
+  for (let i = 0; i < 120; i++) {
+    flicked = stepPlayer(flicked, { targetFraction: 1, active: true }, FIXED_STEP_MS)
+    peak = Math.max(peak, flicked.offsetX)
+  }
+
+  assert.ok(isOffRoad(peak), `a flick across the road peaks at ${peak.toFixed(3)}, which never leaves the asphalt`)
+  assert.ok(!isOffRoad(STEER_REACH), 'full lock is already off the road, so the overshoot is not what puts it there')
 })
 
 console.log('the bend')
@@ -715,7 +980,7 @@ check('interpolating across the segment holds the snail steady instead', () => {
     const near = groundAt(segmentStart - cameraZ)
     const far = groundAt(segmentStart + SEGMENT_LENGTH - cameraZ)
 
-    playerGroundInto(out, near, far, worldZ)
+    groundPointInto(out, near, far, worldZ)
     scales.push(out.scale)
   }
 
@@ -737,7 +1002,7 @@ check('the interpolation is continuous across a segment boundary, which is what 
     const cameraZ = worldZ - PLAYER_Z
     const segmentStart = Math.floor(worldZ / SEGMENT_LENGTH) * SEGMENT_LENGTH
 
-    return playerGroundInto(
+    return groundPointInto(
       out,
       groundAt(segmentStart - cameraZ),
       groundAt(segmentStart + SEGMENT_LENGTH - cameraZ),
@@ -811,6 +1076,67 @@ check('the trail records the line the player took, not the centreline', () => {
   assert.ok(Math.max(...offsets) > 0.3 && Math.min(...offsets) < -0.3, 'the trail came out straight through a weave')
 })
 
+
+check("⚠ the trail's edges swell, and the same point always swells the same way", () => {
+  // **Two parallel edges are a road marking.** Slime is viscous and pools unevenly, so each side of
+  // the ribbon bulges and pinches — and the two sides are drawn from different hashes, because
+  // mirrored wobble reads as a shape rather than as a spill.
+  //
+  // Deterministic from the point's own `z`, for `decorVariation`'s reason: a point has to look the
+  // same on the frame after it was laid, on the next lap and at every viewport. What that rules out
+  // is an RNG stream, which can only be walked in order.
+  const zs = Array.from({ length: 400 }, (_, i) => i * SLIME_SPACING_Z)
+  const swells = zs.map((z) => slimeSwell(z))
+
+  for (const z of zs) {
+    const again = slimeSwell(z)
+    const first = slimeSwell(z)
+
+    assert.equal(again.left, first.left, 'the same point swells differently on two calls')
+  }
+  // Both sides move, and they are not each other.
+  const sameCount = swells.filter((s2) => Math.abs(s2.left - s2.right) < 1e-9).length
+
+  assert.equal(sameCount, 0, `${sameCount} points swell identically on both sides, i.e. the ribbon is mirrored`)
+  const all = swells.flatMap((s2) => [s2.left, s2.right])
+  const mean = all.reduce((a, b) => a + b, 0) / all.length
+
+  assert.ok(Math.abs(mean - 1) < 0.03, `the swell means ${mean.toFixed(3)}, so the trail is not its own width on average`)
+  assert.ok(Math.max(...all) <= 1 + SLIME_SWELL + 1e-9 && Math.min(...all) >= 1 - SLIME_SWELL - 1e-9, 'the swell leaves its own band')
+  // It has to actually reach the band, or the constant is doing nothing.
+  assert.ok(Math.max(...all) > 1 + SLIME_SWELL * 0.9, 'the swell never approaches its own ceiling')
+  console.log(
+    `    the edges swell ${Math.min(...all).toFixed(2)}..${Math.max(...all).toFixed(2)} of the trail's own width, mean ${mean.toFixed(3)}`,
+  )
+})
+
+check('⚠ glints are laid in the world, on one side, and not on every point', () => {
+  // A uniformly bright core is a painted stripe with a lighter stripe inside it; a wet surface
+  // catches light in points. They are laid at world positions so they slide down the road with
+  // everything else rather than shimmering in place.
+  const zs = Array.from({ length: 2000 }, (_, i) => i * SLIME_SPACING_Z)
+  const glints = zs.map((z) => slimeGlint(z))
+  const lit = glints.filter((g) => g !== 0)
+  const share = lit.length / glints.length
+
+  assert.ok(Math.abs(share - SLIME_GLINT.chance) < 0.05, `${(share * 100).toFixed(0)}% of points glint against a stated ${(SLIME_GLINT.chance * 100).toFixed(0)}%`)
+  assert.ok(lit.some((g) => g < 0) && lit.some((g) => g > 0), 'every glint is on the same side of the trail')
+  assert.ok(lit.every((g) => Math.abs(g) >= 0.25), 'a glint sits on the centreline, where the core already is')
+  assert.ok(lit.every((g) => Math.abs(g) <= 0.65 + 1e-9), 'a glint sits outside the trail')
+  for (const z of zs.slice(0, 50)) assert.equal(slimeGlint(z), slimeGlint(z), 'a glint is not stable for its own point')
+  // **⚠ Not a fixed period**, which would beat against the spacing and read as a dashed line.
+  const gaps = []
+  let last = -1
+
+  glints.forEach((g, i) => {
+    if (g === 0) return
+    if (last >= 0) gaps.push(i - last)
+    last = i
+  })
+  assert.ok(new Set(gaps).size > 3, 'the glints fall on a fixed period, i.e. the trail is dashed')
+  console.log(`    ${(share * 100).toFixed(0)}% of points glint, at ${new Set(gaps).size} different spacings`)
+})
+
 check('width and strength both rise with speed, and a boost pushes past the ceiling', () => {
   assert.equal(slimeIntensity(SPEED_BASE), 0)
   assert.ok(Math.abs(slimeIntensity(SPEED_CAP) - 1) < 1e-9)
@@ -821,11 +1147,37 @@ check('width and strength both rise with speed, and a boost pushes past the ceil
 
   const slow = []
   const fast = []
+  const boosted = []
 
   stepSlime(slow, 0, 0, 0, SPEED_BASE, TRACK)
   stepSlime(fast, 0, 0, 0, SPEED_CAP, TRACK)
+  stepSlime(boosted, 0, 0, 0, SPEED_CAP * FEVER_SPEED_FACTOR, TRACK)
   assert.ok(fast[0].halfWidth > slow[0].halfWidth * 1.5, 'the trail barely widens with speed')
   assert.ok(fast[0].strength > slow[0].strength * 1.5, 'the trail barely brightens with speed')
+
+  // **⚠ The headroom above 1 reached nothing for as long as it existed.** `slimeIntensity` clamps
+  // at 1.25 with a docstring saying the trail is the clearest place in the frame to show the player
+  // going faster than the game's own ceiling — and `stepSlime` then took `Math.min(1, intensity)`
+  // for both the width and the strength, so a Fever and a run at `SPEED_CAP` laid *exactly the same
+  // slime*. Fifth piece of authored state this project has found doing nothing.
+  assert.ok(
+    boosted[0].halfWidth > fast[0].halfWidth * 1.05,
+    `a Fever lays a ${boosted[0].halfWidth.toFixed(4)} trail against the cap's ${fast[0].halfWidth.toFixed(4)}`,
+  )
+  assert.ok(boosted[0].strength >= fast[0].strength, 'a Fever lays a duller trail than the cap')
+  assert.ok(boosted[0].strength <= 1, 'the strength is unbounded')
+  // The control is the arithmetic that shipped: clamped at 1, the two are the same number.
+  const clamped = (v) => SLIME_HALF_WIDTH.slow + (SLIME_HALF_WIDTH.fast - SLIME_HALF_WIDTH.slow) * Math.min(1, v)
+
+  assert.equal(
+    clamped(slimeIntensity(SPEED_CAP * FEVER_SPEED_FACTOR)),
+    clamped(slimeIntensity(SPEED_CAP)),
+    'the control does not flatten the headroom, i.e. this check measures nothing',
+  )
+  console.log(
+    `    at the cap the trail is ${fast[0].halfWidth.toFixed(4)} wide; in a Fever ${boosted[0].halfWidth.toFixed(4)}` +
+      ` (+${(((boosted[0].halfWidth / fast[0].halfWidth) - 1) * 100).toFixed(0)}%), where it used to be identical`,
+  )
   console.log(
     `    at ${SPEED_BASE}u/s: ${slow[0].halfWidth.toFixed(3)} wide at ${slow[0].strength.toFixed(2)} strength; ` +
       `at ${SPEED_CAP}: ${fast[0].halfWidth.toFixed(3)} at ${fast[0].strength.toFixed(2)}`,
@@ -858,6 +1210,40 @@ check('nothing is drawn nearer than the cull, where the projection blows up', ()
   assert.equal(slimeFade(SLIME_NEAR_CULL_Z - 1), 0)
   assert.equal(slimeFade(0), 0)
   assert.ok(slimeFade(SLIME_NEAR_CULL_Z + 1) > 0, 'the fade does not resume above the cull')
+})
+
+check('a shield the player cannot hold is never granted, and never laid in front of them', () => {
+  // **⚠ `addShield` used to have no ceiling at all**, which is why the readout for it had to invent
+  // one -- five pips and then a `+`, i.e. a count to read rather than a shape to glance at. The rule
+  // belongs with the state, and the row is a length again because of it. See `MAX_SHIELDS`.
+  let run = createRunState()
+
+  assert.equal(run.shields, 0, 'a run starts holding a shield')
+  assert.ok(canTakeShield(run), 'a fresh run could not take a shield')
+
+  for (let i = 0; i < 6; i++) run = addShield(run)
+  assert.equal(run.shields, MAX_SHIELDS, `six shields collected left ${run.shields} carried`)
+  assert.ok(!canTakeShield(run), 'a full run still says it can take another shield')
+
+  // One, because a shield is *the next mistake is free* and that sentence does not stack. Two would
+  // be a second life bought at a pickup's price on top of the three the run already grants, and the
+  // ceiling on carelessness is the one thing `RUN_LIVES` is for.
+  assert.equal(MAX_SHIELDS, 1, 'the shield stopped being a single absorber')
+
+  // And it is spent before a life, which is what makes the survivability row readable left to
+  // right: the leftmost element is always the next one to go.
+  const hit = takeHit(run)
+
+  assert.equal(hit.shields, 0, 'the hit did not spend the shield')
+  assert.equal(hit.lives, RUN_LIVES, 'the hit took a life while a shield was carried')
+  assert.ok(canTakeShield(hit), 'spending the shield did not make room for another')
+  assert.ok(hit.speed < run.speed, 'the shield absorbed the speed loss as well as the life')
+
+  // **The whole point of `canTakeShield` being a question rather than a clamp**: a pickup the player
+  // drives through and is given nothing for does not teach "you are full", it teaches "pickups are
+  // unreliable". `RunScene.withholdShields` asks this before the shield is ever drawn.
+  assert.equal(canTakeShield.length, 1, 'canTakeShield grew an argument that is not the run')
+  assert.equal(addShield(run).shields, run.shields, 'a shield collected at the cap changed the run')
 })
 
 check('⚠ the shield is visible in all three of its moments, and the break outlives the shield', () => {

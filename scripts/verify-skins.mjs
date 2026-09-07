@@ -12,7 +12,7 @@
  * and measures the output. Nothing here trusts arithmetic that has a clamp on the end of it.
  */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { decodePng } from './png.mjs'
 import {
   DEFAULT_SNAIL_SKIN,
@@ -28,6 +28,7 @@ import {
   skinItemId,
   snailSkin,
   snailSkinIds,
+  snailColourFamily,
 } from '../src/run/snailSkins.ts'
 import { chroma, hueAngle, hueDistance, toOklab, toHsl } from '../src/road/color.ts'
 import {
@@ -40,6 +41,10 @@ import { themeIdFromItem, themeItemId } from '../src/shop/themeCatalog.ts'
 import { buildSnailCatalog } from '../src/shop/snailCatalog.ts'
 import { DEFAULT_SNAIL_ID } from '../src/save/types.ts'
 import { OBSTACLE_MATERIALS } from '../src/run/artPalette.ts'
+import { COINS_PER_LAP } from '../src/shop/coins.ts'
+import { MASCOT_ASPECT } from '../src/run/constants.ts'
+
+const hex = (n) => '#' + n.toString(16).padStart(6, '0')
 
 let passed = 0
 
@@ -68,6 +73,11 @@ function basePixels() {
 }
 
 const BASE = basePixels()
+
+/** Whether a packed colour belongs to the pad rather than to the creature. */
+function isPad(packed) {
+  return snailColourFamily(packed) === 'foot'
+}
 const TOTAL = [...BASE.values()].reduce((sum, n) => sum + n, 0)
 
 /**
@@ -294,5 +304,7 @@ check('the catalogue lists every skin, free one included', () => {
   }
   console.log(`    ${rows.length} rows, ${rows.filter((r) => r.priceCoins === 0).length} free, dearest ${Math.max(...rows.map((r) => r.priceCoins))} coins`)
 })
+
+
 
 console.log(`${passed} checks passed`)

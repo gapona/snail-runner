@@ -4,11 +4,11 @@ import { billboardRectInto, createBillboardRect } from '../road/billboard'
 import { DRAW_DISTANCE, SEGMENT_LENGTH, SPRITE_SCALE } from '../road/constants'
 import { segmentPercent, surfaceHeight, trackLengthOf, type Segment } from '../road/track'
 import { createScreenPoint, wrapZ } from '../road/project'
-import { playerGroundInto } from './playerProjection'
-import { WORLD_LAYER, worldDepth } from './worldDepth'
+import { groundPointInto } from './groundProjection'
+import { distanceIndexOf, WORLD_LAYER, worldDepth } from './worldDepth'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowScale } from './shadows'
 import { spinAngle } from './ramp'
-import { PLAYER_BODY_H, PLAYER_WIDTH, PLAYER_Z } from './constants'
+import { MASCOT_ASPECT, PLAYER_BODY_H, PLAYER_WIDTH, PLAYER_Z } from './constants'
 import { createSnailTexture, snailSkinFrameKey } from './snailArt'
 import { ensureShieldTexture, SHIELD_TEXTURE } from './shieldArt'
 import {
@@ -59,13 +59,17 @@ const BLINK_PERIOD_MS = 110
 const BLINK_DIM = 0.35
 
 /**
- * How far ahead of the camera the snail is, in segments — 9.83, not a whole number.
+ * ⚠ The snail's own distance index is computed per frame, not held here.
  *
- * **That it lands between two segments is the point.** The snail's depth has to place it after the
- * obstacle one segment behind it (which is nearer to the camera, and must paint over it as it
- * passes) and before the one ahead. A flat depth put it in front of both. See `worldDepth.ts`.
+ * It was `PLAYER_Z / SEGMENT_LENGTH` — a constant, because the snail's distance from the camera is
+ * one — and that is measured **from the camera**, where every standing object's index is measured
+ * from the base segment's near edge. The two differ by however far the camera has travelled into
+ * that segment, which is up to a whole segment, so an obstacle the snail had just passed could
+ * still draw behind it and one still ahead could draw over it. See `distanceIndexOf`.
+ *
+ * `PLAYER_SEGMENT_PHASE` still snaps `PLAYER_Z` off a segment boundary and its argument still
+ * holds — it is what keeps the tiebreak from having to decide a tie that is not arbitrary.
  */
-const PLAYER_DISTANCE_INDEX = PLAYER_Z / SEGMENT_LENGTH
 
 /**
  * How far the run travels per frame of the glide cycle, in world units.
@@ -109,6 +113,18 @@ export class PlayerView {
   /** Where the snail's feet were drawn this frame, in screen pixels. See `render`. */
   groundX = 0
   groundY = 0
+
+  /**
+   * The snail's whole drawn box this frame, in screen pixels — bottom-centre origin unpacked.
+   *
+   * **Published so the HUD can get out of its way, never so the HUD can be positioned by it.** A
+   * readout anchored to the mascot is how the fruit gauge once ended up drawn on the horizon; what
+   * this is for is the opposite question — is the thing the player is steering currently underneath
+   * a corner readout — and the answer only ever changes an *alpha*. See `Hud.update` and
+   * `gaugeYield`.
+   */
+  readonly drawnBox = { left: 0, right: 0, top: 0, bottom: 0 }
+
 
   private readonly rect = createBillboardRect()
   private lookBack: LookBackState = { startedAt: -1, nextAt: 0 }
@@ -170,26 +186,52 @@ export class PlayerView {
     this.skin = skinId
   }
 
-  constructor(scene: Phaser.Scene, options: { sizeScale?: number; skin?: string } = {}) {
+
+
+  /**
+   * Rebuilds the mascot for the theme that is now active, and re-points the sprite at it.
+   *
+   * **⚠ The mascot became a themed texture and `applyTheme` therefore destroys it.** Its pad answers
+   * to the theme's own ground light and its contour is chosen against the road it will be drawn
+   * over, so a skin's frames belong to a (skin, theme) pair — and the key carries the theme id.
+   * Without this the sprite is left holding a texture the swap has just removed, which is the
+   * `glTexture` of null this project has now diagnosed from four separate directions.
+   *
+   * Called on the same beat as `WorldView.refreshTheme`, by whichever scene owns the swap.
+   */
+  refreshTheme(scene: Phaser.Scene): void {
+    createSnailTexture(scene, this.skin)
+    // Re-pointed rather than left to the next `render`: a paused menu may not draw another frame
+    // before the player looks at it, and `setTexture` on an unchanged key is a no-op anyway.
+    this.sprite.setTexture(snailSkinFrameKey(0, this.skin))
+  }
+
+  constructor(
+    scene: Phaser.Scene,
+    options: { sizeScale?: number; skin?: string } = {},
+  ) {
     this.skin = options.skin ?? DEFAULT_SNAIL_SKIN
     createSnailTexture(scene, this.skin)
     this.sizeScale = options.sizeScale ?? 1
 
     // Below the snail in the display list, and below it in depth: an ellipse drawn over the
     // sprite would read as a hole rather than as a shadow.
-    // Both depths are constant, unlike every other world object's: the snail never changes its
-    // distance from the camera. They still come from the same scale everything else sorts on.
+    // ⚠ All three depths are re-set every frame in `render`. They used to be assigned here, on the
+    // reasoning that the snail's distance from the camera never changes — true of the distance and
+    // false of the INDEX, which is measured from the base segment's near edge and therefore slides
+    // as the camera crosses one. See `distanceIndexOf`.
     // Multiply, not a grey fill: on pale sand a neutral ellipse reads as a puddle rather than as
     // an absence of light. See `SHADOW_DARKEN`.
     this.shadow = scene.add
       .ellipse(0, 0, 10, 4, 0x000000)
       .setBlendMode(Phaser.BlendModes.MULTIPLY)
-      .setDepth(worldDepth(PLAYER_DISTANCE_INDEX, WORLD_LAYER.shadow))
     this.sprite = scene.add
       .image(0, 0, snailSkinFrameKey(0, this.skin))
-      // Bottom centre: a billboard is positioned by the point where it meets the ground.
-      .setOrigin(0.5, 1)
-      .setDepth(worldDepth(PLAYER_DISTANCE_INDEX, WORLD_LAYER.player))
+      // **⚠ Its own centre, not its feet, and that is what a tumble turns about.** A billboard is
+      // *positioned* by where it meets the ground — `render` still does exactly that, by placing
+      // this centre half a drawn height above it — but the origin is also the pivot, and pivoting a
+      // spinning creature on its feet swung it below the ground point. See `bodyBand`.
+      .setOrigin(0.5, 0.5)
 
     ensureShieldTexture(scene)
     // **Between the player and the pickups**, so the shell's rim draws over the mascot's own edge —
@@ -200,7 +242,15 @@ export class PlayerView {
       .image(0, 0, SHIELD_TEXTURE)
       .setTint(PICKUP_COLORS.shield.light)
       .setVisible(false)
-      .setDepth(worldDepth(PLAYER_DISTANCE_INDEX, (WORLD_LAYER.player + WORLD_LAYER.pickup) / 2))
+
+    // **⚠ Three images made now and hidden, never one made when an item is put on.** `RunScene`,
+    // `MainMenu` and `Garage` all build their camera `ignore()` lists from `gameObjects` at
+    // `create()` time, and an object created after that is in *neither* list — which is drawn
+    // twice, once by the world camera at its own depth and once by `uiCamera` over the whole frame.
+    // That is the defect the critters' wings shipped with for four rounds, and a wardrobe the
+    // player changes at runtime is exactly the shape that reintroduces it. A fixed pool makes it
+    // unrepresentable rather than remembered.
+    //
   }
 
   /**
@@ -246,9 +296,7 @@ export class PlayerView {
     const ahead = (index - baseIndex + track.length) % track.length
 
     if (ahead >= DRAW_DISTANCE) {
-      this.sprite.setVisible(false)
-      this.shadow.setVisible(false)
-      this.bubble.setVisible(false)
+      this.hideAll()
 
       return
     }
@@ -256,9 +304,7 @@ export class PlayerView {
     const segment = track[index]
 
     if (!Number.isFinite(segment.s1.scale) || segment.s1.scale <= 0) {
-      this.sprite.setVisible(false)
-      this.shadow.setVisible(false)
-      this.bubble.setVisible(false)
+      this.hideAll()
 
       return
     }
@@ -267,12 +313,18 @@ export class PlayerView {
     // interpolated across that segment rather than read off its near edge — see
     // `playerProjection.ts` for the 11.3%-per-segment pop that costs, and `verify:player` for the
     // check that keeps it fixed.
-    const ground = playerGroundInto(this.ground, segment.s1, segment.s2, worldZ)
+    const ground = groundPointInto(this.ground, segment.s1, segment.s2, worldZ)
+    // The same index every standing object uses, from the same origin -- see `distanceIndexOf`.
+    // Set every frame, because `ahead` steps down as the camera crosses a boundary and the
+    // fractional part slides continuously between those steps.
+    const distanceIndex = distanceIndexOf(ahead, worldZ)
+
+    this.shadow.setDepth(worldDepth(distanceIndex, WORLD_LAYER.shadow))
+    this.sprite.setDepth(worldDepth(distanceIndex, WORLD_LAYER.player))
+    this.bubble.setDepth(worldDepth(distanceIndex, (WORLD_LAYER.player + WORLD_LAYER.pickup) / 2))
 
     if (!Number.isFinite(ground.scale) || ground.scale <= 0) {
-      this.sprite.setVisible(false)
-      this.shadow.setVisible(false)
-      this.bubble.setVisible(false)
+      this.hideAll()
 
       return
     }
@@ -331,7 +383,6 @@ export class PlayerView {
     // of six where nothing changes.
     this.sprite.setTexture(snailSkinFrameKey(Math.floor(distance / GLIDE_UNITS_PER_FRAME), this.skin))
     this.sprite.setVisible(true)
-    this.sprite.setPosition(this.rect.x, this.rect.y)
     // Squash and stretch is volume-preserving: wider when flatter. Applied here rather than baked
     // into the billboard size so the collision footprint never changes with the animation.
     // **The glance, folded into the same two calls the squash already uses.** A rear-view shell
@@ -343,6 +394,13 @@ export class PlayerView {
     const glance = lookBackTurn(this.lookBack, look.now)
 
     this.sprite.setDisplaySize((this.rect.w / squash) * (1 - LOOK_BACK.pinch * glance), this.rect.h * squash)
+    // **⚠ Positioned by its CENTRE, and it used to be positioned by its feet.** The origin is
+    // `(0.5, 0.5)`, so this is where the turn happens — and turning a tumbling creature about the
+    // point where it meets the ground swung its body 310 units *below* that point, which is what
+    // stopped a ramp clearing a tall barrier. See `bodyBand`, which is the same rectangle and has
+    // to stay the same rectangle. At rest the two placements are identical to the pixel, because a
+    // box drawn from its centre at `y - h/2` is a box drawn from its bottom at `y`.
+    this.sprite.setPosition(this.rect.x, this.rect.y - this.sprite.displayHeight / 2)
     // **The spin, and the shadow deliberately does not take it.** A shadow is a mark on the ground
     // and the ground is not turning; rotating it would read as the whole world tipping rather than
     // as the snail doing something. It grows and fades with height and nothing else — see
@@ -357,6 +415,14 @@ export class PlayerView {
 
     this.screenX = this.rect.x
     this.screenY = this.rect.y
+    // Written in place rather than reallocated: this runs every frame of every run.
+    this.drawnBox.left = this.rect.x - this.rect.w / 2
+    this.drawnBox.right = this.rect.x + this.rect.w / 2
+    this.drawnBox.top = this.rect.y - this.rect.h
+    this.drawnBox.bottom = this.rect.y
+    // **Above the mascot and below the bubble**, both `WORLD_LAYER` tiebreaks inside one segment so
+    // distance still decides first. Set every frame for the reason every other depth here is: the
+    // index slides as the camera crosses a boundary.
     this.drawBubble(look.shields ?? 0, look.now)
   }
 
@@ -387,9 +453,17 @@ export class PlayerView {
 
     this.bubble.setVisible(true)
     // The snail's centre: its origin is at its feet, so half a drawn height up from there.
-    this.bubble.setPosition(this.sprite.x, this.sprite.y - this.sprite.displayHeight / 2)
+    // The sprite is drawn from its own centre, so that *is* the body's middle — see `render`.
+    this.bubble.setPosition(this.sprite.x, this.sprite.y)
     this.bubble.setDisplaySize(size * scale, size * scale)
     this.bubble.setAlpha(alpha)
+  }
+
+  /** Everything the view draws, off. One place, so a new object cannot be forgotten in three. */
+  private hideAll(): void {
+    this.sprite.setVisible(false)
+    this.shadow.setVisible(false)
+    this.bubble.setVisible(false)
   }
 
   /** The ground height under the snail, for anything that needs the surface it is standing on. */
@@ -411,4 +485,6 @@ export class PlayerView {
     this.shadow.destroy()
     this.bubble.destroy()
   }
+
+
 }

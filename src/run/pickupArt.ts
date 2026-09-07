@@ -51,6 +51,7 @@ export const FRUIT_TEXTURES = [
 export const PICKUP_TEXTURES: Record<PickupKind, readonly string[]> = {
   fruit: FRUIT_TEXTURES,
   shield: ['pickup-shield'],
+  heal: ['pickup-heal'],
   coin: ['pickup-coin'],
 }
 
@@ -110,6 +111,7 @@ function drawPickup(scene: Phaser.Scene, kind: PickupKind, key: string): void {
 
     if (kind === 'fruit') drawFruit(g, s, ink, colors)
     else if (kind === 'shield') drawShield(g, s, ink, colors)
+    else if (kind === 'heal') drawHeal(g, s, ink, colors)
     else drawCoin(g, s, ink, colors)
 
     g.generateTexture(key, size, size)
@@ -192,6 +194,54 @@ function drawShield(g: Phaser.GameObjects.Graphics, s: Scale, ink: number, color
   g.lineStyle(ink, INK, 1)
   path()
   g.strokePath()
+}
+
+/**
+ * The medkit: a pale case with a lid band and a cross on its face.
+ *
+ * **The one right-angled silhouette in the set**, which is what tells it from the shield's pointed
+ * lozenge at the size both are met at — the fruits are round, the coin is a disc, and nothing else
+ * here has a corner.
+ *
+ * It follows the render (`dev-assets/cc0-3d/medkit_render.py`) part for part rather than being a
+ * second idea of what a medkit is: the case, a darker lid across the top third, and the cross. That
+ * is the rule this file has been corrected by twice — the coin drew a washer while the art drew a
+ * struck disc, and the pickups kept a backing plate the renders had dropped.
+ *
+ * **⚠ The cross is the DARK colour and the case the light one, which is the inverse of the obvious
+ * medkit.** A warm red is the one hue this game reserves (`THREAT_COLOR`), so the red here has to
+ * take the reservation's lightness escape and is therefore a deep oxblood; on a cream case that
+ * reads exactly as a medkit, while a near-white cross on a red case measured lightness 58 with 81%
+ * ink — a hole in the road with a mark on it. The render's own docstring carries the measurement.
+ */
+function drawHeal(g: Phaser.GameObjects.Graphics, s: Scale, ink: number, colors: Colors): void {
+  const left = 0.14
+  const width = 0.72
+  const top = 0.16
+  const height = 0.68
+  const lid = height * 0.3
+
+  g.fillStyle(colors.light, 1)
+  g.fillRect(s(left), s(top), s(width), s(height))
+  g.fillStyle(colors.mid, 1)
+  g.fillRect(s(left), s(top), s(width), s(lid))
+  // The grip, on the lid rather than floating over it: a case is carried, and at 13px this is the
+  // one silhouette bump that says so.
+  g.fillRect(s(0.5 - width * 0.17), s(top - 0.055), s(width * 0.34), s(0.055))
+
+  // The cross, in the same proportions the geometry uses: 62% of the case across, bars a fifth of
+  // it thick, so the two cannot drift apart.
+  const bar = width * 0.22
+  const span = width * 0.62
+  const cx = 0.5
+  const cy = top + height / 2
+
+  g.fillStyle(colors.dark, 1)
+  g.fillRect(s(cx - span / 2), s(cy - bar / 2), s(span), s(bar))
+  g.fillRect(s(cx - bar / 2), s(cy - span / 2), s(bar), s(span))
+
+  g.lineStyle(ink, INK, 1)
+  g.strokeRect(s(left), s(top), s(width), s(height))
 }
 
 /**

@@ -106,7 +106,7 @@ export function buildRunCircuit(): Segment[] {
 }
 
 /**
- * The menu's circuit: long easy bends and low hills, and **no S-curve**.
+ * The menu's circuit: long easy bends, **no S-curve and no hills**.
  *
  * The menu is a screen someone reads, and every corner is a lateral shove on everything in the
  * frame: the road slides, the scenery sweeps, the sky parallax follows. A hard bend under a
@@ -116,13 +116,33 @@ export function buildRunCircuit(): Segment[] {
  *
  * It is also longer between events than the run's circuit on purpose. Nobody stays on the menu
  * for one lap, so what matters is that no two seconds of it look like an incident.
+ *
+ * **⚠ And the same argument had never been made about the VERTICAL axis, which is where it
+ * mattered most.** The stretch carried `addLowRollingHills()`, and on a hill the ground at the
+ * mascot's own distance rises and falls with it — so the one world object the whole interface is
+ * laid out around does not hold still. Measured over 900 frames of the front screen at 368x655:
+ * the mascot's feet swung **404..522, a 118px excursion on a 655px frame (18% of its height)** —
+ * far enough to put the creature 56px *inside* the Play button at one end and its own head 89px
+ * above the horizon at the other. Reported as the snail hiding behind the button, which is exactly
+ * what one instant of that swing looks like.
+ *
+ * A lateral shove moves the picture; a vertical one moves the thing the picture is *composed*
+ * around, and `MainMenu.mascotFeet` — which the Play stack and the garage's caption are both
+ * placed against — is a flat-road derivation, i.e. true only at the middle of the swing. So the
+ * height comes out and the shape stays: same six sections, same length, same two easy bends,
+ * `ROAD_HILL.NONE` instead of `ROAD_HILL.LOW`.
+ *
+ * **The cost is stated rather than hidden:** the menu's road no longer undulates. What is left
+ * carrying the sense of travel is the bends, the streaming verge, the biome seams and the mascot's
+ * own glide cycle — and the horizon never answered to hills anyway, since the skyline is a
+ * `TileSprite` that only follows curvature.
  */
 export function buildMenuCircuit(): Segment[] {
   return new TrackBuilder()
     .addStraight(ROAD_LENGTH.LONG)
     .addCurve(ROAD_LENGTH.LONG, ROAD_CURVE.EASY)
     .addStraight(ROAD_LENGTH.MEDIUM)
-    .addLowRollingHills()
+    .addLowRollingHills(ROLLING_LENGTH, ROAD_HILL.NONE)
     .addCurve(ROAD_LENGTH.LONG, -ROAD_CURVE.EASY)
     .addStraight(ROAD_LENGTH.LONG)
     .build()

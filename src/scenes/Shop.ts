@@ -20,6 +20,8 @@ import {
 import { uiScale } from '../ui/uiScale'
 import { getCatalog, type ShopItem } from '../shop/catalog'
 import { canAfford, earnCoins, hasPurchased, REWARDED_TOPUP_COINS, spendCoins } from '../shop/coins'
+import { adOffer } from '../shop/adCatalog'
+import { noteRewarded, rewardedLeft, sessionAdPolicy } from '../platform/adPolicy'
 import { getState, mutate } from '../save/store'
 import { scrollPanel, type ScrollPanel } from '../ui/scrollPanel'
 import { contentHeight, windowHeight } from '../ui/scrollList'
@@ -49,6 +51,14 @@ export interface ShopData {
 }
 
 const TOPUP_REWARD_ID = 'coins-topup'
+/**
+ * The session's ad budget is `adPolicy.ts`'s singleton, never a field of this scene.
+ *
+ * A scene is rebuilt every time it is opened and a session is not, so a per-instance counter would
+ * hand the player three more top-ups every time they closed the shop and opened it again — a limit
+ * that limits nothing. And a `static` here would be a *second* session budget beside `RunOver`'s,
+ * which is the bug `sessionAdPolicy` was extracted to make unrepresentable.
+ */
 
 const PANEL_WIDTH = 420
 const PANEL_SIDE_PADDING = 24
@@ -202,7 +212,8 @@ export class Shop extends Phaser.Scene {
     this.title = kitTitle(this, t('shop'), TITLE_FONT_SIZE)
     this.coinsBadge = kitBadge(this, '🪙', getState().coins)
 
-    this.topupButton = kitButton(this, t('shopTopup', { n: REWARDED_TOPUP_COINS }), { fontSize: TOPUP_FONT_SIZE })
+    this.topupButton = kitButton(this, this.topupLabel(), { fontSize: TOPUP_FONT_SIZE })
+    this.refreshTopup()
     bindAction(this, 'shopTopup', { pointer: this.topupButton.container }, () => {
       void this.requestTopup()
     })
@@ -427,7 +438,39 @@ export class Shop extends Phaser.Scene {
     }
   }
 
+  /**
+   * What the offer reads: what it pays, and what is left of it.
+   *
+   * **The count is on the button rather than in a tooltip nobody opens.** A rewarded offer with a
+   * hidden limit is one the player discovers by being refused, which reads as the button being
+   * broken — the same defect class as a target that silently ignores a stroke.
+   */
+  private topupLabel(): string {
+    const offer = adOffer(TOPUP_REWARD_ID)
+    const left = rewardedLeft(sessionAdPolicy(), offer.id, offer.perSession)
+
+    if (left <= 0) return t('adSpent')
+
+    return `${t('shopTopup', { n: REWARDED_TOPUP_COINS })}  ·  ${t('adLeft', { n: left })}`
+  }
+
+  private refreshTopup(): void {
+    const offer = adOffer(TOPUP_REWARD_ID)
+
+    this.topupButton.setText(this.topupLabel())
+    this.topupButton.setEnabled(rewardedLeft(sessionAdPolicy(), offer.id, offer.perSession) > 0)
+  }
+
   private async requestTopup(): Promise<void> {
+    const offer = adOffer(TOPUP_REWARD_ID)
+
+    if (rewardedLeft(sessionAdPolicy(), offer.id, offer.perSession) <= 0) return
+
+    // Spent on the offer rather than on the reward, which is `noteContinue`'s own rule: a refused
+    // ad that left the button pressable again would be a slot machine.
+    noteRewarded(sessionAdPolicy(), offer.id)
+    this.refreshTopup()
+
     const granted = await showRewarded(this.game, TOPUP_REWARD_ID)
     if (!granted) return
     mutate((s) => {

@@ -8,9 +8,10 @@ import {
 import { billboardAppear, billboardFog, DRAW_DISTANCE, MAX_BILLBOARD_FOG, ROAD_WIDTH, SPRITE_SCALE } from '../road/constants'
 import type { Segment } from '../road/track'
 import { createObstacleTextures, obstacleDrawKey } from './obstacleArt'
-import { WORLD_LAYER, worldDepth } from './worldDepth'
+import { distanceIndexOf, WORLD_LAYER, worldDepth } from './worldDepth'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowClipFade, shadowScale } from './shadows'
 import { OBSTACLE_POOL_SIZE, type Obstacle } from './obstacles'
+import { groundPointInto, type GroundPoint } from './groundProjection'
 
 /** What one pool slot is currently showing, so a frame can skip work it does not need. */
 interface SlotState {
@@ -87,6 +88,8 @@ export class ObstacleSprites {
   private readonly rect = createBillboardRect()
   /** A second scratch rect: the shadow's own projection, taken at height zero. */
   private readonly shadowRect = createBillboardRect()
+  /** The interpolated ground point, reused per obstacle. */
+  private readonly ground: GroundPoint = { x: 0, y: 0, w: 0, scale: 0 }
 
   constructor(scene: Phaser.Scene, poolSize = OBSTACLE_POOL_SIZE) {
     createObstacleTextures(scene)
@@ -146,15 +149,25 @@ export class ObstacleSprites {
       if (!here || here.length === 0) continue
 
       const segment = track[index]
-      const ground = segment.s1
 
       // Same guard as the mesh's: a segment sitting exactly on the camera plane projects an
       // infinite scale, which passes a naive `> 0` test and would put NaN into a position.
-      if (!Number.isFinite(ground.scale) || ground.scale <= 0) continue
+      if (!Number.isFinite(segment.s1.scale) || segment.s1.scale <= 0) continue
 
       const clip = clipY[n]
 
       for (const obstacle of here) {
+      // **⚠ Interpolated across the segment, not read off its near edge.** `Segment.s1` is exact for
+      // a tree, which stands *at* that edge; this stands at its own `z`, anywhere inside the
+      // segment, so drawing it from `s1` meant the sprite and the collision box were reasoning
+      // about depths up to one `SEGMENT_LENGTH` apart — and a lateral offset projects through that
+      // depth. Measured before the fix: up to **0.095 road half-widths** of lateral error at the
+      // road's edge, 0.76 of the snail's own half-width. See `groundProjection.ts`.
+        const ground = groundPointInto(this.ground, segment.s1, segment.s2, obstacle.z)
+        // Where it stands INSIDE its segment, not which segment it stands on -- see
+        // `distanceIndexOf`, and the bug a bare `n` here put a bee through a barrier with.
+        const distanceIndex = distanceIndexOf(n, obstacle.z)
+
         const key = obstacleDrawKey(obstacle.kind, obstacle.id)
         // The world box, converted into the texture-pixel units `billboardRectInto` wants — the
         // same conversion `PlayerView` does, and for the same reason: the drawn size has to be the
@@ -201,12 +214,22 @@ export class ObstacleSprites {
             )
           : null
 
-        this.place(this.slots[used], key, rect, visible, n, (obstacle.id & 1) === 1, shadowRect, obstacle.yLow, clip)
+        this.place(
+          this.slots[used],
+          key,
+          rect,
+          visible,
+          distanceIndex,
+          (obstacle.id & 1) === 1,
+          shadowRect,
+          obstacle.yLow,
+          clip,
+        )
         if (import.meta.env.DEV) {
           this.drawnIds.push({
             id: obstacle.id,
             alpha: this.slots[used].image.alpha,
-            distanceIndex: n,
+            distanceIndex,
           })
         }
         if (import.meta.env.DEV && this.slots[used].shadow.visible) {

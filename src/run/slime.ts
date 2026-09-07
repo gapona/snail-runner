@@ -32,6 +32,23 @@ export interface SlimePoint {
   halfWidth: number
   /** How strongly it was laid, `0..1`. Brighter the faster the snail was going. */
   strength: number
+  /**
+   * How much this point swells on each side, as a multiple of `halfWidth`.
+   *
+   * **⚠ Two straight edges are what made the trail read as paint.** A ribbon whose sides are exactly
+   * parallel is a road marking; slime is viscous and pools unevenly, so its edges bulge and pinch.
+   * The two sides are drawn from *different* hashes on purpose — mirrored wobble reads as a shape
+   * rather than as a spill.
+   *
+   * Derived from the point's own `z` rather than from an RNG stream, for `decorVariation`'s reason:
+   * a point must look the same on the frame after it was laid, on the next lap, and at every
+   * viewport. An RNG would have to be walked in order to reach the nth value, and this has to be
+   * answerable for one coordinate in any order.
+   */
+  swellLeft: number
+  swellRight: number
+  /** A bright glint on this point, or `0` for none — see `slimeGlint`. */
+  glint: number
 }
 
 /**
@@ -54,6 +71,66 @@ export const SLIME_MAX_POINTS = 40
 
 /** How wide the trail is at a standstill and at full speed, in half-widths. */
 export const SLIME_HALF_WIDTH = { slow: PLAYER_HALF_WIDTHS * 0.4, fast: PLAYER_HALF_WIDTHS * 0.85 } as const
+
+/**
+ * How far a point's edge may swell or pinch, as a share of its own half-width.
+ *
+ * Big enough to be seen at the width the trail is actually drawn — a 0.06-half-width ribbon is about
+ * 40px across under the snail on a desktop, so a fifth of it is 8px and reads — and small enough
+ * that the ribbon still reads as one continuous thing rather than as a row of blobs.
+ */
+export const SLIME_SWELL = 0.22
+
+/**
+ * How often a glint is laid, and how big it is as a share of the trail's own width.
+ *
+ * **The one part of the trail that is not the ribbon.** A wet surface catches light in *points*, not
+ * evenly — a uniformly bright core reads as a painted stripe with a lighter stripe inside it. One
+ * glint every few points breaks that up, and because they are laid in world space they slide down
+ * the road with everything else rather than shimmering in place.
+ *
+ * One in three, deterministic from the point's own `z`: a fixed period would beat visibly against
+ * `SLIME_SPACING_Z` and read as a dashed line.
+ */
+export const SLIME_GLINT = { chance: 0.34, size: 0.55 } as const
+
+/**
+ * A deterministic `0..1` from a world position and a salt.
+ *
+ * The same integer hash `decorVariation` uses, and for the same reason: what is wanted is an answer
+ * for *one coordinate*, in any order, that never changes for that coordinate.
+ */
+function hash01(z: number, salt: number): number {
+  let x = Math.imul(Math.round(z) ^ Math.imul(salt, 0x9e3779b9), 0x85ebca6b)
+
+  x ^= x >>> 13
+  x = Math.imul(x, 0xc2b2ae35)
+  x ^= x >>> 16
+
+  return (x >>> 0) / 4294967296
+}
+
+/** How much a point's left and right edges swell, each in `1 ± SLIME_SWELL`. */
+export function slimeSwell(z: number): { left: number; right: number } {
+  return {
+    left: 1 + (hash01(z, 1) * 2 - 1) * SLIME_SWELL,
+    right: 1 + (hash01(z, 2) * 2 - 1) * SLIME_SWELL,
+  }
+}
+
+/**
+ * The glint on a point: `0` for none, otherwise a signed position across the trail.
+ *
+ * Signed so it sits on one side or the other rather than on the centreline — a highlight down the
+ * middle is the bright core the ribbon already has.
+ */
+export function slimeGlint(z: number): number {
+  if (hash01(z, 3) > SLIME_GLINT.chance) return 0
+
+  const side = hash01(z, 4) < 0.5 ? -1 : 1
+
+  return side * (0.25 + hash01(z, 5) * 0.4)
+}
 
 /**
  * How strongly it is laid at a standstill and at full speed.
@@ -124,11 +201,23 @@ export function stepSlime(
 
   const intensity = slimeIntensity(speed)
 
+  const z = wrapZ(playerZ, trackLength)
+  const swell = slimeSwell(z)
+
   points.push({
-    z: wrapZ(playerZ, trackLength),
+    z,
     offsetX,
-    halfWidth: SLIME_HALF_WIDTH.slow + (SLIME_HALF_WIDTH.fast - SLIME_HALF_WIDTH.slow) * Math.min(1, intensity),
-    strength: SLIME_STRENGTH.slow + (SLIME_STRENGTH.fast - SLIME_STRENGTH.slow) * Math.min(1, intensity),
+    // **⚠ Not `Math.min(1, intensity)`, which is what it was.** `slimeIntensity` clamps at 1.25
+    // rather than at 1 with a docstring saying the trail is the clearest place in the frame to show
+    // the player going faster than the game's own ceiling — and then both of its consumers clamped
+    // that headroom straight back off. The 1.25 measured nothing: a Fever and a run at `SPEED_CAP`
+    // laid exactly the same slime. Fifth piece of authored state this project has found doing
+    // nothing, and the same one-line shape as `fanScale` and `cooldownMs`.
+    halfWidth: SLIME_HALF_WIDTH.slow + (SLIME_HALF_WIDTH.fast - SLIME_HALF_WIDTH.slow) * intensity,
+    strength: Math.min(1, SLIME_STRENGTH.slow + (SLIME_STRENGTH.fast - SLIME_STRENGTH.slow) * intensity),
+    swellLeft: swell.left,
+    swellRight: swell.right,
+    glint: slimeGlint(z),
   })
 
   // The cap is a backstop, not the mechanism — the cull above is what normally bounds this.

@@ -1,4 +1,8 @@
 import * as Phaser from 'phaser'
+import { GROUNDED_POSE, HOP_PHASE_STAGGER_MS, hopPose } from './critterJump'
+import { vaultBodyOf, vaultPose } from './critterVault'
+import type { Obstacle } from './obstacles'
+import { rotatedSpan, wingAngle, WING_PHASE_STAGGER_MS } from './critterWings'
 import {
   billboardOnScreen,
   billboardRectInto,
@@ -15,10 +19,26 @@ import {
   SPRITE_SCALE,
 } from '../road/constants'
 import type { Segment } from '../road/track'
-import { createCritterTextures, critterFrameKey, CRITTER_STEP_UNITS } from './critterArt'
-import { CRITTER_KINDS, MAX_CRITTERS, type Critter } from './critters'
-import { playerGroundInto, type GroundPoint } from './playerProjection'
-import { WORLD_LAYER, worldDepth } from './worldDepth'
+import {
+  createCritterTextures,
+  critterAirKey,
+  critterFrameKey,
+  critterWingKey,
+  CRITTER_STEP_UNITS,
+} from './critterArt'
+import {
+  CRITTER_AIR_POSES,
+  CRITTER_KIND_IDS,
+  CRITTER_KINDS,
+  CRITTER_WINGS,
+  MAX_CRITTERS,
+  tuckOffset,
+  type Critter,
+  type CritterAirPose,
+  type CritterKind,
+} from './critters'
+import { groundPointInto, type GroundPoint } from './groundProjection'
+import { distanceIndexOf, WORLD_LAYER, worldDepth } from './worldDepth'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowClipFade, shadowScale } from './shadows'
 
 /**
@@ -35,6 +55,13 @@ export const CRITTER_POOL_SIZE = MAX_CRITTERS
 /** What one pool slot is currently showing, so a frame can skip work it does not need. */
 interface SlotState {
   image: Phaser.GameObjects.Image
+  /**
+   * A flyer's two wings: ONE drawing, used twice, the second mirrored.
+   *
+   * Owned by the slot for the shadow's own reason -- two pools filled in the same order every frame
+   * is a desync waiting to happen, and its symptom here would be a wing beating on the wrong body.
+   */
+  wings: [Phaser.GameObjects.Image, Phaser.GameObjects.Image]
   /**
    * The mark a flying critter throws on the road, owned by the same slot as the sprite.
    *
@@ -91,16 +118,28 @@ export class CritterSprites {
   /** A second scratch rect: a flying critter's mark, projected at height zero. */
   private readonly shadowRect = createBillboardRect()
   private readonly ground: GroundPoint = { x: 0, y: 0, w: 0, scale: 0 }
+  /** Kept so `airPose` can ask the texture manager whether a supplied pose actually loaded. */
+  private readonly textures: Phaser.Textures.TextureManager
 
   constructor(scene: Phaser.Scene, poolSize = CRITTER_POOL_SIZE) {
+    this.textures = scene.textures
     createCritterTextures(scene)
 
-    const initialKey = critterFrameKey('beetle', 0)
+    // Any valid key will do -- the pool only needs one to construct its images with. Taken
+    // from the table rather than named, so removing a kind cannot leave a dangling texture key.
+    const initialKey = critterFrameKey(CRITTER_KIND_IDS[0], 0)
 
     this.slots = Array.from({ length: poolSize }, () => ({
       // Bottom centre, like every other billboard: a critter is positioned by the point where its
       // own band begins — the road for a beetle, and 431 units of daylight up for a bee.
       image: scene.add.image(0, 0, initialKey).setOrigin(0.5, 1).setVisible(false),
+      // Two wings per slot, allocated up front like everything else in this pool: an image created
+      // later would miss the scene's camera `ignore()` lists, which are built at scene create, and
+      // would be drawn twice. Hidden until a flyer needs them.
+      wings: [0, 1].map(() => scene.add.image(0, 0, initialKey).setVisible(false)) as [
+        Phaser.GameObjects.Image,
+        Phaser.GameObjects.Image,
+      ],
       shadow: scene.add
         .ellipse(0, 0, 1, 1, 0x000000)
         .setBlendMode(Phaser.BlendModes.MULTIPLY)
@@ -109,7 +148,19 @@ export class CritterSprites {
       cropped: false,
     }))
 
-    this.gameObjects = this.slots.flatMap((slot) => [slot.shadow, slot.image])
+    // **⚠ The wings belong in this list, and for four rounds they did not.** `RunScene` builds its
+    // two-camera split from `worldObjects()`, which is this — so anything missing from it is never
+    // `uiCamera.ignore()`-ed and is therefore drawn **twice**: once by the world camera at its own
+    // depth, and again by the UI camera, which is added second and composites on top of the entire
+    // frame. Reported four times as seeing a flyer's wings through the scenery, and the picture that
+    // finally settled it shows exactly that signature: a barrier filling the frame, two wings drawn
+    // over it, and **no body between them** — the body was correctly occluded the whole time.
+    //
+    // Three rounds of fixes went to the wrong place because the symptom points at depth: a
+    // translucent membrane, a contour rebuild, and two pools measuring depth from different origins
+    // were each a real defect and none of them was this one. See `assertWorldIsSingleCamera` for why
+    // the guard that exists for exactly this could not see it.
+    this.gameObjects = this.slots.flatMap((slot) => [slot.shadow, slot.image, ...slot.wings])
   }
 
   /**
@@ -122,6 +173,22 @@ export class CritterSprites {
    * the mesh walked from, and is needed only for *where inside its segment* a point sits, which is
    * what the interpolation below is a function of.
    */
+  /**
+   * The kind's tucked drawing, or null when it has none or its texture has not loaded.
+   *
+   * Checked against the texture manager rather than against the table alone, because a supplied
+   * pose has no procedural fallback: `createCritterTextures` cannot invent one. A scene that starts
+   * before `Preloader` has finished -- which the stepping harness does routinely -- would otherwise
+   * ask for a key that is not there and draw the placeholder.
+   */
+  private airPose(kind: CritterKind): CritterAirPose | null {
+    const pose = CRITTER_AIR_POSES[kind]
+
+    if (!pose || !this.textures.exists(critterAirKey(kind))) return null
+
+    return pose
+  }
+
   render(
     critters: readonly Critter[],
     cameraOdometer: number,
@@ -131,6 +198,16 @@ export class CritterSprites {
     clipY: readonly number[],
     screenWidth: number,
     screenHeight: number,
+    // ⚠ Scene time, and it is the ONE animation clock in this file. A wingbeat is not a gait -- see
+    // `critterWings.ts` for why it is time-driven where the frog's hop and the beetle's legs are
+    // driven by travel. Defaulted so an existing caller keeps compiling; the scene passes its own.
+    now = 0,
+    // What the creatures have to get over. Read only to DRAW them clearing it -- see
+    // `critterVault.ts` for why this cannot reach `stepCritters` and why the collision band is
+    // untouched by it. Defaulted to nothing, so a caller with no obstacles draws exactly what it
+    // drew before.
+    obstacles: readonly Obstacle[] = [],
+    trackLength = 0,
   ): void {
     const previousUsed = this.usedLastFrame
     const capacity = this.slots.length
@@ -158,19 +235,62 @@ export class CritterSprites {
 
       // Interpolated across the segment rather than read off its near edge — see the class note.
       // Only `worldZ`'s remainder modulo one segment is read, so the unwrapped sum is exact here.
-      const ground = playerGroundInto(this.ground, segment.s1, segment.s2, cameraTrackZ + ahead)
+      const ground = groundPointInto(this.ground, segment.s1, segment.s2, cameraTrackZ + ahead)
 
       if (!Number.isFinite(ground.scale) || ground.scale <= 0) continue
 
-      const worldWidth = critter.halfWidths * 2 * ROAD_WIDTH
-      const worldHeight = critter.yHigh - critter.yLow
+      // **The hop is a deformation of the one drawing, not a second set of frames.** Its arc comes
+      // from the player's own flight solver -- see `critterJump.ts` -- and it is offset per critter
+      // so two frogs on screen never hop in lockstep, which reads as one object drawn twice.
+      const spec = CRITTER_KINDS[critter.kind]
+      // The tucked pose is only offered when its texture is actually loaded: there is no
+      // procedural fallback for a supplied drawing, and a missing one must degrade to the deformed
+      // ground pose rather than to nothing.
+      const air = this.airPose(critter.kind)
+      const tuckAbove = air ? tuckOffset(critter.kind) : Infinity
+      // ⚠ Clearing something in front of it OVERRIDES its own cycle, and it is not a sum. Two arcs
+      // added together put the creature at the height of neither: a frog part-way through its own
+      // hop when a barrier arrives would leave the ground from wherever that hop had got to and
+      // clear the panel by however much was left over. What has to be true is that the base is over
+      // the obstacle's top as it crosses, which is a statement about ONE arc.
+      const vault = vaultPose(
+        vaultBodyOf(critter, cameraTrackZ + ahead, spec.speed),
+        obstacles,
+        trackLength,
+        tuckAbove,
+      )
+      const hop =
+        vault ??
+        (spec.gait === 'hop'
+          ? hopPose(
+              critter.bornZ - critter.z,
+              spec.speed,
+              critter.id * HOP_PHASE_STAGGER_MS,
+              tuckAbove,
+            )
+          : GROUNDED_POSE)
+
+      // ⚠ When tucked, the box is the AIR pose's own -- its own width and its own height, both
+      // measured at the same creature scale as the ground pose. Reusing the ground box would
+      // stretch a 1.33:1 drawing onto a 1.94:1 frame, which is the distortion `fromModel` exists to
+      // prevent, arriving from inside one kind.
+      const boxWidth = hop.tucked && air ? air.width : critter.halfWidths * 2 * ROAD_WIDTH
+      const boxHeight = hop.tucked && air ? air.height : critter.yHigh - critter.yLow
+      const worldWidth = boxWidth * hop.scaleX
+      const worldHeight = boxHeight * hop.scaleY
+      // The anchor, not the base. Placing the tucked drawing so its centre of mass lands where the
+      // ground pose's already was is the whole of what stops the swap jumping -- and because the
+      // swap waits until the hop has lifted the creature by exactly this offset, the base is at
+      // ground level at that instant.
+      const baseOffset = hop.tucked && air ? tuckOffset(critter.kind) * hop.scaleY : 0
       const rect = billboardRectInto(
         this.rect,
         ground,
         critter.offsetX,
         // Lifted by the bottom of its own band: zero for a beetle, and for a bee the daylight a
-        // grounded snail passes through.
-        critter.yLow,
+        // grounded snail passes through. A hop adds its own height on top, which is the only
+        // place the arc reaches the frame -- the collision band is untouched.
+        critter.yLow + hop.y - baseOffset,
         worldWidth / SPRITE_SCALE,
         worldHeight / SPRITE_SCALE,
         screenWidth,
@@ -205,16 +325,33 @@ export class CritterSprites {
           )
         : null
 
-      // Fractional, so the depth is continuous as the bug crosses a boundary rather than stepping
-      // with the segment index — the same reason the snail's own distance index is 8.25 and not 8.
+      // ⚠ Measured from the base segment's near edge, NOT from the camera. It was `ahead /
+      // SEGMENT_LENGTH` — a continuous index, which is right, from an origin the obstacle pool does
+      // not share, which is not: the camera stands some way into its own base segment and `n`
+      // counts from that edge. See `distanceIndexOf` for what the two origins cost.
+      const distanceIndex = distanceIndexOf(n, cameraTrackZ + ahead)
+      // A flyer's box is its ASSEMBLED span, so the body is drawn at its own share of it and the
+      // wings fill the rest. A ground kind's body IS the box, and `bodyRect` returns it unchanged.
+      const bodyRect = this.bodyRectOf(critter.kind, rect)
+
       this.place(
         this.slots[used],
-        critterFrameKey(critter.kind, pose),
-        rect,
+        hop.tucked ? critterAirKey(critter.kind) : critterFrameKey(critter.kind, pose),
+        bodyRect,
         fraction,
-        ahead / SEGMENT_LENGTH,
+        distanceIndex,
         shadowRect,
         critter.yLow,
+        clipY[n],
+      )
+      this.placeWings(
+        this.slots[used],
+        critter.kind,
+        rect,
+        distanceIndex,
+        this.slots[used].image.alpha,
+        now,
+        critter.id * WING_PHASE_STAGGER_MS,
         clipY[n],
       )
       used++
@@ -223,6 +360,7 @@ export class CritterSprites {
     for (let i = used; i < previousUsed; i++) {
       this.slots[i].image.setVisible(false)
       this.slots[i].shadow.setVisible(false)
+      for (const wing of this.slots[i].wings) wing.setVisible(false)
     }
 
     this.usedLastFrame = used
@@ -233,6 +371,7 @@ export class CritterSprites {
     for (const slot of this.slots) {
       slot.image.destroy()
       slot.shadow.destroy()
+      for (const wing of slot.wings) wing.destroy()
     }
   }
 
@@ -295,5 +434,97 @@ export class CritterSprites {
       image.setCrop()
       slot.cropped = false
     }
+  }
+
+  /**
+   * Places a flyer's two wings against the body's own projected box.
+   *
+   * Everything is a fraction of that box, so the wings follow the body through the projection with
+   * no second piece of arithmetic that could disagree with it -- the same reason a critter is
+   * projected from the segment's own two edges rather than re-projected.
+   *
+   * **The mirror is an origin flip, not a negated scale.** `flipX` mirrors the texture inside its
+   * frame and leaves the origin fraction where it is, so the left wing's origin has to be
+   * `1 - pivotX` or it would hinge on its own TIP.
+   */
+  /** The body's own box inside the kind's world box. Identity for anything without wings. */
+  private bodyRectOf(
+    kind: CritterKind,
+    rect: { x: number; y: number; w: number; h: number },
+  ): { x: number; y: number; w: number; h: number } {
+    const spec = CRITTER_WINGS[kind]
+
+    if (!spec) return rect
+
+    const h = rect.h * spec.bodyHeight
+    // The width is the DRAWING's, so the body is never stretched; only where it sits comes from the
+    // reference. The insect is symmetric, so it is centred.
+    const w = h * spec.bodyAspect
+
+    // The rect is bottom-centre, so x is a centre and y is the BASE.
+    return { x: rect.x, y: rect.y - rect.h + spec.bodyTop * rect.h + h, w, h }
+  }
+
+  private placeWings(
+    slot: SlotState,
+    kind: CritterKind,
+    rect: { x: number; y: number; w: number; h: number },
+    distanceIndex: number,
+    alpha: number,
+    ms: number,
+    stagger: number,
+    clip: number,
+  ): void {
+    const spec = CRITTER_WINGS[kind]
+    const key = critterWingKey(kind)
+
+    if (!spec || !this.textures.exists(key)) {
+      for (const wing of slot.wings) wing.setVisible(false)
+      return
+    }
+
+    const [hx, hy] = spec.hingeInBody
+    const [px, py] = spec.pivot
+    // ⚠ Everything about the wing is measured against the BODY, never against the world box. The
+    // wing is attached to the body, the two are one drawing at one scale in the material, and a box
+    // rebuilt from the reference is the thing that put earlier versions' wings in clear air. See
+    // `CritterWings.hingeInBody`.
+    const body = this.bodyRectOf(kind, rect)
+    const w = body.w * spec.wingOverBody
+    const h = w / spec.wingAspect
+    // The body rect is bottom-centre, like every rect here.
+    const left = body.x - body.w / 2
+    const top = body.y - body.h
+    const angle = wingAngle(kind, ms, spec.restDeg, stagger)
+    const depth = worldDepth(distanceIndex, WORLD_LAYER.critterWing)
+
+    slot.wings.forEach((wing, i) => {
+      const right = i === 0
+
+      wing.setVisible(true)
+      wing.setTexture(key)
+      wing.setOrigin(right ? px : 1 - px, py)
+      wing.setFlipX(!right)
+      wing.setDisplaySize(w, h)
+      wing.setPosition(left + (right ? hx : 1 - hx) * body.w, top + hy * body.h)
+      wing.setRotation(right ? angle : -angle)
+      wing.setDepth(depth)
+      // ⚠ The hill clips a wing too, and for as long as wings have existed it did not. The body is
+      // cropped against `clipY` and the wings were drawn at full size beside it, so a flyer coming
+      // over a crest showed two wings hanging in the air with no insect between them -- reported as
+      // seeing the wings through the scenery. A crop is the wrong instrument here because a wing is
+      // ROTATED and a crop is applied in the frame's own pixels, before the rotation; so it fades
+      // over its own height, which is what the shadows already do against the same line.
+      //
+      // ⚠ And the first version faded on the HINGE, which is the one point of a wing that is never
+      // the part behind the hill. The blade sweeps up to two thirds of the body's own height below
+      // it, so a flyer whose body had been cropped to a sliver still drew both wings at full alpha:
+      // measured over the run circuit, 0.4-1.6% of the frames a flyer is big enough to read in.
+      // It is the wing's own drawn extent now -- the bottom of the rotated box, faded over the
+      // whole of it.
+      const extent = rotatedSpan(w, h, right ? px : 1 - px, py, right ? angle : -angle)
+
+      wing.setAlpha(alpha * shadowClipFade(wing.y + extent.bottom, extent.height * 2, clip))
+    })
   }
 }

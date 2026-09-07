@@ -8,7 +8,11 @@ import { YTEvents } from './yt'
  * needing to remember to register it; only new *overlay* scenes (menus/dialogs meant to
  * stay interactive during a pause, like `Settings` and `Shop`) need to be added here.
  */
-const OVERLAY_SCENES = new Set(['Settings', 'Shop', 'RunOver'])
+// **Every launch-over-another-scene panel belongs here**, or a platform pause freezes its own Close
+// button and the deferred-resume path can never run. `Garage` is deliberately absent, because it is
+// `start`ed rather than launched and is therefore an ordinary gameplay-layer scene as far as this
+// is concerned.
+const OVERLAY_SCENES = new Set(['Settings', 'Shop', 'RunOver', 'Records'])
 
 /**
  * Freezes gameplay on `YTEvents.PAUSE` and unfreezes it on `YTEvents.RESUME` — the

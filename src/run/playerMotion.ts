@@ -38,7 +38,7 @@ import {
   PLAYER_STIFFNESS,
   PLAYER_Z,
   ROAD_EDGE,
-  halfWidthsAtLane,
+  steerTarget,
 } from './constants'
 import { CAMERA_DEPTH, ROAD_WIDTH } from '../road/constants'
 
@@ -170,7 +170,7 @@ function targetFor(input: PlayerInput, clamp: boolean, current: number): number 
     input.targetOffsetX !== undefined
       ? input.targetOffsetX
       : input.targetFraction !== undefined
-        ? halfWidthsAtLane(input.targetFraction)
+        ? steerTarget(input.targetFraction)
         : current
 
   // **Letting go holds the line; it does not return to the centre.** The rail shooter's ship

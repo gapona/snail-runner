@@ -45,8 +45,26 @@ function normalizeV12(raw: Record<string, unknown>): SaveState {
     ? raw.weaponLoadout.filter((id): id is string => typeof id === 'string' && id.length > 0)
     : DEFAULT_SAVE_STATE.weaponLoadout
 
+  const quests = raw.quests
+
   return {
-    v: 12,
+    v: 16,
+    // **Passed through rather than validated here.** The save layer knows a board is an object with
+    // an array in it; what a quest *kind* is, and what a target should currently be, belongs to
+    // `quests.ts` — and `resolveQuestBoard` re-derives every target on the way out, so a board
+    // written before a placer was re-tuned cannot survive as a goal that no longer fits the road.
+    quests:
+      quests && typeof quests === 'object'
+        ? (quests as SaveState['quests'])
+        : { active: [], nextId: 1 },
+    // **Passed through rather than validated, for the quest board's reason exactly.** This layer
+    // knows a suspended run is an object that was stored; whether it is a *run* — whether its
+    // distance is a number, whether its fever phase is a phase, whether it is over — belongs to
+    // `run/suspend.ts`, and `resolveSuspended` refuses anything that is not rather than repairing
+    // one into existence. A snapshot is the one field here where the fallback is `null` and not a
+    // default: there is no default run.
+    suspendedRun:
+      raw.suspendedRun !== null && typeof raw.suspendedRun === 'object' ? raw.suspendedRun : null,
     // Defaults to `false` — a save with no opinion on this is a save from before the tutorial
     // existed *or* a brand new one, and only the migration can tell those apart. See `SaveStateV12`.
     tutorialDone: raw.tutorialDone === true,
@@ -156,6 +174,59 @@ function upgradeV10ToV11(raw: Record<string, unknown>): Record<string, unknown> 
  *
  * It grants nothing else, and the tutorial stays reachable from Settings.
  */
+/**
+ * v12 -> v13: the quest board.
+ *
+ * Writes an **empty** board rather than a dealt one, which is what the normaliser would default —
+ * and unlike `upgradeV11ToV12`, that is the right answer here. A quest board is a thing the player
+ * is *offered*, not a thing they have earned or lost: a returning player is dealt one on their next
+ * visit to the menu exactly as a new player is, and dealing it inside a migration would need the
+ * rules module the save layer deliberately does not import.
+ */
+/**
+ * v13 -> v14: the stage mode.
+ *
+ * **Writes what the normaliser would have defaulted**, which is the ordinary case in this ladder —
+ * unlike `upgradeV11ToV12`, whose whole point was to disagree. A returning player has cleared no
+ * stages because there were none to clear, and starts in endless because that is where they already
+ * were: nothing is taken away and nothing is granted.
+ */
+/**
+ * ⚠ **A step that adds nothing, and the version is kept for exactly that reason.**
+ *
+ * v15 added `wornAccessories` — the items a skin could be worn with — and they were withdrawn
+ * before release. The field is no longer read, so this writes nothing; what the step still does is
+ * let a save written by that build through the ladder rather than sending it to `null`, which is
+ * how a withdrawn feature would otherwise take a player's coins with it. See `SaveStateV15`.
+ */
+/**
+ * v15 -> v16: the stage mode is removed and a run can be suspended instead.
+ *
+ * **It writes the new field's default and deliberately does not delete the two old ones.** The
+ * normaliser does not read `stagesCleared` or `runMode` any more, so they are unknown keys from
+ * here on and cost nothing — and deleting a key is the one migration operation that cannot be
+ * undone if the removal is ever reversed. What a player loses is which stages they had cleared,
+ * which is a record for a mode that no longer exists.
+ *
+ * `suspendedRun` is `null` rather than absent: a returning player has no run in progress, and
+ * "there is nothing to continue" is a value rather than a gap.
+ */
+function upgradeV15ToV16(raw: Record<string, unknown>): Record<string, unknown> {
+  return { ...raw, v: 16, suspendedRun: null }
+}
+
+function upgradeV14ToV15(raw: Record<string, unknown>): Record<string, unknown> {
+  return { ...raw, v: 15 }
+}
+
+function upgradeV13ToV14(raw: Record<string, unknown>): Record<string, unknown> {
+  return { ...raw, v: 14, stagesCleared: [], runMode: 'endless' }
+}
+
+function upgradeV12ToV13(raw: Record<string, unknown>): Record<string, unknown> {
+  return { ...raw, v: 13, quests: { active: [], nextId: 1 } }
+}
+
 function upgradeV11ToV12(raw: Record<string, unknown>): Record<string, unknown> {
   return { ...raw, v: 12, tutorialDone: true }
 }
@@ -358,6 +429,18 @@ export function migrate(raw: unknown): SaveState | null {
       payload = upgradeV11ToV12(payload)
     // eslint-disable-next-line no-fallthrough
     case 12:
+      payload = upgradeV12ToV13(payload)
+    // falls through
+    case 13:
+      payload = upgradeV13ToV14(payload)
+    // falls through
+    case 14:
+      payload = upgradeV14ToV15(payload)
+    // falls through
+    case 15:
+      payload = upgradeV15ToV16(payload)
+    // falls through
+    case 16:
       return normalizeV12(payload)
 
     default:

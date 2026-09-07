@@ -14,7 +14,46 @@
  * coin's warm sand.
  */
 
+import { fromOklab, toOklab } from '../road/color'
 import { THREAT_COLOR } from '../road/themes'
+
+/**
+ * The hue every button face in this kit is built on: the navigation blue.
+ *
+ * **One hue, three weights.** A screen's buttons differing by *colour* reads as three unrelated
+ * controls — reported off the result panel, where a cyan `Again`, a grey `Double coins` and a slate
+ * `Menu` sat in one column and the question was why they were not all the same blue. What tells the
+ * tiers apart is how bright and how saturated they are, which is the same argument `SECONDARY_FACE`
+ * makes for the mode chip drawn over the sky.
+ *
+ * `btnConfirm` is the one deliberate exception and stays green: buy/confirm is a different *kind* of
+ * action rather than a different weight of the same one, and green is the only colour in the
+ * interface that says so.
+ */
+const BTN_FACE = 0x3f9bd8
+
+/**
+ * A face on the button hue, at a stated OKLab lightness and chroma.
+ *
+ * **⚠ The numbers are the face as it is PAINTED, and a button face is opaque.** Worth stating,
+ * because the first attempt at this solved them backwards through an alpha composite over the
+ * plate: `kitButton` really does carry a `fillAlpha` of 0.32 for the tertiary tier and 0.72 for
+ * disabled — and every one of those belongs to the **fallback** drawing, the one a scene gets when
+ * the nine-slice masters have not loaded. The shipped look is `bakeUiSprite`, which paints the face
+ * at full opacity. Solved against the blend, `btnMuted` came out a bright sky blue and drew *louder*
+ * than the tier above it; that was caught by sampling the framebuffer, not by any check.
+ *
+ * This project already records the same failure as *"a check sweeping a blend the renderer had
+ * stopped performing"*. This is that shape from the other end: arithmetic against a blend the
+ * renderer only performs somewhere the player never looks.
+ */
+function onButtonHue(lightness: number, chroma: number): number {
+  const { a, b } = toOklab(BTN_FACE)
+  const base = Math.hypot(a, b)
+  const scale = base > 0 ? chroma / base : 0
+
+  return fromOklab({ L: lightness, a: a * scale, b: b * scale })
+}
 
 export const KIT = {
   /** Plate fill. The sky's own deep navy, so a panel reads as a piece of the same picture. */
@@ -27,6 +66,22 @@ export const KIT = {
   active: 0x7fd8f2,
   /** Currency and rewards. Warm sand — the one warm colour in the kit, and it is not the threat. */
   coin: 0xe8c98a,
+  /** The default button. Navigation, and the most common face on any screen. */
+  btnFace: BTN_FACE,
+  /** Buy, confirm, proceed. The one green in the interface. */
+  btnConfirm: 0x5cb45f,
+  /**
+   * The tertiary tier: present, pressable, and asking for nothing.
+   *
+   * **⚠ It was `0x5a6b80` and read as grey beside a blue button.** The instructive part is that it
+   * was already in the right *hue* — 12.4 degrees off the navigation blue — and its **chroma was
+   * 0.039 against that blue's 0.125**, under a third. A colour with a third of the chroma is not a
+   * quieter member of a family, it is a grey with a bluish cast, which is exactly how it looked.
+   *
+   * So the neutral tiers are solved on the navigation blue's own hue rather than typed as hex, and
+   * what separates them is **lightness and chroma, never hue**.
+   */
+  btnMuted: onButtonHue(0.52, 0.072),
   /**
    * Your own systems are in trouble: shields down to one, the lock counter at its ceiling, the top
    * step.
@@ -44,8 +99,15 @@ export const KIT = {
    * actually uses there is the luminance step, 0.454 against 0.608.
    */
   warning: 0xf2a33c,
-  /** Disabled. Deliberately desaturated, so it can never be mistaken for the threat hue. */
-  disabled: 0x6b7a8a,
+  /**
+   * Disabled.
+   *
+   * **The dimmest of the family and the least saturated, which is the signal.** Colour is what says
+   * a control can be acted on, so a disabled face keeps the hue and gives up most of the chroma: it
+   * plainly belongs to the same blue and is plainly not offering anything. Still deliberately far
+   * from the threat hue, which a near-neutral blue is by construction.
+   */
+  disabled: onButtonHue(0.57, 0.038),
 } as const
 
 /**
@@ -114,4 +176,55 @@ export const BUTTON_GEOMETRY = { padX: 22, padY: 12, radius: 12 } as const
  */
 export function sliderHitHeight(scale: number): number {
   return Math.max(MIN_TOUCH, SLIDER_GEOMETRY.handle * scale * 1.6)
+}
+
+/*
+ * ⚠ `SECONDARY_FACE` / `secondaryFace` used to live here and are deleted.
+ *
+ * They derived a quieter face from the primary — the mode chip's, after it shipped in the kit's
+ * fixed slate and was reported as a control from another screen. The chip is now Play's colour
+ * exactly (the two were reported for not matching), so the derivation had no
+ * caller left, and this project has five separate write-ups of what an authored quantity nothing
+ * reads eventually does. Restore it from history if a *second* secondary control ever needs one;
+ * the rule it encoded — a face beside a themed primary is derived from it, never a fixed colour —
+ * is what is worth keeping, and it is stated on `kitButton`'s own `fill`.
+ */
+
+/**
+ * How much bigger the run's HUD is drawn on a hand-held frame, and where that stops.
+ *
+ * **⚠ Keyed on the frame's SHORT side, which is the half no other scale in this project does.**
+ * `uiScale` keys on width because it is about *fitting* — a wide widget must not overflow a narrow
+ * frame, so it shrinks below its reference. Applied to the HUD that is exactly backwards, and it
+ * shipped that way: the readouts came out at **0.94** of their desktop pixel size on a 375px phone,
+ * reported as the icons being too small on mobile.
+ *
+ * The reason a phone needs *more* pixels is that a CSS pixel is not a size. A 393-wide phone spreads
+ * its frame over about 2.8 inches — roughly 140 CSS px to the inch — where a 1920-wide monitor
+ * spreads it over 23, at 82. The same 26px pip is 4.7mm in the hand and 8mm on the desk, so anything
+ * sized in CSS pixels is close to 40% smaller physically on the device this game ships to.
+ *
+ * The short side rather than the width, because this is about *physical* size and a frame is held in
+ * the hand when its short side is small. On width alone an 844x390 landscape phone is a desktop and
+ * keeps a 1.0 HUD — which is the frame the rule most needs to reach.
+ */
+export const HUD_SCALE = { reference: 480, max: 1.35 } as const
+
+/**
+ * The run HUD's scale at a given viewport. 1 on a desk, up to `HUD_SCALE.max` in the hand.
+ *
+ * Never below 1: the HUD owns four corners and is laid out against them, so it has nothing to
+ * overflow and no reason to shrink. `verify:ui`'s corner sweep measures every HUD box at this scale
+ * rather than at a hand-written column, so the cap is held by the check that already exists.
+ */
+export function hudScale(width: number, height: number): number {
+  const short = Math.min(width, height)
+
+  // **A frame with no size falls back to 1, rather than to the cap.** `reference / 0` is Infinity
+  // and would clamp to `max`, i.e. the biggest HUD in the game on a viewport that does not exist —
+  // and a scene laid out before the ScaleManager has read its parent gets exactly that. The floor
+  // has to be the neutral value, not the loud one.
+  if (!(short > 0)) return 1
+
+  return Math.min(HUD_SCALE.max, Math.max(1, HUD_SCALE.reference / short))
 }

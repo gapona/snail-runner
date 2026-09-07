@@ -149,6 +149,12 @@ export const OBSTACLE_MATERIALS = {
 export const PICKUP_COLORS = {
   fruit: { light: 0xe3b6f5, mid: 0xa964d8, dark: 0x5d2f80 },
   shield: { light: 0x9df2a1, mid: 0x4fc663, dark: 0x1f6b34 },
+  // **⚠ Not the obvious medkit red, and the reason is the reservation.** `THREAT_COLOR` owns the
+  // warm red this object is drawn in everywhere else, and `threat_guard` rotates any reserved pixel
+  // out at build time — a red that stays has to escape on lightness, so it is a deep oxblood
+  // (`L` 0.39 against the threat's 0.648) and it is the *cross* rather than the case. See
+  // `dev-assets/cc0-3d/medkit_render.py`, which measured the inverse and rejected it.
+  heal: { light: 0xf0ece2, mid: 0x8f1d2c, dark: 0x7d1a28 },
   coin: { light: 0xffd35a, mid: 0xf2b526, dark: 0xc07a10 },
 } as const
 

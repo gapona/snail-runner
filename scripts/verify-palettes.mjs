@@ -26,7 +26,8 @@ import { surfaceColour } from '../src/road/paletteColour.ts'
 import { INK_LIGHTNESS, lightnessOf, OBSTACLE_MATERIALS } from '../src/run/artPalette.ts'
 import { OBSTACLE_ART_KEYS, OBSTACLE_RIM } from '../src/run/obstacleArt.ts'
 import { recolour, SNAIL_SKINS } from '../src/run/snailSkins.ts'
-import { paintInkRim, rimWidthPx, SNAIL_RIM } from '../src/run/inkRim.ts'
+import { paintInkRim, rimWidthPx } from '../src/run/inkRim.ts'
+import { paintMascot, roadLuminance } from '../src/run/mascotPixels.ts'
 
 let passed = 0
 const failed = []
@@ -834,27 +835,40 @@ const MASCOT_MIN_HUE_DEGREES = 20
 const MASCOT_MIN_LUMINANCE = 0.15
 
 /**
- * How much of the mascot may merge with a backdrop **that its rim does not already separate it
- * from**.
+ * How much of the mascot may merge with one backdrop before that backdrop counts against it.
  *
- * The interior and the contour answer the same question in different ways, so the check is an
- * `or`: either the mascot's own colour stands off the ground, or the ink edge does it instead.
- * Asserting both would forbid the arrangement the rim was added to make possible — a saturated
- * snail on a bright ground of a similar hue, legible precisely because it is outlined.
+ * **⚠ This used to be half of an `or` and it is now the whole of the measurement, because the
+ * contour is gone.** The mascot wore a two-tone rim for four rounds; it was reported in every one
+ * of them and the fourth report was *remove it entirely, not black, not white, none*. So the rule
+ * this file could assert -- *either the colour stands off the ground or the edge does* -- lost its
+ * second half, and asserting the first half alone would be asserting a promise the code no longer
+ * makes: 16 of the 40 skin-and-backdrop pairs are over this floor today, worst 77%.
+ *
+ * The per-pair share is therefore **printed and not asserted**, exactly as `ACCENT_MIN_SKY_CONTRAST`'s
+ * fallback ratio is. What is asserted is below.
  */
 const MASCOT_MAX_MERGED = 0.1
 
 /**
- * How hard the rim has to work on a backdrop the interior does not answer.
+ * How many of the 35 (skin, theme) pairs may merge with **the road itself**.
  *
- * **A floor on the pair, not on the rim alone.** Ink is near-black, so against a near-black ground
- * it has almost no contrast — on `night` it measures about 1.1:1. That is not a defect and a
- * tighter number would not fix it: the mascot is never themed, so on a dark theme a saturated snail
- * already stands off the ground by its own colour and its interior merge is 6–7%, well under the
- * floor above. The rim is needed on the *bright* backdrops, and against those it is the strongest
- * mark available.
+ * **This is the rule that survives the contour, and the road is the only backdrop that can carry
+ * one.** `ROAD_EDGE` is 0.875, so the verge is reached at full lock and nowhere else; the road is
+ * what the mascot is drawn on for the whole of every run. A skin the colour of the asphalt is lost
+ * for that entire run, which is a different thing from a skin that matches one biome's verge.
+ *
+ * **⚠ A count over the nine grounds was written first and is vacuous — recorded so it is not
+ * written again.** A theme applies *one* hue rotation to all nine biomes, so their grounds stay
+ * spread across the wheel and no single skin hue can be near many of them at once: the control for
+ * that rule — a skin rotated onto a ground's own hue — merged with **2 of 9**, i.e. no worse than
+ * the shipped skins, so the count could not reject the thing it existed to reject. The road can:
+ * one colour, every theme, every second of the run.
+ *
+ * Four pairs are over the floor today — `amber` on `day` and on `ember`, `indigo` on `night` and on
+ * `ice` — each a warm or a cold snail on asphalt of the same temperature. A regression threshold,
+ * measured 2026-09-07 and stated as one.
  */
-const MASCOT_RIM_MIN_CONTRAST = 2
+const MASCOT_MAX_ROAD_PAIRS = 4
 
 /**
  * The slime trail's own two colours, from `SlimeTrail.ts`.
@@ -868,122 +882,218 @@ const SLIME = [0x9fc24a, 0xe8f7a6]
 
 console.log('\nA5 - the mascot separates from everything it is drawn on')
 
-check('every skin separates from every backdrop, by its own colour or by its rim', () => {
+/**
+ * How much brighter than the road the mascot's pad may be.
+ *
+ * A wet green surface in sunlight really is brighter than asphalt, so this is not 1. What it rules
+ * out is the reported frame, where the pad measured **7.3x** the road it was lying on and was the
+ * brightest thing on screen.
+ */
+const PAD_MAX_ROAD_RATIO = 3
+
+check('the pad is told apart from the creature, and it is a third of the render', () => {
+  // **The creature, not the sprite.** The render is a snail standing on a spread of its own foot,
+  // and that pad is most of the sprite's width at the bottom -- so every question of the form "what
+  // colour is the mascot" that reads the whole sprite is mostly a question about its foot. The mask
+  // is what A5 measures the interior through, and what the pad's own light is applied to.
+  //
+  // **⚠ This check used to be about a contour, and there is no longer one.** The mask was added
+  // because the rim traced the pad rather than the creature; the rim was then reported three more
+  // times and removed outright. What the mask is still for is the two things above, so what
+  // survives here is the half that was never about the outline.
+  const png = decodePng(readFileSync('public/assets/snail/snail-0.png'))
+  const theme = themeOf('night')
+  const buffer = Uint8ClampedArray.from(png.data)
+  const pass = paintMascot(buffer, png.width, png.height, SNAIL_SKINS[0], theme)
+  let opaque = 0
+  let creature = 0
+
+  for (let i = 0; i < buffer.length; i += 4) {
+    if (png.data[i + 3] === 0) continue
+    opaque++
+    if (pass.creature[i / 4]) creature++
+  }
+
+  const padShare = 1 - creature / opaque
+
+  assert.ok(padShare > 0.2, `the pad is only ${(padShare * 100).toFixed(0)}% of the sprite, so the mask is finding nothing`)
+  assert.ok(padShare < 0.6, `the mask calls ${(padShare * 100).toFixed(0)}% of the sprite pad, which would be eating the creature`)
+  console.log(`    the pad is ${(padShare * 100).toFixed(0)}% of the render; the creature is the other ${(100 - padShare * 100).toFixed(0)}%`)
+
+  // **Nothing is painted round the creature, and this is what says so.** A silhouette pass over the
+  // buffer the game hands the texture must find the render's own edge unchanged -- so the check is
+  // that `paintMascot` and a hand-run rim disagree, i.e. that the game is not running one.
+  const rimmed = Uint8ClampedArray.from(buffer)
+  const painted = paintInkRim(rimmed, png.width, png.height, rimWidthPx(png.width, png.height, OBSTACLE_RIM), OBSTACLE_RIM)
+  let changed = 0
+
+  for (let i = 0; i < rimmed.length; i += 4) {
+    if (rimmed[i] !== buffer[i] || rimmed[i + 1] !== buffer[i + 1] || rimmed[i + 2] !== buffer[i + 2]) changed++
+  }
+
+  assert.ok(painted > 0, 'the control painted nothing, so it cannot show the mascot is unpainted')
+  assert.ok(changed > painted * 0.5, `only ${changed} of ${painted} rim pixels differ, so the mascot is already outlined`)
+  console.log(`    a rim would repaint ${painted} pixels of the mascot and ${changed} of them are not that colour today`)
+})
+
+check('the pad takes the theme own light, so it stops out-shining the mascot', () => {
+  // **⚠ Reported off a night frame: the pad was the brightest thing in the picture** and pulled the
+  // eye harder than the mascot standing on it, which is the inverse of the one rule this game's
+  // colour is built on. It is ground, so it answers to `groundLight` like every other piece of
+  // ground -- and the creature above it is deliberately untouched, because the snail is the object
+  // a player must never have to search for.
+  const png = decodePng(readFileSync('public/assets/snail/snail-0.png'))
+  const rows = []
+
+  for (const id of THEMES) {
+    const theme = themeOf(id)
+    const buffer = Uint8ClampedArray.from(png.data)
+    const pass = paintMascot(buffer, png.width, png.height, SNAIL_SKINS[0], theme)
+    const road = roadLuminance(theme)
+
+    rows.push({ id, pad: pass.padLuminance, road, ratio: pass.padLuminance / Math.max(road, 1e-4) })
+  }
+
+  console.log('      theme     road L   pad L   pad/road')
+  for (const row of rows) {
+    console.log(`      ${row.id.padEnd(10)}${row.road.toFixed(3).padStart(6)}  ${row.pad.toFixed(3).padStart(6)}  ${row.ratio.toFixed(2).padStart(8)}`)
+  }
+
+  // The pad may be brighter than the road it lies on -- wet grass in sunlight is -- but not by the
+  // margin that made it the subject of the frame instead of the snail.
+  for (const row of rows) {
+    assert.ok(row.ratio < PAD_MAX_ROAD_RATIO, `${row.id}: the pad is ${row.ratio.toFixed(1)}x the road's luminance`)
+  }
+
+  // Shown to reject the arrangement it replaced: with the theme's light taken out, night's pad is
+  // several times its own road and the check has to fail.
+  const unlit = Uint8ClampedArray.from(png.data)
+  const night = themeOf('night')
+  const pass = paintMascot(unlit, png.width, png.height, SNAIL_SKINS[0], { ...night, groundLight: 1 })
+  const ratio = pass.padLuminance / roadLuminance(night)
+
+  assert.ok(
+    ratio >= PAD_MAX_ROAD_RATIO,
+    `an unlit pad is only ${ratio.toFixed(1)}x night's road, so this check would have passed the defect`,
+  )
+  console.log(`    unlit, night's pad is ${ratio.toFixed(1)}x its road -- the frame this was reported from`)
+})
+
+
+/** The mascot's own chromatic pixels for one skin under one theme, through the shipped pass. */
+function skinColours(png, skin, theme) {
+  const buffer = Uint8ClampedArray.from(png.data)
+  const pass = paintMascot(buffer, png.width, png.height, skin, theme)
+  const colours = []
+
+  for (let i = 0; i < buffer.length; i += 4) {
+    if (buffer[i + 3] < 200) continue
+    // **⚠ The pad is excluded.** The render is a snail standing on a spread of its own foot; that
+    // pad is 41% of the sprite and is lit by the theme like every other piece of ground. Counting
+    // its pixels as "the colour of the snail" would read a green pad over green ground as the
+    // mascot merging -- i.e. fail the game for doing the thing the pad's own light was added to do.
+    if (!pass.creature[i / 4]) continue
+
+    const color = (buffer[i] << 16) | (buffer[i + 1] << 8) | buffer[i + 2]
+
+    // The eyes and the specular carry no hue, so they cannot merge with anything *by hue*, and they
+    // are not what "the colour of the snail" means.
+    if (chroma(color) < THREAT_MIN_CHROMA) continue
+
+    colours.push(color)
+  }
+
+  return colours
+}
+
+/** The share of those pixels a glancing eye would read as the backdrop's own colour. */
+function mergedShare(colours, backdrop) {
+  let count = 0
+
+  for (const pixel of colours) {
+    if (hueDistance(pixel, backdrop) < MASCOT_MIN_HUE_DEGREES && Math.abs(relativeLuminance(pixel) - relativeLuminance(backdrop)) < MASCOT_MIN_LUMINANCE) count++
+  }
+
+  return count / colours.length
+}
+
+/**
+ * How many of the nine grounds a skin merges with under one theme, and whether it merges with the
+ * road. Both through the shipped `paintMascot`, in the game's own order -- reimplementing any of it
+ * would let this measure a mascot the game does not draw, which is the reason that pass was moved
+ * out from behind a Phaser import in the first place.
+ */
+function lapMerges(png, skin, theme) {
+  const colours = skinColours(png, skin, theme)
+  const grounds = BIOMES.map((biome) => ({ id: biome.id, share: mergedShare(colours, nearGround(biome, theme)) }))
+  const road = Math.max(mergedShare(colours, nearRoad(theme)), mergedShare(colours, surfaceColour({ base: theme.road[1], family: 'road', fog: theme.fog, sky: theme.sky.bottom, amount: 0 })))
+  const over = grounds.filter((entry) => entry.share > MASCOT_MAX_MERGED)
+
+  return { grounds, road, biomes: over.length, worst: grounds.reduce((a, b) => (b.share > a.share ? b : a)) }
+}
+
+check('no skin is the colour of the road it is drawn on', () => {
   const png = decodePng(readFileSync('public/assets/snail/snail-0.png'))
 
   assert.ok(png.width > 0 && png.height > 0, 'the mascot render has stopped being readable as pixels')
 
-  const rim = rimWidthPx(png.width, png.height)
+  let roadPairs = 0
 
-  assert.ok(rim >= SNAIL_RIM.minPx, `the contour is ${rim}px, under its own floor`)
+  console.log(`    a cell is "biomes merged of 9 / worst share"; * marks a skin that merges with the road itself`)
+  console.log(`      skin      ${THEMES.map((id) => id.slice(0, 7).padEnd(9)).join('')}`)
 
-  /**
-   * The mascot's chromatic pixels for one skin, with the rim already painted.
-   *
-   * **Built through the shipped `recolour` and the shipped `paintInkRim`, in the game's own order.**
-   * Reimplementing either here would let this measure a mascot the game does not draw — the same
-   * reason every colour above goes through `surfaceColour`.
-   */
-  function skinPixels(skin) {
-    const buffer = Uint8ClampedArray.from(png.data)
+  for (const skin of SNAIL_SKINS) {
+    const cells = []
 
-    for (let i = 0; i < buffer.length; i += 4) {
-      if (buffer[i + 3] === 0) continue
+    for (const id of THEMES) {
+      const merges = lapMerges(png, skin, themeOf(id))
+      const onRoad = merges.road > MASCOT_MAX_MERGED
 
-      const turned = recolour((buffer[i] << 16) | (buffer[i + 1] << 8) | buffer[i + 2], skin)
+      if (onRoad) roadPairs++
 
-      buffer[i] = (turned >> 16) & 0xff
-      buffer[i + 1] = (turned >> 8) & 0xff
-      buffer[i + 2] = turned & 0xff
+      cells.push(`${merges.biomes}/9 ${(merges.worst.share * 100).toFixed(0)}%${onRoad ? '*' : ''}`.padEnd(9))
     }
 
-    const painted = paintInkRim(buffer, png.width, png.height, rim)
-    const colours = []
-
-    for (let i = 0; i < buffer.length; i += 4) {
-      if (buffer[i + 3] < 200) continue
-
-      const color = (buffer[i] << 16) | (buffer[i + 1] << 8) | buffer[i + 2]
-
-      // The ink, the eyes and the specular carry no hue, so they cannot merge with anything *by
-      // hue*, and they are not what "the colour of the snail" means. The rim is ink, so this is
-      // also what keeps it out of the interior measurement.
-      if (chroma(color) < THREAT_MIN_CHROMA) continue
-
-      colours.push(color)
-    }
-
-    return { colours, painted }
+    console.log(`      ${skin.id.padEnd(10)}${cells.join('')}`)
   }
 
-  function merged(recoloured, backdrop) {
-    let count = 0
+  console.log(`    ${roadPairs} of ${SNAIL_SKINS.length * THEMES.length} (skin, theme) pairs merge with the road itself, against a ceiling of ${MASCOT_MAX_ROAD_PAIRS}`)
 
-    for (const pixel of recoloured) {
-      if (hueDistance(pixel, backdrop) < MASCOT_MIN_HUE_DEGREES && Math.abs(relativeLuminance(pixel) - relativeLuminance(backdrop)) < MASCOT_MIN_LUMINANCE) count++
-    }
+  // The slime is measured on its own, because it is not a theme colour and no repaint can reach it:
+  // `SlimeTrail.ts` draws in one fixed yellow-green whatever the light. It was the finding that put
+  // a contour on the mascot in the first place, and with the contour gone it is a recorded cost --
+  // `fern` loses over half its silhouette to its own trail, on all seven themes identically.
+  const slime = SNAIL_SKINS.map((skin) => ({
+    id: skin.id,
+    share: Math.max(...SLIME.map((color) => mergedShare(skinColours(png, skin, themeOf(THEMES[0])), color))),
+  }))
 
-    return count / recoloured.length
-  }
+  console.log(`    against its own slime: ${slime.map((entry) => `${entry.id} ${(entry.share * 100).toFixed(0)}%`).join(', ')}`)
 
-  const backdrops = []
+  assert.ok(
+    roadPairs <= MASCOT_MAX_ROAD_PAIRS,
+    `${roadPairs} skins merge with the road they are drawn on, against a ceiling of ${MASCOT_MAX_ROAD_PAIRS}`,
+  )
+
+  // **The control, and it is what gives this check discriminating power on every run.** A skin
+  // painted the asphalt's own hue is exactly the thing the ceiling exists to reject, and it has to
+  // keep being rejected or the ceiling has stopped measuring anything.
+  let controlPairs = 0
 
   for (const id of THEMES) {
     const theme = themeOf(id)
+    const road = toOklab(nearRoad(theme))
+    const hue = (Math.atan2(road.b, road.a) * 180) / Math.PI
+    const camouflage = { ...SNAIL_SKINS[0], id: 'camouflage', shellHue: hue, footHue: hue }
 
-    for (const biome of BIOMES) backdrops.push({ label: id, color: nearGround(biome, theme) })
-  }
-  for (const color of SLIME) backdrops.push({ label: 'slime', color })
-
-  const failures = []
-  const labels = [...THEMES, 'slime']
-
-  console.log(`    ${rim}px two-tone contour on a ${png.width}x${png.height} frame; interior floor ${(MASCOT_MAX_MERGED * 100).toFixed(0)}%, rim floor ${MASCOT_RIM_MIN_CONTRAST}:1`)
-  console.log(`      skin      ${labels.map((id) => id.slice(0, 7).padEnd(8)).join('')}`)
-
-  for (const skin of SNAIL_SKINS) {
-    const { colours, painted } = skinPixels(skin)
-
-    assert.ok(painted > 0, `${skin.id} has no rim at all`)
-
-    const cells = []
-
-    for (const label of labels) {
-      let worst = 0
-      let carried = 99
-
-      for (const backdrop of backdrops.filter((entry) => entry.label === label)) {
-        const share = merged(colours, backdrop.color)
-
-        if (share > worst) worst = share
-        // The rim is reported at its weakest against the backdrops the interior does not answer,
-        // since those are the ones the `or` has to carry.
-        // **The better of the contour's two tones.** They bracket the luminance range on purpose,
-        // so for any backdrop at least one of them is far from it -- which is what makes the
-        // guarantee structural rather than a property of the seven palettes that happen to exist.
-        if (share > MASCOT_MAX_MERGED) {
-          carried = Math.min(
-            carried,
-            Math.max(contrastRatio(SNAIL_RIM.color, backdrop.color), contrastRatio(SNAIL_RIM.innerColor, backdrop.color)),
-          )
-        }
-      }
-
-      cells.push({ share: worst, rim: carried })
-
-      if (worst > MASCOT_MAX_MERGED && carried < MASCOT_RIM_MIN_CONTRAST) {
-        failures.push(`${skin.id} on ${label} (${(worst * 100).toFixed(0)}% merged, rim only ${carried.toFixed(2)}:1)`)
-      }
-    }
-
-    const cell = (entry) => (entry.share > MASCOT_MAX_MERGED ? `${(entry.share * 100).toFixed(0)}%/${entry.rim.toFixed(1)}` : `${(entry.share * 100).toFixed(0)}%`)
-
-    console.log(`      ${skin.id.padEnd(10)}${cells.map((entry) => cell(entry).padEnd(8)).join('')}`)
+    if (lapMerges(png, camouflage, theme).road > MASCOT_MAX_MERGED) controlPairs++
   }
 
-  console.log('      (a cell reading "16%/2.7" is an interior over the floor, carried by a rim at 2.7:1)')
-
-  assert.equal(failures.length, 0, `the mascot disappears into its backdrop: ${failures.join(', ')}`)
+  assert.ok(
+    controlPairs > MASCOT_MAX_ROAD_PAIRS,
+    `a skin painted the asphalt's own hue merges on only ${controlPairs} themes, so this check would pass it`,
+  )
+  console.log(`    the control -- a skin rotated onto each theme's own asphalt hue -- merges on ${controlPairs} of ${THEMES.length} and is rejected`)
 })
 
 if (failed.length > 0) {

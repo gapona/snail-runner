@@ -12,6 +12,7 @@ import {
 } from './Backdrop'
 import { createObstacleTextures, generatedObstacleKeys } from '../run/obstacleArt'
 import { getRoadThemeId, setRoadTheme, THEMES } from './themes'
+import { removeSnailSkinTextures } from '../run/snailArt'
 
 /**
  * Every texture whose pixels are a function of the theme.
@@ -44,7 +45,13 @@ function themedTextureKeys(): string[] {
  * `WorldView.refreshTheme` re-points the palette, clears the pools' cached keys and re-lays the
  * backdrop, immediately after this returns. `RunScene` has no such path and must not be running.
  */
-const TEXTURE_HOLDING_SCENES = ['RunScene']
+// **⚠ Every scene that draws the world, not just the one that used to be the only one.** This was
+// `['RunScene']` and stayed that way through the menu becoming the game's own world and through the
+// garage being added — so the one guard that says "you are swapping pixels somebody is drawing" had
+// been blind to two of the three scenes that draw them. A paused scene is not in `getScenes(true)`,
+// which is what keeps this honest: the shop's own theme switch runs over a *paused* opener by
+// construction, so it is silent, and a switch attempted over a live one is not.
+const TEXTURE_HOLDING_SCENES = ['RunScene', 'MainMenu', 'Garage']
 
 /**
  * Materialises a theme: drops the previous theme's textures and generates the new ones.
@@ -89,6 +96,14 @@ export function applyTheme(scene: Phaser.Scene, id: string): boolean {
   removeVignetteTexture(scene, previous)
   removeSunTexture(scene, previous)
   removeCloudTexture(scene, previous)
+  // **⚠ The mascot is themed now, and it is the one themed texture that is not in
+  // `themedTextureKeys()`.** Its pad answers to the theme's own ground light and its contour is
+  // chosen against the road it is actually drawn over, so a skin's six frames belong to a
+  // (skin, theme) pair rather than to a skin — see `snailArt.ts`. Removed by the theme that made
+  // them rather than by key list, because which skins were built is the shop's business.
+  removeSnailSkinTextures(scene, previous)
+  // The worn layer for the same reason and on the same beat: its contour is chosen against the road
+  // `PlayerView.refreshTheme` puts both back.
 
   createDecorTextures(scene)
   createObstacleTextures(scene)

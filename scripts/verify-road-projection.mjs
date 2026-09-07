@@ -2021,6 +2021,24 @@ check('every point of the run circuit leaves long enough to read, and the check 
     `the road is visible for only ${run.worst.toFixed(1)}s at segment ${run.worstAt}, under the ${floor.toFixed(1)}s floor`,
   )
 
+  // **⚠ The menu's circuit is FLAT, and it is the one circuit that has to be.** The front screen's
+  // whole interface is composed around one world object -- the mascot -- and on a hill the ground at
+  // its own distance rises and falls with the road, so the thing everything is measured against does
+  // not hold still. Measured over 900 frames at 368x655 before the hills came out: the feet swung
+  // **404..522, a 118px excursion on a 655px frame**, far enough to put the creature 56px inside the
+  // Play button at one end and its own head 89px above the horizon at the other. Reported as the
+  // snail hiding behind the button, which is one instant of that swing.
+  //
+  // The run's own circuit is the control, and it has to keep failing this or the check has stopped
+  // measuring the menu.
+  const flatness = (track) => track.reduce((most, seg) => Math.max(most, Math.abs(seg.p2.y - seg.p1.y)), 0)
+  const menuRise = flatness(buildMenuCircuit())
+  const runRise = flatness(buildRunCircuit())
+
+  assert.equal(menuRise, 0, `the menu's road climbs ${menuRise.toFixed(1)} units a segment, so the mascot rides it`)
+  assert.ok(runRise > 0, 'the run circuit is flat too, so this check cannot tell a flat road from a hilly one')
+  console.log(`    menu circuit rises 0 units a segment against the run's ${runRise.toFixed(1)}`)
+
   // The menu's circuit carries nothing, but the same geometry rule applies to whether anything
   // standing on it would ever be seen -- so it is measured rather than assumed.
   const menu = sweepEngagement(buildMenuCircuit(), options)

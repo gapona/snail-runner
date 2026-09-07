@@ -1,127 +1,70 @@
 /**
  * A constant two-tone contour: an edge that does not answer to what is behind it.
  *
- * Worn by the mascot (`SNAIL_RIM`) and by every obstacle (`OBSTACLE_RIM`). **One module rather than
- * two, because it is one rule** — and a rule kept in two places is a rule that will be applied in
- * one of them. The colours differ per subject; the pass, the inward direction and the bracketing
- * argument do not.
+ * **Worn by every obstacle (`OBSTACLE_RIM`), and by nothing else.** It was written for the mascot
+ * and shared with the obstacles on the argument that it is one rule and a rule kept in two places
+ * is a rule that will be applied in one of them. That is still why it is a module rather than a
+ * block inside `obstacleArt.ts`; the mascot no longer wears one. See below.
  *
  * **Rule: this file never imports `phaser`** — it is a pass over a pixel buffer, covered by
  * `npm run verify:palettes`.
  *
+ * ## ⚠ The mascot's contour is gone, and the argument for it was good every time
+ *
+ * The snail wore this for four rounds and it was reported in every one of them: it traced the
+ * *pad* rather than the creature, then its pale band read as a white ring, then its tones were
+ * chosen against a measured backdrop instead of bracketed — and then, on the frame, *remove it
+ * entirely, not black, not white, none*. Each fix answered the report it was given and left the
+ * line round the creature in place, and the line round the creature was the report.
+ *
+ * **Why it does not follow that the obstacles should lose theirs.** The two subjects are answering
+ * different questions. An obstacle has to separate from a ground that changes nine times a lap
+ * under seven lights, at the far end of a reaction distance, where it is a few dozen pixels tall
+ * and its own colour has been taken away by the haze — and it is a made object among natural ones,
+ * so an edge is part of what it *is*. The mascot is the one saturated thing in the frame, drawn
+ * large, in the middle, with the player's eye already on it. It never needed the edge to be found;
+ * what the edge did was change what it looked like.
+ *
  * ## Why a rim rather than a repaint
  *
- * The skin-by-theme sweep was built to answer "does the snail drown in the active theme". It does,
- * a little — and the dominant term turned out to be somewhere no palette can reach. `SlimeTrail.ts`
- * draws in a fixed yellow-green that no theme tints, so `fern` loses **36% of its silhouette to its
- * own trail on every one of the seven themes**, and `amber` 16%. Repainting all seven palettes
- * would not move either number.
+ * There is no colour left to reserve for obstacles: swept over every non-obstacle surface in the
+ * game, every hue sector with usable chroma is occupied, the most isolated colour in sRGB is a
+ * saturated magenta — and saturation in this game means *come and get it*, so a magenta boulder
+ * reads as a reward. A contour answers every ground at once, including the ground of a theme that
+ * has not been invented yet, where a colour rule is a constraint every future theme has to be
+ * checked against.
  *
- * A rim answers both backdrops at once, and it answers the ground of a theme that has not been
- * invented yet. That is the whole argument for it over a colour rule: a rule of the form "the
- * mascot's hue is excluded from the theme's palette" is a constraint every future theme has to be
- * checked against and every future skin re-checked across, i.e. a product of two growing sets. A
- * contour is one property of one object.
+ * ## It is drawn INWARD, and that is what keeps the drawn box honest
  *
- * ## It is drawn INWARD, and that is what keeps the collision box honest
- *
- * The drawn box *is* the collision box — see `PLAYER_WIDTH`, and the pancake bug its docstring
- * records. `build-sprites.py` trims each frame to its own alpha box, so the mascot already touches
- * the canvas edges and there is no margin to grow into; a rim painted outside the silhouette would
- * be clipped on some frames and not others, and where it was not clipped it would enlarge the
- * drawn box against a collision box that had not moved.
+ * `build-sprites.py` trims each frame to its own alpha box, so a subject already touches the canvas
+ * edges and there is no margin to grow into; a rim painted outside the silhouette would be clipped
+ * on some frames and not others, and where it was not clipped it would enlarge the drawn box — and
+ * for anything in this game the drawn box is the collision box.
  *
  * So the rim is the outermost band *of the existing silhouette*, repainted. Alpha is untouched, the
- * box is untouched, `verify:mattes` measures the same shape it always did, and what the rim costs
- * is a couple of pixels of the mascot's own edge — which is where its colour was least legible
- * anyway.
+ * box is untouched, and `verify:mattes` measures the same shape it always did.
  *
  * ## Two tones, because one cannot bracket every ground
  *
- * It shipped as ink alone first, on the argument that ink is what this art style is already drawn
- * with — every prop, every critter and the mascot itself carry a black contour — so thickening that
- * contour adds no new visual idea to the frame. That argument is still right and is why the
- * *outermost* pixel is ink.
- *
- * **It is not sufficient, and the check found the case rather than an eye.** A near-black contour
- * has almost no contrast against a near-black ground: `rose` on `ice`'s darkest biome measured 12%
- * of its interior merged with a rim of **1.49:1**, i.e. body and outline both sitting in the
- * ground's own luminance. No single tone can answer that — whatever it is, some ground is that
- * bright or that dark. The pale band inside the ink one brackets the range instead, so for any
- * backdrop at least one of the two is far from it, and the guarantee stops depending on which seven
- * palettes happen to exist.
- *
- * **The pale band is INSIDE, which is the difference from the halo this project already shipped
- * once.** The pickups' bright rim was painted *outside* the silhouette and was reported on sight as
- * "a white background around the icons"; here the mascot's outer edge is still ink and the pale
- * band reads as the lit edge of a rounded body, which is what the rest of this art draws by hand.
- *
- * **⚠ It has not been looked at on a frame.** Everything above is measured, and this project's
- * standing rule is that a contrast device is judged on a frame rather than on the argument for it —
- * paid for three times on one screen already. The numbers say the contour separates; whether the
- * pale band reads as rim light or as a scratch is the open question.
+ * A near-black contour has almost no contrast against a near-black ground, and a pale one has none
+ * against a pale one; whatever single tone is chosen, some biome under some theme is that
+ * brightness. The pair brackets the range instead, so for any backdrop at least one of the two is
+ * far from it, and the guarantee stops depending on which seven palettes happen to exist. Over all
+ * 693 surfaces the weakest an obstacle's contour ever gets is 3.06:1.
  */
-
-/**
- * The contour's colour and weight.
- *
- * **`widthFraction` is a share of the canvas's geometric mean, never of its width.** That is this
- * project's standing rule for ink weight, paid for twice: a width-derived outline put a 5.6px ring
- * on a 56px-tall obstacle — a sixth of its height — and, from the other direction, an ink weight
- * set in supersample pixels survived two downscales and shipped a prop with no visible contour at
- * all. `sqrt(width * height)` tracks the shape rather than one of its axes.
- *
- * The colour is the same `26, 28, 26` the rest of the art is outlined in and deliberately not pure
- * black: `verify:mattes`' border-flood rule is written against that value.
- */
-export const SNAIL_RIM = {
-  widthFraction: 0.016,
-  /** Never thinner than this, or the contour disappears at the size a phone draws the mascot. */
-  minPx: 2,
-  color: 0x1a1c1a,
-  /**
-   * The pale band immediately inside the ink one.
-   *
-   * **⚠ Ink alone cannot carry the guarantee, and the check found where.** A near-black contour has
-   * almost no contrast against a near-black ground: `rose` on `ice`'s darkest biome measured 12% of
-   * its interior merged with a rim of **1.49:1**, i.e. both the body and its outline sitting in the
-   * ground's own luminance. No single tone can answer that — whatever it is, some ground is that
-   * bright or that dark.
-   *
-   * Two bracket it instead. Ink and this are 0.01 and 0.63 relative luminance, so for *any*
-   * backdrop at least one of them is far away, and the contour's separation stops being a property
-   * of the palettes at all.
-   *
-   * **It is INSIDE the ink band, and that is what keeps it from being the halo this project has
-   * already shipped once.** The pickups' bright rim was painted outside the silhouette and was
-   * reported on sight as "a white background around the icons"; here the outermost pixel of the
-   * mascot is still ink, and the pale band is read as the lit edge of a rounded body — which is
-   * what the rest of this art already draws by hand.
-   */
-  innerColor: 0xd8e0d4,
-  /** Share of the contour given to the pale band. The outer ink band keeps the rest. */
-  innerShare: 0.4,
-} as const
 
 /** The contour's width in pixels, for a frame of this size. */
-export function rimWidthPx(width: number, height: number, spec: { widthFraction: number; minPx: number } = SNAIL_RIM): number {
+export function rimWidthPx(width: number, height: number, spec: { widthFraction: number; minPx: number }): number {
   return Math.max(spec.minPx, Math.round(Math.sqrt(width * height) * spec.widthFraction))
 }
 
 /**
- * Repaints the outermost `rim` pixels of the silhouette as the two-tone contour, in place.
- *
- * `pixels` is RGBA, row-major, `width * height * 4` long — the shape `CanvasTexture.getData`
- * returns. Returns how many pixels were repainted, which is what lets a check assert the contour
- * exists rather than trust that it does.
- *
- * A pixel is on the rim when it is opaque and some pixel within `rim` of it is not, and which band
- * it lands in is its distance to the nearest transparent pixel. The test is on **alpha alone**, so
- * it is identical for every skin — the recolour rotates hue and cannot move a silhouette, which is
- * what makes the contour a property of the mascot rather than of the skin.
+ * A pixel is on the rim when it is opaque and some pixel within `rim` of it is not, and which of
+ * the two bands it lands in is its distance to the nearest transparent pixel. `pixels` is RGBA,
+ * row-major, `width * height * 4` long — the shape `CanvasTexture.getData` returns.
  *
  * Euclidean rather than Chebyshev distance: a square neighbourhood puts a visibly thicker contour
- * on the diagonals, and on a shape made almost entirely of curves that reads as a lumpy edge.
+ * on the diagonals, and on a shape made largely of curves that reads as a lumpy edge.
  */
 export interface RimTones {
   color: number
@@ -129,17 +72,31 @@ export interface RimTones {
   innerShare: number
 }
 
+/**
+ * Repaints the outermost `rim` pixels of the silhouette as the two-tone contour, in place.
+ *
+ * Returns how many pixels were repainted, which is what lets a check assert the contour exists
+ * rather than trust that it does.
+ *
+ * **⚠ Everything that made this a per-subject decision went with the mascot's contour**, and it is
+ * recorded rather than left behind: a `subject` mask (the mascot's alpha is mostly its own foot, so
+ * its contour had to be told what the creature was), a `behind` pair of measured luminances with a
+ * `chooseRimTone` that picked one of the two bands per side, and a `retone` mode for supplied art
+ * that already carried an outline. The one caller left passes none of them, and this project has
+ * five separate write-ups of what an authored quantity nothing reads eventually does. Any of them
+ * is recoverable from git if a second subject ever needs it.
+ */
 export function paintInkRim(
   pixels: Uint8ClampedArray | Uint8Array,
   width: number,
   height: number,
   rim: number,
-  tones: RimTones = SNAIL_RIM,
+  tones: RimTones,
 ): number {
   if (rim <= 0) return 0
 
   const opaque = (x: number, y: number) => {
-    // Outside the canvas counts as transparent: the trim leaves the mascot touching the frame, so
+    // Outside the canvas counts as transparent: the trim leaves a subject touching the frame, so
     // treating the outside as opaque would leave those edges with no contour at all.
     if (x < 0 || y < 0 || x >= width || y >= height) return false
 
@@ -160,8 +117,9 @@ export function paintInkRim(
   // this pass had just created, and the contour would creep inward by its own width on every row.
   //
   // 1 is the outer ink band, 2 the pale one inside it. The distance is measured once, in the same
-  // sweep, so the two bands cannot disagree about where the edge is.
-  const inner = Math.max(1, Math.round(rim * tones.innerShare))
+  // sweep, so the two bands cannot disagree about where the edge is. `innerShare` of 0 means one
+  // band, and `Math.max(1, ...)` on the inner one would force a pixel of it back on at every width.
+  const inner = tones.innerShare <= 0 ? 0 : Math.max(1, Math.round(rim * tones.innerShare))
   const outer = Math.max(1, rim - inner)
   const mark = new Uint8Array(width * height)
   let painted = 0
@@ -177,8 +135,9 @@ export function paintInkRim(
 
         const dx = offsets[i]
         const dy = offsets[i + 1]
+        const distance = Math.sqrt(dx * dx + dy * dy)
 
-        nearest = Math.min(nearest, Math.sqrt(dx * dx + dy * dy))
+        if (distance < nearest) nearest = distance
       }
 
       if (nearest === Infinity) continue

@@ -1,6 +1,6 @@
 import { DEFAULT_MUSIC_VOLUME, DEFAULT_SOUND_VOLUME } from '../audio/volume'
 
-export const SAVE_SCHEMA_VERSION = 12 as const
+export const SAVE_SCHEMA_VERSION = 16 as const
 
 export interface SaveSettings {
   /**
@@ -125,7 +125,82 @@ export interface SaveStateV12 extends Omit<SaveStateV11, 'v'> {
   tutorialDone: boolean
 }
 
-export type SaveState = SaveStateV12
+export interface SaveStateV13 extends Omit<SaveStateV12, 'v'> {
+  v: 13
+  /**
+   * The quest board: what this session is being asked to go and do.
+   *
+   * **Stored as data rather than as ids into a table**, because a quest carries live progress and
+   * the table it came from can be re-tuned under it. `resolveQuestBoard` repairs whatever comes
+   * back — re-deriving every target from what a lap currently offers — so a save written before a
+   * placer changed cannot hold a goal that no longer matches the road.
+   */
+  quests: QuestBoardSave
+}
+
+/** The board's shape on disk. Deliberately plain: `resolveQuestBoard` is what validates it. */
+export interface QuestBoardSave {
+  active: { id: number; kind: string; target: number; progress: number; claimed: boolean }[]
+  nextId: number
+}
+
+export interface SaveStateV14 extends Omit<SaveStateV13, 'v'> {
+  v: 14
+  /**
+   * Which stages have been cleared, as a list of ids.
+   *
+   * A list rather than a count, and `unlockedStages` reads it as a **chain** — a hand-edited save
+   * holding only the last id unlocks one stage, not all five. Same rule, and the same reason, as
+   * the rail shooter's `cleared`.
+   */
+  stagesCleared: string[]
+  /**
+   * What the next run is: `'endless'`, or a stage id.
+   *
+   * **A choice, and therefore a save field.** The alternative — always starting endless and making
+   * the player re-pick a stage every time — would make the mode a thing they set rather than a
+   * thing they are in. `resolveMode` repairs a value naming a stage that is not open.
+   */
+  runMode: string
+}
+
+/**
+ * ⚠ **A version with no field of its own, because the one it added was withdrawn.**
+ *
+ * v15 was `wornAccessories`: five items a skin could be worn with — a crown, a cap, a helmet,
+ * goggles, a jetpack — reported on sight as looking poor on the creature and removed whole. The
+ * number is **spent rather than reused**: a save written by that build is still read (its extra
+ * field is simply not looked at, exactly as every unknown key is), and reusing 15 for a different
+ * meaning later would make two incompatible payloads claim the same schema.
+ */
+export interface SaveStateV15 extends Omit<SaveStateV14, 'v'> {
+  v: 15
+}
+
+/**
+ * The stage mode is gone and a run can be put down instead.
+ *
+ * **⚠ Two fields are dropped and one is added, and dropping is the unusual half.** Every version
+ * before this only ever added: an unknown key costs nothing, so the cheap thing is to leave it.
+ * These two are removed from the *type* rather than from the payload — `stagesCleared` and
+ * `runMode` are simply no longer read, so an older save still loads and its two extra keys are
+ * ignored exactly as any other unknown key is. What that buys is that nothing can go on reading
+ * them by accident, which is how a field ends up meaning one thing to the code and another to the
+ * player.
+ *
+ * `suspendedRun` is the first save field in this game that is a whole simulation state rather than
+ * an id or a count. It is typed `unknown` here on purpose: the save layer knows it is *something*
+ * that was stored, and `resolveSuspended` in `run/suspend.ts` is what decides whether it is a run —
+ * the same split `selectedTheme`, `selectedShip` and the quest board are all under, and the reason
+ * is the same one, that this layer must not import the rules module.
+ */
+export interface SaveStateV16 extends Omit<SaveStateV15, 'v' | 'stagesCleared' | 'runMode'> {
+  v: 16
+  /** A run the player left in the middle of, or `null`. See `run/suspend.ts`. */
+  suspendedRun: unknown
+}
+
+export type SaveState = SaveStateV16
 
 /**
  * The `selectedTheme` value meaning "whatever the level says".
@@ -180,6 +255,13 @@ export const DEFAULT_SNAIL_ID = 'amber'
 
 export const DEFAULT_SAVE_STATE: SaveState = {
   v: SAVE_SCHEMA_VERSION,
+  // Empty rather than a dealt board: dealing needs a seed and a rules module the save layer must
+  // not import, so `resolveQuestBoard` fills it on the way out. That is also what makes an upgraded
+  // save and a fresh one take the same path.
+  quests: { active: [], nextId: 1 },
+  // Nothing to continue: a new save has no run in progress, and "there is nothing to continue" is
+  // a value rather than a gap — see `SaveStateV16`.
+  suspendedRun: null,
   tutorialDone: false,
   bestScore: 0,
   bestWave: 0,
@@ -188,6 +270,7 @@ export const DEFAULT_SAVE_STATE: SaveState = {
   selectedWeapon: DEFAULT_WEAPON_ID,
   selectedShip: DEFAULT_SHIP_ID_VALUE,
   selectedSnail: DEFAULT_SNAIL_ID,
+  // Nothing worn. A new player owns the base colour and no items, which is what the two tiers mean.
   weaponLoadout: [DEFAULT_WEAPON_ID],
   coins: 0,
   purchases: [],

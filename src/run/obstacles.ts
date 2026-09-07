@@ -37,6 +37,7 @@ import {
   PLAYER_HALF_WIDTHS,
   PLAYER_WIDTH,
   REACTION_MS,
+  REACHABLE_EDGE,
   ROAD_EDGE,
   type ObstacleKind,
 } from './constants'
@@ -91,6 +92,21 @@ export interface Body {
  * grounded snail cannot — a hitbox that shrinks while the player is mid-air is far harder to read
  * than one that stays the size of the creature. The vertical extent is the half the spin genuinely
  * breaks, because the whole question a barrier asks is how high you are.
+ *
+ * ## ⚠ The tumble turns about the body's CENTRE, and turning it about the feet cost the ramp
+ *
+ * Reported: a tall barrier should be clearable off a ramp. It was not, and the reason is here
+ * rather than in `ramp.ts`. `PlayerView` used to spin the sprite about its bottom-centre origin —
+ * the point the projection puts on the ground — so the body swung through an arc **310 units below
+ * its own feet**, and at half a turn it hung entirely below them. The collision agreed with the
+ * drawing, which was the whole point of adding the rotation, and both were wrong about what a
+ * tumbling object does: a thrown thing turns about its centre of mass, not about the end of it.
+ *
+ * Measured over a real ramp flight against `blocking` (802 units tall): the feet are above it for
+ * **57.7%** of the flight and the foot-pivoted box cleared it for **12.7%** — so the snail was
+ * drawn a body's height over the barrier and hit it anyway. About the centre the worst drop below
+ * the feet is 139 units instead of 310, and **49.3%** of the flight clears. `PlayerView` pivots
+ * the sprite the same way, so drawn and hit still cannot disagree.
  */
 export function bodyBand(body: Body): { low: number; high: number } {
   const spin = body.spinDegrees ?? 0
@@ -98,18 +114,13 @@ export function bodyBand(body: Body): { low: number; high: number } {
   if (spin === 0) return { low: body.y, high: body.y + PLAYER_BODY_H }
 
   const radians = (spin * Math.PI) / 180
-  const sin = Math.sin(radians)
-  const cos = Math.cos(radians)
-  // The four corners of the drawn rectangle about its bottom-centre origin, as heights. Unrolled
-  // rather than looped over an array: this runs per obstacle per frame, and the frame it matters on
-  // is the busiest one.
-  const halfWidth = PLAYER_WIDTH / 2
-  const foot = halfWidth * sin
-  const crown = PLAYER_BODY_H * cos
-  const lo = Math.min(-foot, foot, crown - foot, crown + foot)
-  const hi = Math.max(-foot, foot, crown - foot, crown + foot)
+  // The half-extent of a rectangle turned about its own centre, which is one expression rather than
+  // four corners: a `w x h` box at angle t is `|w sin t| + |h cos t|` tall. This runs per obstacle
+  // per frame and the frame it matters on is the busiest one.
+  const half = (Math.abs(PLAYER_WIDTH * Math.sin(radians)) + Math.abs(PLAYER_BODY_H * Math.cos(radians))) / 2
+  const centre = body.y + PLAYER_BODY_H / 2
 
-  return { low: body.y + lo, high: body.y + hi }
+  return { low: centre - half, high: centre + half }
 }
 
 /** Builds an obstacle, taking its band from its kind. */
@@ -179,14 +190,27 @@ const LINE_SAMPLES = 81
 function sampleOffsets(): number[] {
   const offsets: number[] = []
 
+  // **⚠ `REACHABLE_EDGE`, not `ROAD_EDGE`, and the difference is what makes a proof a proof.** These
+  // are the offsets `provePassable` certifies a row at, so they have to be offsets the player can
+  // actually *steer* to — a line through the last sliver of asphalt is not a line if a finger at the
+  // edge of the frame cannot ask for it. It was `ROAD_EDGE` and was correct by accident: the reach
+  // used to be 1.1x the asphalt, so sampling the asphalt was conservative. See
+  // `STEER_REACH_MARGIN`, which crossed 1 to buy the mascot its size.
   for (let i = 0; i < LINE_SAMPLES; i++) {
-    offsets.push(-ROAD_EDGE + (2 * ROAD_EDGE * i) / (LINE_SAMPLES - 1))
+    offsets.push(-REACHABLE_EDGE + (2 * REACHABLE_EDGE * i) / (LINE_SAMPLES - 1))
   }
 
   return offsets
 }
 
-const OFFSETS = sampleOffsets()
+/**
+ * The offsets `passableLine` certifies a row at, exported so a check can read the array the proof
+ * actually uses rather than rebuild it — the difference between measuring the rule and measuring a
+ * copy of it. See `sampleOffsets` for why it spans the *reachable* edge.
+ */
+export const PASSABILITY_OFFSETS: readonly number[] = sampleOffsets()
+
+const OFFSETS = PASSABILITY_OFFSETS
 
 export interface Line {
   offsetX: number
@@ -429,15 +453,49 @@ function drawRow(options: PlacementOptions, z: number, nextId: () => number): Ob
       // Kept fully on the road: an obstacle hanging off the verge is invisible *and* free, which
       // reads as the game having forgotten to place it.
       const reach = Math.max(0, ROAD_EDGE - halfWidths)
-      const offsetX = -reach + rng() * reach * 2
+      let placed = false
 
-      row.push(createObstacle({ id: nextId(), z, offsetX, halfWidths, kind }))
+      // ⚠ Redrawn until it clears everything already in the row. Nothing checked this before, and
+      // `passableLine` cannot: it asks whether a line exists THROUGH the row, which is just as true
+      // of two obstacles standing inside each other. Measured on the shipped placer, 34% of rows
+      // carried an overlapping pair and the worst had one obstacle 120% inside another -- reported
+      // as a tall texture and a low one stuck together.
+      for (let tries = 0; tries < SLOT_ATTEMPTS && !placed; tries++) {
+        const offsetX = -reach + rng() * reach * 2
+
+        if (row.some((other) => !slotClears(offsetX, halfWidths, other))) continue
+
+        row.push(createObstacle({ id: nextId(), z, offsetX, halfWidths, kind }))
+        placed = true
+      }
     }
 
-    if (passableLine(row)) return row
+    if (row.length > 0 && passableLine(row)) return row
   }
 
   return []
+}
+
+/**
+ * How much daylight two obstacles in one row must leave between them, in road half-widths.
+ *
+ * **Derived, and the derivation is the rule: a row is either edge to edge or wide enough to drive
+ * through.** A wall is built edge to edge on purpose (`drawWall`), and its own note says a wall with
+ * a hair-width seam is one the player finds once by accident and never again. Anything *between*
+ * those two is exactly that seam — a gap that looks like a way through and is not — so the smallest
+ * legal gap is the one the mascot actually fits in, which is its own full width.
+ *
+ * It is `PLAYER_HALF_WIDTHS * 2` rather than a number, so it follows the mascot: the round that
+ * grew the snail 261 -> 340 -> 310 would otherwise have quietly turned honest gaps into seams.
+ */
+const ROW_CLEARANCE = PLAYER_HALF_WIDTHS * 2
+
+/** How many offsets one obstacle may be offered before the row simply carries one fewer. */
+const SLOT_ATTEMPTS = 8
+
+/** Whether a candidate leaves `ROW_CLEARANCE` beside something already placed. */
+function slotClears(offsetX: number, halfWidths: number, other: Obstacle): boolean {
+  return Math.abs(offsetX - other.offsetX) >= halfWidths + other.halfWidths + ROW_CLEARANCE
 }
 
 function clamp01(value: number): number {
