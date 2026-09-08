@@ -43,6 +43,24 @@
  */
 export const QUEST_BAR_SEGMENTS = 8
 
+/**
+ * How many segments *this* quest's track is cut into.
+ *
+ * **⚠ `QUEST_BAR_SEGMENTS` is a ceiling, not the answer, and shipping it as the answer drew eight
+ * empty boxes for a target of two.** Reported by pointing at the board: *"the tracks take a heap of
+ * room, but 0/2?"* — and that is the honest reading of eight sockets beside a counter that says the
+ * whole quest is two of something. The player counts the sockets, gets eight, and the number beside
+ * them disagrees.
+ *
+ * The ceiling's own reason is unchanged and is why this is a `min` rather than the target: *a
+ * target of 14 drawn as 14 segments is a 3px block on a phone*, which is a hatched line rather than
+ * a readout. So a small target gets a segment each — where the track then says exactly what the
+ * counter says — and a large one is still cut into eight.
+ */
+export function questBarSegments(target: number): number {
+  return Math.max(1, Math.min(QUEST_BAR_SEGMENTS, Math.floor(target)))
+}
+
 export const QUEST_ROW = {
   /** Row height and the gap under it, unscaled. */
   height: 30,

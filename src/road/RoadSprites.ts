@@ -80,6 +80,8 @@ export class RoadSprites {
    * keeps painting the light of a theme the player has left.
    */
   private readonly biomeTints: number[] = BIOMES.map(() => 0xffffff)
+  /** The theme `biomeTints` was last built from, by identity. `null` until the first render. */
+  private tintedTheme: ReturnType<typeof getRoadTheme> | null = null
 
   constructor(scene: Phaser.Scene, poolSize: number, textures: readonly DecorTexture[]) {
     if (textures.length === 0) {
@@ -121,11 +123,21 @@ export class RoadSprites {
     // whole object, and a captured value would keep painting the previous theme's light.
     const theme = getRoadTheme()
 
-    for (const [index, biome] of BIOMES.entries()) {
-      // The theme lights the prop and rotates it; the biome keeps the hue relationships that make
-      // it a place. A plain multiply did both jobs with one operation and lost the second — see
-      // `themedProp`.
-      this.biomeTints[index] = themedProp(biome.decorTint, theme.decorTint, theme.propChroma, theme.propHue)
+    // **⚠ Rebuilt when the theme object changes, not on every frame.** `themedProp` is two
+    // `treatColour` calls, and each is an OKLab round trip — three cube roots out and three cubes
+    // back, plus two matrix multiplies — so this was eighteen of them a frame to recompute nine
+    // colours from constants that only move when somebody buys a theme. The identity check is what
+    // keeps the getter's own guarantee intact: `applyTheme` replaces the whole object, so a new
+    // theme can never be missed, and nothing mutates one in place.
+    if (this.tintedTheme !== theme) {
+      this.tintedTheme = theme
+
+      for (const [index, biome] of BIOMES.entries()) {
+        // The theme lights the prop and rotates it; the biome keeps the hue relationships that make
+        // it a place. A plain multiply did both jobs with one operation and lost the second — see
+        // `themedProp`.
+        this.biomeTints[index] = themedProp(biome.decorTint, theme.decorTint, theme.propChroma, theme.propHue)
+      }
     }
 
     for (let n = 0; n < DRAW_DISTANCE; n++) {

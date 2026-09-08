@@ -40,6 +40,7 @@ import {
 import { groundPointInto, type GroundPoint } from './groundProjection'
 import { distanceIndexOf, WORLD_LAYER, worldDepth } from './worldDepth'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowClipFade, shadowScale } from './shadows'
+import { createShadow } from './shadowArt'
 
 /**
  * How many bugs may be drawn at once.
@@ -75,7 +76,7 @@ interface SlotState {
    * the same order every frame is a desync waiting to happen, and its symptom is a shadow with no
    * object.
    */
-  shadow: Phaser.GameObjects.Ellipse
+  shadow: Phaser.GameObjects.Image
   key: string
   cropped: boolean
 }
@@ -140,10 +141,11 @@ export class CritterSprites {
         Phaser.GameObjects.Image,
         Phaser.GameObjects.Image,
       ],
-      shadow: scene.add
-        .ellipse(0, 0, 1, 1, 0x000000)
-        .setBlendMode(Phaser.BlendModes.MULTIPLY)
-        .setVisible(false),
+      // An `Image` on the shared ellipse texture — see `shadowArt.ts`. This is the fourth pool
+      // that was resizing an `Ellipse` every frame, and the one that pays most per mark: a critter
+      // is the only thing in the frame moving under its own power, so its shadow's size changes on
+      // every frame of every crossing rather than only while something is airborne.
+      shadow: createShadow(scene),
       key: initialKey,
       cropped: false,
     }))
@@ -396,7 +398,7 @@ export class CritterSprites {
     if (shadowRect && clipped > 0) {
       slot.shadow.setVisible(true)
       slot.shadow.setPosition(shadowRect.x, shadowRect.y)
-      slot.shadow.setSize(shadowRect.w * SHADOW_FOOTPRINT.width * scale, markHeight)
+      slot.shadow.setDisplaySize(shadowRect.w * SHADOW_FOOTPRINT.width * scale, markHeight)
       slot.shadow.setAlpha(shadowAlpha(height) * SHADOW_DARKEN * clipped)
       slot.shadow.setDepth(worldDepth(distanceIndex, WORLD_LAYER.shadow))
     } else {

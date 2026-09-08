@@ -7,6 +7,7 @@ import { createScreenPoint, wrapZ } from '../road/project'
 import { groundPointInto } from './groundProjection'
 import { distanceIndexOf, WORLD_LAYER, worldDepth } from './worldDepth'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowScale } from './shadows'
+import { createShadow } from './shadowArt'
 import { spinAngle } from './ramp'
 import { MASCOT_ASPECT, PLAYER_BODY_H, PLAYER_WIDTH, PLAYER_Z } from './constants'
 import { createSnailTexture, snailSkinFrameKey } from './snailArt'
@@ -102,7 +103,7 @@ const GLIDE_UNITS_PER_FRAME = SEGMENT_LENGTH
 
 export class PlayerView {
   readonly sprite: Phaser.GameObjects.Image
-  readonly shadow: Phaser.GameObjects.Ellipse
+  readonly shadow: Phaser.GameObjects.Image
   /** The shell drawn round the snail while a shield is carried, and thrown when one breaks. */
   readonly bubble: Phaser.GameObjects.Image
 
@@ -222,9 +223,10 @@ export class PlayerView {
     // as the camera crosses one. See `distanceIndexOf`.
     // Multiply, not a grey fill: on pale sand a neutral ellipse reads as a puddle rather than as
     // an absence of light. See `SHADOW_DARKEN`.
-    this.shadow = scene.add
-      .ellipse(0, 0, 10, 4, 0x000000)
-      .setBlendMode(Phaser.BlendModes.MULTIPLY)
+    // **An `Image` on one shared ellipse texture, never an `Ellipse` game object** — see
+    // `shadowArt.ts`. A shadow is resized every frame, and `Ellipse.setSize` re-tessellates the
+    // curve and re-triangulates it on every call.
+    this.shadow = createShadow(scene)
     this.sprite = scene.add
       .image(0, 0, snailSkinFrameKey(0, this.skin))
       // **⚠ Its own centre, not its feet, and that is what a tumble turns about.** A billboard is
@@ -362,7 +364,7 @@ export class PlayerView {
     // shadow about where the ground is.
     this.groundX = groundX
     this.groundY = groundY
-    this.shadow.setSize(footprint * SHADOW_FOOTPRINT.width * scale, footprint * SHADOW_FOOTPRINT.height * scale)
+    this.shadow.setDisplaySize(footprint * SHADOW_FOOTPRINT.width * scale, footprint * SHADOW_FOOTPRINT.height * scale)
     this.shadow.setAlpha(shadowAlpha(lift) * SHADOW_DARKEN)
 
     // Then the snail itself, lifted by its world height through the same helper — so the lift is

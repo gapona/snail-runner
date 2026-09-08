@@ -7,7 +7,7 @@ import { ensureMinHitArea } from './uiScale'
 import { t } from '../i18n/strings'
 import { pipFills } from './fruitGauge'
 import {
-  QUEST_BAR_SEGMENTS,
+  questBarSegments,
   QUEST_CHIP,
   QUEST_PANEL,
   QUEST_ROW,
@@ -199,16 +199,20 @@ function drawTrack(
   fill: number,
   done: boolean,
   scale: number,
+  target: number,
 ): void {
-  const fills = done ? Array.from({ length: QUEST_BAR_SEGMENTS }, () => 1) : pipFills(fill, QUEST_BAR_SEGMENTS)
+  // **The target's own segment count, capped at `QUEST_BAR_SEGMENTS`** — see `questBarSegments`.
+  // Eight sockets beside `0/2` is the track disagreeing with the counter next to it.
+  const count = questBarSegments(target)
+  const fills = done ? Array.from({ length: count }, () => 1) : pipFills(fill, count)
   const body = done ? KIT.coin : KIT.active
   const lit = done ? TRACK_LIT.done : TRACK_LIT.running
-  const radius = Math.min(bar.h, bar.w / QUEST_BAR_SEGMENTS) * 0.34
+  const radius = Math.min(bar.h, bar.w / count) * 0.34
 
   g.clear()
 
   for (let i = 0; i < fills.length; i++) {
-    const seg = questSegmentBox(i, bar, QUEST_BAR_SEGMENTS, scale)
+    const seg = questSegmentBox(i, bar, count, scale)
     const amount = fills[i]
 
     g.fillStyle(KIT.plate, 0.72)
@@ -475,7 +479,7 @@ export function createQuestBoard(scene: Phaser.Scene, depth: number): QuestBoard
       row.label.setFontSize(Math.max(LABEL_SIZE * scale * LABEL_MIN_FIT, LABEL_SIZE * scale * (room / row.label.width)))
     }
 
-    drawTrack(row.bar, columns.bar, questProgress(quest), done, scale)
+    drawTrack(row.bar, columns.bar, questProgress(quest), done, scale, quest.target)
 
     row.count.setFontSize(COUNT_SIZE * scale)
     row.count.setText(done ? '' : `${quest.progress}/${quest.target}`)

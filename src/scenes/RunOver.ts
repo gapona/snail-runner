@@ -18,6 +18,7 @@ import { CONTINUE_COINS } from '../shop/adCatalog'
 import { bindLayout } from '../ui/layout'
 import { formatCount } from '../ui/format'
 import { KIT, kitButton, kitDivider, kitTitle, plate, type KitButton, type KitDivider, type Plate } from '../ui/kit'
+import { MIN_TOUCH } from '../ui/kitPalette'
 import { toCssColor } from '../ui/theme'
 import { uiScale } from '../ui/uiScale'
 
@@ -133,6 +134,60 @@ const MIN_SCREEN_MARGIN = 12
  * own 44px floor regardless — `kitButton` enforces it — so what this bounds is the type.
  */
 const MIN_HEIGHT_FIT = 0.62
+
+/**
+ * How wide a frame has to be before the actions may be laid in two columns.
+ *
+ * **⚠ On a landscape phone this panel could not fit its own buttons and ran off the bottom of the
+ * frame.** Five actions is the most it ever shows — the ad continue, the paid one, `Again`, the
+ * doubler and `Menu` — and at 740x360 the stack measured **476px against 340 of room**, so `Menu`
+ * sat 58px below the frame and the doubler was cut in half. Reported as half the interface not
+ * being visible in landscape, and it is: the plate is clamped to the frame (`panelHeight`) while
+ * the contents were laid straight past it, so the overflow was hidden rather than prevented.
+ *
+ * **The height fit cannot solve it and should not be asked to.** `MIN_HEIGHT_FIT` is a floor on the
+ * *type*, and below it the readouts stop being readable — while `kitButton` floors every target at
+ * `MIN_TOUCH` regardless, so five buttons and their gaps are 240px of stack whatever the scale
+ * says. There is no scale at which five rows fit a 360-tall frame.
+ *
+ * What a landscape frame has instead is **width**, which is the axis this screen never used: the
+ * panel is 420 wide inside a frame of 740. So the secondary actions pair up and the stack is three
+ * rows instead of five. The lead action stays on a row of its own, because it is the one the
+ * hierarchy is carried by and a lead button sharing a row with its alternative is not a lead.
+ *
+ * Two columns of the touch floor plus the gap and the panel's own padding, which is the narrowest
+ * frame the arrangement is honest on rather than a round number.
+ */
+function columnsFit(columns: number, width: number): boolean {
+  return width - MIN_SCREEN_MARGIN * 2 >= columns * MIN_TOUCH + (columns - 1) * BUTTON_GAP + SIDE_PADDING * 2
+}
+
+/**
+ * The most columns the secondary actions are ever laid in.
+ *
+ * Four, because four is how many there are — the two continues, `Again` and the doubler — once the
+ * lead has taken its own row. A cap of the content rather than a number, so a fifth secondary would
+ * widen the row rather than silently overflowing it again.
+ */
+const MAX_ACTION_COLUMNS = 4
+
+/** How much wider the panel gets per extra column of actions. */
+const PANEL_WIDTH_PER_COLUMN = 0.5
+
+/**
+ * How many times the height fit re-measures itself.
+ *
+ * **⚠ One pass is not a fit, because `naturalHeight` is not linear in the scale.** The estimate
+ * `available / natural` assumes everything shrinks together, and `kitButton` floors every target at
+ * `MIN_TOUCH` — so past a certain scale the buttons stop shrinking and only the type does, and the
+ * estimate under-shrinks by exactly the part that stopped moving. Measured at 740x360 with five
+ * actions in two columns: the one-pass answer wanted 363px of a 336px frame, which is how the
+ * bottom row came to sit on the frame's own edge with no margin under it.
+ *
+ * Re-measuring converges in two or three: each pass shrinks by the ratio it actually missed by, and
+ * the floor stops it. The comment this replaces already claimed the code measured twice; it did not.
+ */
+const FIT_PASSES = 4
 
 export class RunOver extends Phaser.Scene {
   private panel!: Plate
@@ -363,7 +418,18 @@ export class RunOver extends Phaser.Scene {
     // Blank rather than a zero, for `coinText`'s reason: a run that never went near anything has
     // nothing to report, and `0` reads as a score rather than as an absence.
     this.bonusText.setText(this.bonus > 0 ? `${t('closePasses')} ${formatCount(this.bonus)}` : '')
-    this.coinText.setText(this.coins > 0 ? `🪙 +${this.coins}` : '')
+    // **⚠ The purse, not only what the run paid — because this screen quotes a PRICE.** The
+    // continue costs `CONTINUE_COINS` and the only coin number anywhere near it was `+18`, which is
+    // what this run earned; the other one the player can see is the run HUD's own counter behind
+    // the panel, which is the coins collected this run. Neither is the balance the price is charged
+    // against, so `Continue · 45` was a price with nothing to compare it to — reported as being let
+    // through with "not enough coins" when the purse in fact had them.
+    //
+    // Written as `+18 → 4486` so the line still leads with what the run itself was worth: the
+    // earning is the reward, the total is the context the button beside it needs.
+    const purse = getState().coins
+
+    this.coinText.setText(this.coins > 0 ? `🪙 +${this.coins} → ${formatCount(purse)}` : `🪙 ${formatCount(purse)}`)
   }
 
   /**
@@ -545,7 +611,25 @@ export class RunOver extends Phaser.Scene {
    * Measured rather than assumed, because each block is sized by its own text — and returned as one
    * number so the fit below can ask "does this scale fit?" without laying anything out.
    */
-  private naturalHeight(scale: number): number {
+  /**
+   * The actions, grouped into the rows they will be drawn on.
+   *
+   * One row each in a column; in two columns the lead keeps its own row and the rest pair up — see
+   * `TWO_COLUMN_MIN_WIDTH`. One function, read by both the measurement and the placement, so the
+   * two cannot disagree about how tall the stack is — which is the property `naturalHeight`'s own
+   * note says makes adding a button safe.
+   */
+  private actionRows(columns: number): KitButton[][] {
+    if (columns <= 1 || this.actions.length < 3) return this.actions.map((button) => [button])
+
+    const rows: KitButton[][] = [[this.actions[0]]]
+
+    for (let i = 1; i < this.actions.length; i += columns) rows.push(this.actions.slice(i, i + columns))
+
+    return rows
+  }
+
+  private naturalHeight(scale: number, columns = 1): number {
     this.title.setFontSize(26 * scale)
     this.distanceText.setFontSize(52 * scale)
     this.bestText.setFontSize(16 * scale)
@@ -571,8 +655,9 @@ export class RunOver extends Phaser.Scene {
     // offered with both its prices — so the fit and the layout below cannot disagree about how tall
     // the stack is. **This is what makes adding a button safe**: the panel measures itself, so the
     // coin continue widened it without anybody choosing a new height.
-    const actions = this.actions.reduce(
-      (total, button, index) => total + button.height + (index > 0 ? BUTTON_GAP * scale : 0),
+    const actions = this.actionRows(columns).reduce(
+      (total, row, index) =>
+        total + Math.max(...row.map((button) => button.height)) + (index > 0 ? BUTTON_GAP * scale : 0),
       0,
     )
 
@@ -588,16 +673,51 @@ export class RunOver extends Phaser.Scene {
     // plate. Measured, then scaled, then measured again, because the fonts move with the scale.
     const available = height - MIN_SCREEN_MARGIN * 2
     const base = uiScale(width)
-    const scale = Math.max(MIN_HEIGHT_FIT * base, Math.min(base, (base * available) / this.naturalHeight(base)))
-    const panelHeight = Math.min(this.naturalHeight(scale), available)
-    const panelWidth = Math.min(PANEL_WIDTH * scale, width - MIN_SCREEN_MARGIN * 2)
+    const floor = MIN_HEIGHT_FIT * base
+    // **⚠ Asked at the FLOOR, because that is the only scale at which the question has an answer.**
+    // "Does this many columns fit" means "does it fit once everything that can shrink has" — and the
+    // buttons cannot shrink past `MIN_TOUCH` however small the type goes.
+    //
+    // The fewest columns that fit, never the most that would: one column is the shape this panel is
+    // read in and every extra column spends the hierarchy to buy height. A frame that fits none of
+    // them takes the widest it is geometrically allowed, which is the honest answer to a viewport
+    // nothing can lay this out in — measured at 900x280, where three rows still overflow and one
+    // row of four does not.
+    let columns = 1
+
+    for (let c = 1; c <= MAX_ACTION_COLUMNS; c++) {
+      if (!columnsFit(c, width)) break
+      columns = c
+      if (this.naturalHeight(floor, c) <= available) break
+    }
+
+    const rows = this.actionRows(columns)
+    let scale = base
+
+    // Shrink by however much the last measurement actually missed by, until it fits or the floor
+    // stops it — see `FIT_PASSES` for why one pass leaves the stack over the frame.
+    for (let pass = 0; pass < FIT_PASSES; pass++) {
+      const natural = this.naturalHeight(scale, columns)
+
+      if (natural <= available || scale <= floor) break
+      scale = Math.max(floor, scale * (available / natural))
+    }
+    const panelHeight = Math.min(this.naturalHeight(scale, columns), available)
+    const panelWidth = Math.min(
+      PANEL_WIDTH * (1 + PANEL_WIDTH_PER_COLUMN * (columns - 1)) * scale,
+      width - MIN_SCREEN_MARGIN * 2,
+    )
     const contentWidth = panelWidth - SIDE_PADDING * 2 * scale
+    const columnWidth = (contentWidth - BUTTON_GAP * scale * (columns - 1)) / Math.max(1, columns)
 
     // **Every button is the content width, and the hierarchy is carried by weight.** They were
     // auto-sized to their own labels and centred, which made a ragged column of three different
     // widths — and read as three alternatives rather than as one obvious action with two ways past
     // it. One column also means the stack's width no longer depends on how long a translation is.
-    for (const button of this.actions) button.setMinWidth(contentWidth)
+    //
+    // A paired row splits that width; the lead keeps the whole of it, which is what stops two
+    // columns costing this screen its one obvious action.
+    for (const row of rows) for (const button of row) button.setMinWidth(row.length > 1 ? columnWidth : contentWidth)
 
     // `plate.draw` is centred on the point it is given, not anchored to it.
     this.panel.draw(width / 2, height / 2, panelWidth, panelHeight)
@@ -618,9 +738,20 @@ export class RunOver extends Phaser.Scene {
     this.divider.draw(width / 2, y, contentWidth, scale)
     y += DIVIDER_GAP * scale
 
-    for (const button of this.actions) {
-      button.container.setPosition(width / 2, y + button.height / 2)
-      y += button.height + BUTTON_GAP * scale
+    for (const row of rows) {
+      const rowHeight = Math.max(...row.map((button) => button.height))
+
+      if (row.length === 1) {
+        row[0].container.setPosition(width / 2, y + rowHeight / 2)
+      } else {
+        // Left to right in the order they were built, which is the order they read in one column.
+        // Centred as a group, so a short last row sits under the middle of the one above it.
+        const pitch = columnWidth + BUTTON_GAP * scale
+        const first = width / 2 - (pitch * (row.length - 1)) / 2
+
+        row.forEach((button, index) => button.container.setPosition(first + index * pitch, y + rowHeight / 2))
+      }
+      y += rowHeight + BUTTON_GAP * scale
     }
   }
 }

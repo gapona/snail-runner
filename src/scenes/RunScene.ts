@@ -363,6 +363,10 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
    * run may not be a tutorial run, because the tutorial is what refuses to be suspended.
    */
   private resumed = false
+  /** `uselessNow`'s memo: the answer, and the two facts it was computed from. */
+  private uselessCache: ReadonlySet<PickupKind> | null = null
+  private uselessHeal = false
+  private uselessShield = false
   constructor() {
     super('RunScene')
   }
@@ -647,6 +651,27 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
    * The lap number is part of the key because the track loops: `hit` as a boolean would disarm
    * every obstacle permanently after one lap.
    */
+  /**
+   * Which pickup kinds the run currently has no room for.
+   *
+   * **Memoised on the two facts it is a function of**, because it is asked three times a frame and
+   * allocates a `Set` each time — for an answer that changes when a life or a shield does, i.e. a
+   * few times a run. The renderer takes it every frame to decide what to draw dimmed, so the
+   * allocation was per frame and permanent; the pair of booleans is what actually moves.
+   */
+  private uselessNow(): ReadonlySet<PickupKind> {
+    const canHeal = canTakeHeal(this.run)
+    const canShield = canTakeShield(this.run)
+
+    if (this.uselessCache === null || this.uselessHeal !== canHeal || this.uselessShield !== canShield) {
+      this.uselessHeal = canHeal
+      this.uselessShield = canShield
+      this.uselessCache = uselessKinds({ canHeal, canShield })
+    }
+
+    return this.uselessCache
+  }
+
   private resolveObstacles(fromZ: number, toZ: number, lap: number, now: number): void {
     if (this.isInvulnerable()) return
 
@@ -940,7 +965,7 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
    * the player has already cleared feel cleared.
    */
   private collectPickups(fromZ: number, toZ: number): void {
-    const useless = uselessKinds({ canHeal: canTakeHeal(this.run), canShield: canTakeShield(this.run) })
+    const useless = this.uselessNow()
     const first = Math.floor(fromZ / SEGMENT_LENGTH) - 1
     const last = Math.floor(toZ / SEGMENT_LENGTH)
     const segmentCount = this.world.track.length
@@ -1019,7 +1044,7 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
   private pullPickups(playerZ: number, delta: number): void {
     const rate = 1 - Math.exp((-FEVER_MAGNET_RATE * delta) / 1000)
 
-    const useless = uselessKinds({ canHeal: canTakeHeal(this.run), canShield: canTakeShield(this.run) })
+    const useless = this.uselessNow()
 
     for (const pickup of this.lap.livePickups()) {
       // **The magnet does not drag something the run cannot take.** Pulling a greyed medkit onto
@@ -1805,7 +1830,7 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
       width,
       height,
       time,
-      uselessKinds({ canHeal: canTakeHeal(this.run), canShield: canTakeShield(this.run) }),
+      this.uselessNow(),
     )
     if (import.meta.env.DEV && this.reactionSeen) this.recordReaction(time)
 

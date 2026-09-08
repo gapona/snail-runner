@@ -27,6 +27,7 @@ import {
   shadowScale,
 } from './shadows'
 import { groundPointInto, type GroundPoint } from './groundProjection'
+import { createShadow } from './shadowArt'
 
 /**
  * Every pickup on screen, from a fixed pool.
@@ -52,7 +53,7 @@ interface SlotState {
    * field of the slot makes that desync unrepresentable: whatever hides the sprite hides its
    * shadow, and whatever places one places the other.
    */
-  shadow: Phaser.GameObjects.Ellipse
+  shadow: Phaser.GameObjects.Image
   key: string
   cropped: boolean
 }
@@ -100,10 +101,10 @@ export class PickupSprites {
       image: scene.add.image(0, 0, initialKey).setOrigin(0.5, 1).setVisible(false),
       // Multiply rather than a grey fill: see `SHADOW_DARKEN`. The colour is pure black at a
       // fraction of alpha, so what reaches the screen is the ground's own colour taken down.
-      shadow: scene.add
-        .ellipse(0, 0, 1, 1, 0x000000)
-        .setBlendMode(Phaser.BlendModes.MULTIPLY)
-        .setVisible(false),
+      // An `Image` on the shared ellipse texture — see `shadowArt.ts`. This pool draws the most
+      // shadows of the three, and was paying a 64-point tessellation plus an `Earcut` for each of
+      // them on every frame.
+      shadow: createShadow(scene),
       key: initialKey,
       cropped: false,
     }))
@@ -280,7 +281,7 @@ export class PickupSprites {
     if (shadowRect && clipped > 0) {
       slot.shadow.setVisible(true)
       slot.shadow.setPosition(shadowRect.x, shadowRect.y)
-      slot.shadow.setSize(shadowRect.w * SHADOW_FOOTPRINT.width * scale, markHeight)
+      slot.shadow.setDisplaySize(shadowRect.w * SHADOW_FOOTPRINT.width * scale, markHeight)
       // The mark dims with the icon: a full-strength shadow under a greyed pickup reads as the
       // sprite failing to draw rather than as the pickup being inert — the same pairing the
       // mascot's blink makes with its own shadow.

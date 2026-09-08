@@ -12,6 +12,7 @@ import { distanceIndexOf, WORLD_LAYER, worldDepth } from './worldDepth'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowClipFade, shadowScale } from './shadows'
 import { OBSTACLE_POOL_SIZE, type Obstacle } from './obstacles'
 import { groundPointInto, type GroundPoint } from './groundProjection'
+import { createShadow } from './shadowArt'
 
 /** What one pool slot is currently showing, so a frame can skip work it does not need. */
 interface SlotState {
@@ -30,7 +31,7 @@ interface SlotState {
    * filled in the same order on every frame is a desync waiting to happen, and its symptom is a
    * shadow with no object.
    */
-  shadow: Phaser.GameObjects.Ellipse
+  shadow: Phaser.GameObjects.Image
   key: string
   cropped: boolean
 }
@@ -105,10 +106,9 @@ export class ObstacleSprites {
         // No depth here: it is set per object per frame from how far away it is — see
         // `worldDepth.ts` for what a flat depth did to the draw order.
         .setVisible(false),
-      shadow: scene.add
-        .ellipse(0, 0, 1, 1, 0x000000)
-        .setBlendMode(Phaser.BlendModes.MULTIPLY)
-        .setVisible(false),
+      // An `Image` on the shared ellipse texture — see `shadowArt.ts` for the per-frame
+      // tessellation an `Ellipse` charges for a mark whose size changes every frame.
+      shadow: createShadow(scene),
       key: initialKey,
       cropped: false,
     }))
@@ -292,7 +292,7 @@ export class ObstacleSprites {
     if (shadowRect && clipped > 0) {
       slot.shadow.setVisible(true)
       slot.shadow.setPosition(shadowRect.x, shadowRect.y)
-      slot.shadow.setSize(shadowRect.w * SHADOW_FOOTPRINT.width * scale, markHeight)
+      slot.shadow.setDisplaySize(shadowRect.w * SHADOW_FOOTPRINT.width * scale, markHeight)
       slot.shadow.setAlpha(shadowAlpha(height) * SHADOW_DARKEN * clipped)
       slot.shadow.setDepth(worldDepth(distanceIndex, WORLD_LAYER.shadow))
     } else {

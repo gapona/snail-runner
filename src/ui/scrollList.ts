@@ -69,6 +69,42 @@ export function isTap(dx: number, dy: number, slop: number): boolean {
 export const TAP_SLOP_PX = 12
 
 /**
+ * How long a whole-screen press may last, and how far it may slide, and still be a *jump*.
+ *
+ * **⚠ A different question from `TAP_SLOP_PX`, and borrowing that one broke the jump on every
+ * phone.** A scrolling list asks "tap or scroll", where 12px is right: a finger that has moved a
+ * centimetre was scrolling. The runner's whole-screen jump asks "jump or steer", and steering is
+ * an *absolute* axis — the snail goes where the thumb is — so the thumb is travelling almost
+ * whenever the player is playing. Measured in the running game with real touch pointers: a clean
+ * tap jumped, a tap that slid **21px did not**, and a steer never did. On a phone, reacting to
+ * something at speed, 21px of slide is an ordinary tap. Reported as *"tapping does not jump, it
+ * hits the obstacle 100% of the time"*, and that is exactly what it was.
+ *
+ * **What tells a jump from a steer is TIME, not distance.** A jump is a stab; a steer is a hold —
+ * that is the whole of the gesture, and it is what the player is already doing. So the duration is
+ * the test and the distance is only a backstop against a fast flick that was meant to steer.
+ *
+ * The distance is the touch floor, which makes it a sentence rather than a number: **a tap that
+ * stayed inside one touch target is a tap.** The duration is a deliberate stab — a press held past
+ * it is somebody positioning the snail, whatever it lands on.
+ */
+export const JUMP_TAP_MS = 260
+
+/** @see JUMP_TAP_MS — the backstop, in pixels: one touch target. */
+export const JUMP_TAP_SLOP_PX = 44
+
+/**
+ * Whether a whole-screen press was a jump rather than the beginning of a steer.
+ *
+ * Both bounds, because either alone admits the other gesture: a slow small drag is a steer that
+ * happens not to have gone far, and a fast flick across the road is a steer that happens to have
+ * been quick.
+ */
+export function isJumpTap(dx: number, dy: number, heldMs: number): boolean {
+  return heldMs <= JUMP_TAP_MS && isTap(dx, dy, JUMP_TAP_SLOP_PX)
+}
+
+/**
  * How tall the scrollable window should be, given everything else the panel must fit.
  *
  * Returned separately from the panel height because the two answer different questions and the

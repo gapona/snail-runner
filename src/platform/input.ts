@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser'
-import { isTap, TAP_SLOP_PX } from '../ui/scrollList'
+import { isJumpTap, isTap, TAP_SLOP_PX } from '../ui/scrollList'
 import { axisFrom, HeldSourceSet } from './heldSources'
 
 export interface ActionSources {
@@ -32,9 +32,11 @@ export interface ActionSources {
    * full-screen rectangle to `setInteractive()` would put a click-swallowing object over
    * everything (the same argument `bindHeldAction`'s `screenBand` makes).
    *
-   * **The slop test is what lets this share a pointer with steering — on a finger.** A touch steer
-   * is a drag and a touch jump is a tap; `isTap` is the same rule the shop's scrolling rows use to
-   * tell one from the other, so the two gestures compose on one finger instead of competing.
+   * **⚠ What lets this share a pointer with steering on a finger is HOW LONG the press lasted, and
+   * borrowing the scrolling list's distance rule instead is what broke the jump on every phone.**
+   * A touch steer is a *hold* — steering is absolute here, the snail goes where the thumb is — so
+   * the thumb is travelling almost whenever the player is playing, and a 12px bound threw the jump
+   * away. Measured with real touch pointers: a tap that slid 21px did not jump. See `isJumpTap`.
    *
    * **⚠ A mouse fires on the PRESS, and the reason is `bindSteering`'s own rule.** A mouse steers by
    * where it *is* — hovering is the input, the button plays no part — so a mouse press has nothing
@@ -77,7 +79,7 @@ export function bindAction(scene: Phaser.Scene, action: string, sources: ActionS
     // Where each press landed, per pointer id — the same shape the per-object `tap` path uses,
     // and for the same reason: `pointer.downX/downY` belong to the pointer, so a press that began
     // during a scene that has since been replaced would still satisfy a distance test here.
-    const pressedAt = new Map<number, { x: number; y: number }>()
+    const pressedAt = new Map<number, { x: number; y: number; at: number }>()
 
     // **⚠ A press that landed on a widget is not a screen tap, and Phaser hands us the list.**
     // `POINTER_DOWN` is emitted with the objects the pointer was over, so a HUD button on this
@@ -108,14 +110,27 @@ export function bindAction(scene: Phaser.Scene, action: string, sources: ActionS
 
         return
       }
-      pressedAt.set(pointer.id, { x: pointer.x, y: pointer.y })
+      // The time is recorded with the place, because the duration is the test — see `isJumpTap`.
+      // `pointer.downTime` would do for a real device and is not written by a synthetic event, so
+      // the record owns its own clock and the harness and the phone measure the same thing.
+      pressedAt.set(pointer.id, { x: pointer.x, y: pointer.y, at: performance.now() })
     }
     const onUp = (pointer: Phaser.Input.Pointer) => {
       const start = pressedAt.get(pointer.id)
 
       // Nothing is recorded for a mouse, so this cannot fire twice for one click.
       pressedAt.delete(pointer.id)
-      if (start && isTap(pointer.x - start.x, pointer.y - start.y, TAP_SLOP_PX)) guarded()
+      if (!start) return
+
+      // **The DOM event's own timestamps first, this handler's clock second.** `getDuration()` is
+      // `upTime - downTime`, both taken from the browser event — so it measures the gesture rather
+      // than how late a busy main thread got round to it, which on a stuttering frame is exactly
+      // the difference between a jump and a lost one. A pointer that never carried a real
+      // `downTime` (a synthetic event, which is the only way this can be driven under automation)
+      // falls back to the wall clock recorded with the press.
+      const held = pointer.downTime > 0 ? pointer.getDuration() : performance.now() - start.at
+
+      if (isJumpTap(pointer.x - start.x, pointer.y - start.y, held)) guarded()
     }
     const onCancel = (pointer: Phaser.Input.Pointer) => pressedAt.delete(pointer.id)
 

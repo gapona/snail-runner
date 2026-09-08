@@ -118,6 +118,22 @@ export class LapLayout {
   private pending: { obstacles: Map<number, Obstacle[]>; pickups: Map<number, Pickup[]>; ramps: Map<number, Ramp[]> }
   /** How far the cursor has written to, in world units, unwrapped. */
   private writtenTo = 0
+  /**
+   * The flattened lists, kept until a handover invalidates them.
+   *
+   * **⚠ `liveObstacles()` is called every frame and allocated a fresh array of the whole lap.** The
+   * critter pool asks for it so a creature can vault whatever is in front of it, and the answer is
+   * `[...map.values()].flat()` over ~160-250 obstacles — an array of arrays and then a flattened
+   * array, sixty times a second, for a list that changes only when the cursor hands a segment over.
+   * That is a handful of frames a lap; on every other one the previous answer is exactly right.
+   *
+   * Keyed on the handover rather than on a clock, so the cache cannot be stale by construction:
+   * `take` is the only thing that edits these maps, and `movePickup` — which moves a pickup between
+   * buckets — clears the one list it can affect.
+   */
+  private cachedObstacles: Obstacle[] | null = null
+  private cachedPickups: Pickup[] | null = null
+  private cachedRamps: Ramp[] | null = null
 
   constructor(options: LapLayoutOptions) {
     this.options = options
@@ -151,6 +167,9 @@ export class LapLayout {
       this.take(this.obstacles, this.pending.obstacles, index)
       this.take(this.pickups, this.pending.pickups, index)
       this.take(this.ramps, this.pending.ramps, index)
+      this.cachedObstacles = null
+      this.cachedPickups = null
+      this.cachedRamps = null
 
       this.writtenTo += SEGMENT_LENGTH
       written++
@@ -167,19 +186,25 @@ export class LapLayout {
     return written
   }
 
-  /** Every ramp currently on the ground. Small enough to gather on demand. */
+  /** Every ramp currently on the ground. Gathered once per handover — see `cachedRamps`. */
   liveRamps(): Ramp[] {
-    return [...this.ramps.values()].flat()
+    if (this.cachedRamps === null) this.cachedRamps = [...this.ramps.values()].flat()
+
+    return this.cachedRamps
   }
 
   /** Every pickup currently on the ground. */
   livePickups(): Pickup[] {
-    return [...this.pickups.values()].flat()
+    if (this.cachedPickups === null) this.cachedPickups = [...this.pickups.values()].flat()
+
+    return this.cachedPickups
   }
 
   /** Every obstacle currently on the ground. */
   liveObstacles(): Obstacle[] {
-    return [...this.obstacles.values()].flat()
+    if (this.cachedObstacles === null) this.cachedObstacles = [...this.obstacles.values()].flat()
+
+    return this.cachedObstacles
   }
 
   /**
@@ -206,6 +231,9 @@ export class LapLayout {
 
       if (target) target.push(pickup)
       else this.pickups.set(to, [pickup])
+      // The bucket a pickup is filed under changed, so the flattened list may have too. Only this
+      // one: nothing here touches the obstacles or the ramps.
+      this.cachedPickups = null
     }
 
     pickup.z = z
@@ -226,6 +254,9 @@ export class LapLayout {
     this.obstacles.clear()
     this.pickups.clear()
     this.ramps.clear()
+    this.cachedObstacles = null
+    this.cachedPickups = null
+    this.cachedRamps = null
     for (const [index, list] of indexed.obstacles) this.obstacles.set(index, list)
     for (const [index, list] of indexed.pickups) this.pickups.set(index, list)
     for (const [index, list] of indexed.ramps) this.ramps.set(index, list)

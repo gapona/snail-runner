@@ -368,6 +368,17 @@ export function kitButton(
     } else {
       ;(container.input.hitArea as Phaser.Geom.Rectangle).setTo(0, 0, width, height)
     }
+    // **⚠ A disabled button must not accept the press, and dimming it was never enough.**
+    // `setEnabled(false)` only ever changed the drawing, so every binder on this container went on
+    // firing — and `bindAction` takes a bare `GameObject`, so there is nowhere else this could be
+    // decided. What the player got was a control that looks refused, accepts the tap, and does
+    // nothing at all: reported against the result panel's `Continue · 45` with a purse that could
+    // not pay for it, which is exactly the state this is for.
+    //
+    // Taking the input off the object rather than guarding each callback is what makes it true for
+    // *every* binder, including any added later, and it is also what makes the tap fall through to
+    // whatever is behind — which on the result panel is the plate, i.e. nothing.
+    if (container.input) container.input.enabled = enabled
   }
 
   container.on(Phaser.Input.Events.POINTER_OVER, () => {

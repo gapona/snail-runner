@@ -10,6 +10,8 @@
 // "Responsive Layout" and are properties of Phaser's `Container`, not of this arithmetic.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { cornerSteps, roundedRectPoints } from '../src/ui/roundedRect.ts'
+import { isJumpTap, isTap as isTapBy, JUMP_TAP_MS, JUMP_TAP_SLOP_PX, TAP_SLOP_PX as LIST_TAP_SLOP_PX } from '../src/ui/scrollList.ts'
 import {
   FRUIT_GAUGE_PIPS,
   FRUIT_SEGMENT,
@@ -1771,6 +1773,132 @@ check('⚠ every button the result panel does not always build is cleared before
     assert.ok(cleared.includes(field), `${field} is built conditionally and never cleared — a second panel will resize the destroyed one`)
   }
   console.log(`    ${declared.length} optional buttons, all cleared: ${declared.join(', ')}`)
+})
+
+
+// --- src/ui/roundedRect.ts ------------------------------------------------------------------
+//
+// The gauge and the milestone rule are on screen for a whole run and are replayed by the renderer
+// every frame, and `Graphics.fillRoundedRect` tessellates every arc at a hardcoded 100 points per
+// corner whatever the corner measures. What these hold is that the replacement is the same shape at
+// a resolution the radius chooses.
+
+check('a corner is drawn with fewer points than Phaser would, and never fewer than two', () => {
+  const PHASER_POINTS_PER_ARC = 100
+  const rows = []
+
+  for (const radius of [1, 3, 7.12, 12, 20, 60]) {
+    const steps = cornerSteps(radius)
+
+    assert.ok(steps >= 2, `a ${radius}px corner drawn with ${steps} segments is not a corner`)
+    assert.ok(steps < PHASER_POINTS_PER_ARC, `a ${radius}px corner still costs ${steps} points`)
+    rows.push(`${radius}px -> ${steps}`)
+  }
+
+  // The Fever tank's own radius, which is what the round was measured on.
+  assert.equal(cornerSteps(7.12), 5)
+  console.log(`    corner segments by radius: ${rows.join(', ')} (Phaser: ${PHASER_POINTS_PER_ARC} at every one)`)
+  const tank = roundedRectPoints(0, 0, 28.16, 22.24, 7.12).length
+
+  console.log(`    one tank segment: ${tank} points against Phaser's ${PHASER_POINTS_PER_ARC * 4}`)
+  assert.ok(tank * 8 < PHASER_POINTS_PER_ARC * 4, "the whole tank should cost less than one of Phaser's rounded rects")
+})
+
+check('the outline is the rectangle it was asked for, and stays inside it', () => {
+  const [x, y, w, h, r] = [12, 30, 90, 40, 9]
+  const points = roundedRectPoints(x, y, w, h, r)
+  const xs = points.map((p) => p.x)
+  const ys = points.map((p) => p.y)
+
+  // Every corner arc reaches its own tangent points, so the extremes are the box's own edges.
+  assert.ok(Math.abs(Math.min(...xs) - x) < 1e-9, 'the left edge is not where it was asked for')
+  assert.ok(Math.abs(Math.max(...xs) - (x + w)) < 1e-9, 'the right edge is not where it was asked for')
+  assert.ok(Math.abs(Math.min(...ys) - y) < 1e-9, 'the top edge is not where it was asked for')
+  assert.ok(Math.abs(Math.max(...ys) - (y + h)) < 1e-9, 'the bottom edge is not where it was asked for')
+
+  for (const p of points) {
+    assert.ok(p.x >= x - 1e-9 && p.x <= x + w + 1e-9, 'a point escaped the box sideways')
+    assert.ok(p.y >= y - 1e-9 && p.y <= y + h + 1e-9, 'a point escaped the box vertically')
+  }
+
+  // The four corners are actually cut: a point at the box's own corner would mean a plain rect.
+  for (const [cx, cy] of [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]) {
+    const nearest = Math.min(...points.map((p) => Math.hypot(p.x - cx, p.y - cy)))
+
+    assert.ok(nearest > r * 0.2, `the corner at ${cx},${cy} was not rounded (nearest point ${nearest.toFixed(2)})`)
+  }
+  console.log(`    ${points.length} points, all inside the box, all four corners cut`)
+})
+
+check('an over-large radius is clamped rather than folding the outline through itself', () => {
+  // Asked for more than half the shorter side the corners would cross, and `fillPoints` draws a bow
+  // tie rather than refusing — the same class as a clamped slider that saturates early.
+  const points = roundedRectPoints(0, 0, 20, 10, 40)
+
+  for (const p of points) {
+    assert.ok(p.x >= -1e-9 && p.x <= 20 + 1e-9 && p.y >= -1e-9 && p.y <= 10 + 1e-9, 'the outline folded outside its box')
+  }
+
+  // The winding stays monotone around the shape: a folded outline reverses direction.
+  let area = 0
+
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i]
+    const b = points[(i + 1) % points.length]
+
+    area += a.x * b.y - b.x * a.y
+  }
+  assert.ok(Math.abs(area / 2) > 20 * 10 * 0.6, `a clamped stadium should still cover most of its box, covered ${Math.abs(area / 2).toFixed(1)}`)
+  console.log(`    radius 40 on a 20x10 box: clamped to a stadium of ${Math.abs(area / 2).toFixed(1)}px^2`)
+})
+
+check('a zero radius is a plain rectangle, drawn with four points', () => {
+  assert.deepEqual(roundedRectPoints(0, 0, 10, 6, 0), [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 10, y: 6 },
+    { x: 0, y: 6 },
+  ])
+})
+
+
+// --- the jump's own tap rule, src/ui/scrollList.ts --------------------------------------------
+//
+// The runner's jump shares one finger with an ABSOLUTE steer — the snail goes where the thumb is —
+// so the thumb is travelling whenever the player is playing. Borrowing the scrolling list's 12px
+// rule threw the jump away: measured in the running game with real touch pointers, a tap that slid
+// 21px did not jump, and "tapping does not clear the obstacle, it hits it 100% of the time" is
+// exactly what that is. What tells a jump from a steer is how LONG the press lasted.
+//
+// These live here because `platform/input.ts` imports phaser as a value and cannot be loaded under
+// Node — and because the browser harness steps the game clock synchronously, so wall-clock time
+// barely advances there and the duration bound is the one half a live test cannot exercise.
+
+check('a quick tap jumps however much the thumb slid, up to one touch target', () => {
+  const quick = 80
+
+  for (const slide of [0, 12, 21, 30, 43]) {
+    assert.ok(isJumpTap(slide, 0, quick), `a ${slide}px tap should jump; 21 is what a phone measured and lost`)
+  }
+  // The bound the list uses is far too tight for this gesture, and that is the whole defect.
+  assert.ok(!isTapBy(21, 0, LIST_TAP_SLOP_PX), 'the scrolling list would still call a 21px slide a drag, which is right for a list')
+  assert.ok(isJumpTap(21, 0, quick), 'and wrong for the jump')
+  console.log(`    a ${quick}ms tap jumps up to ${JUMP_TAP_SLOP_PX}px of slide; the list's own bound is ${LIST_TAP_SLOP_PX}px`)
+})
+
+check('a held press is a steer, not a jump, however still the thumb was', () => {
+  assert.ok(!isJumpTap(0, 0, JUMP_TAP_MS + 1), 'a press held past the window is somebody positioning the snail')
+  assert.ok(!isJumpTap(0, 0, 500), 'half a second of holding is a steer')
+  assert.ok(isJumpTap(0, 0, JUMP_TAP_MS), 'the bound itself is a tap')
+  console.log(`    held over ${JUMP_TAP_MS}ms it is a steer, at or under it a jump`)
+})
+
+check('a fast flick across the road is a steer, which is what the distance backstop is for', () => {
+  // Either bound alone admits the other gesture: a slow small drag is a steer that did not go far,
+  // and a fast flick is a steer that happened to be quick. Both, or the rule leaks one way.
+  assert.ok(!isJumpTap(200, 0, 100), 'a 200px flick in 100ms is a dodge, not a jump')
+  assert.ok(!isJumpTap(120, 0, 333), 'a held 120px steer is not a jump either')
+  assert.ok(!isJumpTap(0, JUMP_TAP_SLOP_PX + 1, 50), 'the backstop applies on both axes')
 })
 
 console.log(`${passed} checks passed`)

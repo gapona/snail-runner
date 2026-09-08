@@ -13692,6 +13692,274 @@ for reads as the game dropping it. That run's panel is two buttons, both blue.
 `Menu` descend 0.125 → 0.072 in chroma with the accent above them; with none, the doubler is absent
 and the column is two. 24 suites green.
 
+## Four Ways The Frame Was Paying For Nothing
+
+Reported in one line: **the optimisation is suffering, it stutters on mobile.** Measured rather than
+guessed, in the running game at **375x667** — a phone frame — with the loop hand-stepped and every
+finding carrying the shipped-before arrangement as its control.
+
+**Where the frame actually goes, before anything was touched.** The renderer's own pass was
+**2.6ms of a 4.2ms frame** and every game rule put together was 1.3ms, so this round is about what
+the *renderer* was being handed rather than about the model. Two hypotheses were eliminated cheaply
+first, and both are worth writing down so nobody re-checks them:
+
+- **Fill rate is not the problem, and a phone's pixel ratio does not make it one.** Phaser 4's
+  `ScaleManager` has no `devicePixelRatio` term anywhere in it: in `RESIZE` mode the backing store is
+  CSS pixels, so a 375px frame is 375px of canvas whatever the device claims. The game already
+  renders at 1x, and there is no resolution cap to add.
+- **Arcade physics is configured, is used by nothing, and costs nothing.** Removing
+  `physics: { default: 'arcade' }` — every collision in this game is a pure function and no scene
+  ever touches `this.physics` — changes the bundle by **70 bytes**, because Phaser's main entry
+  imports the plugin whatever the config says. It is dead config rather than dead weight, and it was
+  left alone.
+
+### ⚠ A shadow was re-tessellating a curve sixty times a second, in four pools
+
+`Phaser.GameObjects.Ellipse.setSize()` calls `updateData()`, which walks `geom.getPoints(64)` — 64
+freshly allocated `Point`s — flattens them and runs **`Earcut`** over the result. Every call. A
+shadow's size is a function of its owner's height, so it is set every frame: measured, **13
+`updateData` calls a frame**, i.e. ~830 short-lived objects and 13 triangulations a frame for marks
+that never change shape. The allocations are the half that matters more on a phone, where the
+collector is what stutters.
+
+**This project already had the fix and had applied it once.** The rail shooter's ship shadow is a
+generated blob texture, with `fillEllipse`'s per-frame tessellation given as the reason — and the
+runner's four shadow pools (`PickupSprites`, `ObstacleSprites`, `CritterSprites`, `PlayerView`)
+never got it. Same class as the reset-and-restore lists and the two depth origins: **a rule obeyed
+where it was written and nowhere else.**
+
+They are `Image`s on one shared hard-edged ellipse texture now — see `run/shadowArt.ts`, which also
+records why the shape may not become a soft blob. Nothing about what reaches the screen changed:
+premultiplied black at alpha `a` under a `MULTIPLY` blend leaves the ground at `1 - a` of itself,
+which is exactly what the `Ellipse` was doing, and the frame was looked at rather than reasoned
+about.
+
+Measured with the tessellation restored on a throwaway `Ellipse` given the same sizes, so the cost
+is reproduced and the drawing is not: **pickup pass 0.36ms → 0.05ms, player 0.06 → 0.02, critters
+0.31 → 0.17.**
+
+### ⚠ The HUD re-rendered both top-bar readouts to the GPU four times a frame, and only on a phone
+
+`fitRow` measures the row by setting the base face, reading the two drawn widths and then setting
+the fitted one — and `Text.setFontSize` re-renders the string to a canvas and re-uploads that canvas
+to the GPU on every change. **Where the row fits, the second call never happens**; where it does not
+fit — which is a phone, and is the entire reason the method exists — every frame ran base, measure,
+smaller.
+
+Measured: **4.08 `updateText` calls and 4.08 `texImage2D` uploads a frame**, against 0.4 now. The
+uploads are the expensive half on a phone. **The defect is mobile-only by construction**, which is
+exactly how it was reported, and is why nothing in the desktop numbers had ever shown it.
+
+The guard is the *inputs* — the two strings and the band — never a timer. A resize replaces the band
+wholesale, so it still re-fits: confirmed live, 39.74px at 375 wide and 31.18px at 320.
+
+### ⚠ And three `Graphics` were rebuilt every frame for readouts that change a few times a run
+
+The Fever tank is **1248** command-buffer entries and the life row **1326**, re-tessellated on every
+`clear()` for readouts that move when a fruit is banked or a life is lost. Each now carries a
+signature of exactly the values its own draw reads, so a frame that would produce the same commands
+produces none. Measured over 300 quiet frames: **0 gauge redraws and 7 row redraws.**
+
+**The signature is the drawn values and not a clock**, so the animated states still run at full
+rate — a full tank pulses on every one of its frames, which is the one state that should.
+
+### ⚠ The real cost was underneath that, and it is one hardcoded number in Phaser
+
+Guarding the rebuild did **not** move the renderer much, because a `Graphics` is *replayed* every
+frame it is drawn and not only when it is rebuilt. Isolated: the three HUD `Graphics` were
+**~1.5–1.8ms of the renderer's own pass**, and the tank was most of it.
+
+`Graphics.fillRoundedRect` puts four `ARC` commands in the buffer, and `GraphicsWebGLRenderer.js`
+walks each one with **`iterStep = 0.01` hardcoded** — a hundred path points per corner, whatever the
+corner measures. A rounded rect is **400 points**; the tank is up to 32 of them, so **~12 800 path
+points a frame** for eight segments whose corners are seven pixels across.
+
+Confirmed proportional before anything was designed: the same eight segments as plain `fillRect`s,
+everything else identical, took the renderer pass **3.30–3.43ms to 1.63ms**, with the rounded
+version put back as the control.
+
+So `ui/roundedRect.ts` authors the outline as a polygon whose corner resolution comes from **the
+radius**, and the two per-frame readouts hand it to `fillPoints`/`strokePoints`. `verify:ui` prints
+the deterministic half: **24 points for a tank segment against Phaser's 400**, corners at 2 segments
+for a 1px radius and 12 for a 60px one.
+
+- **Not a general replacement, and the module says so.** A panel, a card or a shop row drawn once
+  should go on using `fillRoundedRect`, which is clearer and costs nothing when it is not replayed
+  sixty times a second. This is only for what is on screen for a whole run.
+- **⚠ `fillPoints` is typed `Vector2[]` and reads `.x`/`.y` and nothing else.** A plain `{ x, y }`
+  is what it wants, and building 24 `Vector2`s a redraw would allocate 35 unused methods apiece —
+  so `Hud` carries a local structural type, the same shape and the same reason as the
+  `MutableSound` extension `audio.ts` needs for `BaseSound.mute`.
+
+### Three allocations a frame that were answers to questions nothing had asked again
+
+- **`liveObstacles()` flattened the whole lap every frame.** The critter pool asks for it so a
+  creature can vault what is in front of it, and the list changes only when the cursor hands a
+  segment over — a handful of frames a lap. Cached in `LapLayout` and invalidated by `take`, which
+  is the only thing that edits those maps, so the cache cannot be stale by construction.
+- **`uselessKinds` built a `Set` three times a frame** for an answer that changes when a life or a
+  shield does. Memoised on the two booleans it is a function of.
+- **`RoadSprites` recomputed nine `themedProp` colours a frame** — eighteen OKLab round trips, three
+  cube roots out and three cubes back apiece — from constants that move when somebody buys a theme.
+  Keyed on the theme object's identity, which is what keeps the getter's own guarantee: `applyTheme`
+  replaces the whole object, so a new theme cannot be missed.
+
+### What it comes to
+
+Medians at 375x667, interleaved with the control rather than measured before and after, because
+this harness's absolute numbers drift by ±20% between runs:
+
+| | after | as shipped |
+|---|---|---|
+| whole frame | **4.01ms** | 6.82ms |
+| renderer's own pass | 2.09 | 2.93 |
+| HUD pass | **0.19** | 1.10 |
+| pickup pass | **0.05** | 0.48 |
+| text re-renders and GPU uploads a frame | **0.39** | 4.08 |
+
+The control there restores the shadows and the HUD guards and **not** the rounded rects, which could
+not be put back faithfully at runtime — so the true before is worse than the column shows, and that
+change carries its own measurement above. A phone's CPU runs roughly four to six times slower than
+the desktop these were taken on, which is what turns a 6.8ms frame into a dropped one and is the
+whole of the report.
+
+**Nothing here changed a rule, a size, a colour or a timing.** 21 suites green (514 checks, up from
+510), build clean, and the frame was looked at — the tank's corners, the shadows under the mascot
+and the pickups, and the whole HUD at rest — because none of that is visible to a number.
+
+## Six Things From A Phone, And One Of Them Was The Page
+
+Six reports off screenshots of the real build on a phone, in a Telegram in-app webview. Three of
+them turn out to be one line of CSS that no `verify:` script and no viewport sweep could ever have
+seen, one is the gesture the whole game is played with, and the rest are their own.
+
+### ⚠ `100vh` is the viewport at its LARGEST, and the bottom of the game was under the browser
+
+Reported three separate ways — *"the tank goes off the bottom"*, *"half the interface is not visible
+in landscape"*, *"the snail went off screen and I could not even see what it hit"* — and every one of
+them measured **inside the frame** from in here. They were: `scale.width/height` are the size of the
+element the game is in, and the element was the wrong size.
+
+`#app` was `height: 100vh`. On a phone that is the viewport measured with the browser's toolbar
+**collapsed**, not the part that is currently visible — so the page is taller than its own window and
+its bottom sits behind the chrome. What the game puts along its bottom edge is exactly the list that
+was reported: the life row, the Fever tank, the result panel's last button, and the mascot, whose
+feet sit at `PLAYER_REST_Y_FRACTION` — about 88% down the frame, i.e. squarely in the band a
+collapsed toolbar covers.
+
+`100dvh`/`100dvw` track the viewport that can actually be seen and re-fire `RESIZE` as the toolbar
+slides, which `bindLayout` already handles. The `vh`/`vw` pair stays underneath as the fallback
+declaration — and it was always right in the one place it was written for: a Playables iframe, whose
+height does not move.
+
+**What no check in this project could have caught it with**, and it is worth stating: every viewport
+sweep here resizes the canvas *parent* and asks the game where things are. That measures the layout
+against the element, and the element is what was wrong. A defect in the page is invisible from
+inside the page.
+
+### ⚠ The jump was thrown away by a 12px rule borrowed from a scrolling list
+
+Reported as *"tapping does not jump, it hits the obstacle 100% of the time — even after a ramp"*, and
+that is exactly what it did. Measured in the running game with real touch pointers:
+
+| gesture | before | after |
+|---|---|---|
+| clean tap, 0px | jumps | jumps |
+| tap sliding **21px** | **nothing** | jumps |
+| tap sliding 40px | **nothing** | jumps |
+| flick-steer, 200px | nothing | nothing |
+| held steer, 120px | nothing | nothing |
+
+`screenTap` used `TAP_SLOP_PX`, which is 12 and is right for the thing it was written for: a
+scrolling list, where a finger that has moved a centimetre was scrolling. **The runner's jump shares
+one finger with an ABSOLUTE steer** — the snail goes where the thumb is — so the thumb is travelling
+almost whenever the player is playing, and 21px of slide during a fast reaction is an ordinary tap.
+
+**What tells a jump from a steer is TIME.** A jump is a stab and a steer is a hold; that is the whole
+of the gesture and it is what the player is already doing. So the duration is the test
+(`JUMP_TAP_MS`) and the distance is a backstop against a flick that was meant to steer, set at the
+touch floor — *a tap that stayed inside one touch target is a tap*. Both bounds, because either alone
+admits the other gesture: a slow small drag is a steer that did not go far, a fast flick is a steer
+that happened to be quick.
+
+- **The hold is measured from the DOM event's own timestamps** (`Pointer.getDuration()`), not from
+  when this handler got round to running — on a stuttering frame those differ by a frame, and this
+  game's other open report is that it stutters.
+- **⚠ The duration bound is the one half the browser harness cannot exercise**, because it steps the
+  game clock synchronously and wall time barely advances. It is pinned in `verify:ui` instead, which
+  is where a pure rule belongs anyway.
+- **This is the same defect the mouse path was already fixed for**, one device along: that fix's own
+  note says *"on a desktop the mouse is moving, because moving it is how the snail is steered"* — and
+  the touch path kept the premise the note had just disproved.
+
+**Not fixed, and named rather than hidden:** you still cannot jump *while* holding a steer, because
+one finger cannot be in two states and `activePointers` is 1. Lifting and tapping now works, which is
+the reported gesture. A second pointer would need `bindSteering` to own a pointer id rather than
+reading whichever one moved, and that is a design change rather than a bug fix.
+
+### ⚠ Eight sockets for a target of two
+
+*"The tracks take a heap of room, but 0/2?"* — and that is the honest reading of eight empty segments
+beside a counter saying the whole quest is two of something. `QUEST_BAR_SEGMENTS` was being used as
+the answer; it is a **ceiling** now (`questBarSegments`), so a small target gets a segment each and a
+large one is still cut into eight. The ceiling's own reason is unchanged and is why this is a `min`:
+*a target of 14 drawn as 14 segments is a 3px block on a phone.* Delivered: `0/2` draws two, `1/3`
+draws three with one lit, `0/14` still draws eight.
+
+### ⚠ The result panel could not fit its own buttons in landscape
+
+Five actions is the most it shows — the two continues, `Again`, the doubler and `Menu`. At 740x360
+the stack measured **476px against 340 of room**, so `Menu` sat 58px below the frame and the doubler
+was cut in half. The plate is clamped to the frame and the *contents* were laid straight past it, so
+the overflow was hidden rather than prevented.
+
+Two things were wrong and both had to move:
+
+- **No scale fixes it.** `MIN_HEIGHT_FIT` is a floor on the *type*, and `kitButton` floors every
+  target at `MIN_TOUCH` regardless — so five rows are 240px of stack whatever the scale says. What a
+  landscape frame has instead is **width**, which this screen never used: a 420-wide panel in a
+  740-wide frame. The secondary actions pair up and the lead keeps its own row, because a lead
+  sharing a row with its own alternative is not a lead. The column count follows the width, capped at
+  the number of secondaries — at 900x280 even three rows overflow and one row of four does not.
+- **⚠ And the fit was a single linear pass over a function that is not linear.**
+  `available / natural` assumes everything shrinks together, and the buttons stop at `MIN_TOUCH` — so
+  the estimate under-shrinks by exactly the part that stopped moving. It re-measures now
+  (`FIT_PASSES`), which is what the comment already claimed the code did.
+
+| frame | before | after |
+|---|---|---|
+| 740x360 | −58px (off the frame) | +28px of margin |
+| 800x320 | −8 | +29 |
+| 740x300 | −17 | +27 |
+| 900x280 | −37 | +13 |
+| 360x740 | fine | +134 |
+
+Five buttons on screen at every one of them, no overlaps, every target still 44px.
+
+### ⚠ A disabled button accepted the press and did nothing
+
+`setEnabled(false)` only ever changed the drawing — every binder on the container went on firing, and
+`bindAction` takes a bare `GameObject`, so there was nowhere else this could be decided. What the
+player got was a control that looks refused, takes the tap and does nothing at all. It takes the
+input off the object now, which makes it true for every binder including any added later.
+
+**And the report underneath it was about a number, not a mechanic.** `Continue · 45` was quoted
+against a purse the screen never showed: the only coin figure anywhere near it is the run HUD's own
+counter, which is *this run's* coins, not the balance the price is charged against. The panel shows
+`+12 → 4,492` now — what the run was worth, and what that leaves.
+
+### What was checked and found already correct
+
+- **The mascot never leaves the frame** — swept over 12km at 375x667, 360x740 and 740x360, including
+  every descent: 0 frames with the feet below the bottom edge. What put it off screen was the page,
+  not the projection.
+- **A ramp deliberately does not guarantee clearance.** `verify:ramp` asserts 50% of a flight clears
+  a `blocking` panel and the rest is still hittable, on purpose — a ramp is not a way through a wall.
+  With the jump broken that read as the ramp failing too.
+- Every overlay in landscape at 740x360: `RunPause`, `Settings`, `Records` and `Shop` all inside the
+  frame. The shop shows about one and a half rows there, which is the documented scroll-window trade
+  and not new.
+
 ## Known Issues Fixed
 
 Bugs and gotchas hit and fixed while building the platform/save/audio layers — recorded so they don't get
@@ -13700,6 +13968,30 @@ index.
 
 App bugs:
 
+- **`#app` was `height: 100vh`, which on a phone is the viewport with the toolbar COLLAPSED** — so
+  the page was taller than its own window and everything along the game's bottom edge sat behind the
+  browser chrome. Reported three ways (the tank cut off, half the interface missing in landscape,
+  the snail off screen) and invisible to every check here, because they all measure the layout
+  against an element that was itself the wrong size. → "Six Things From A Phone"
+- **The jump used a 12px slop borrowed from a scrolling list**, while sharing one finger with an
+  absolute steer — so a tap that slid 21px, which is an ordinary phone tap mid-reaction, did
+  nothing. → same section
+- **The result panel could not fit five buttons in landscape** and laid them past its own clamped
+  plate; and its height fit was one linear pass over a function that stops being linear at the 44px
+  touch floor. → same section
+- **A disabled kit button still accepted the press** and did nothing — `setEnabled` only changed the
+  drawing. → same section
+- **The quest track drew eight segments for a target of two.** → same section
+- **Four shadow pools re-tessellated a 64-point ellipse and ran `Earcut` on it every frame** —
+  ~830 short-lived objects a frame for marks that never change shape, with the fix already written
+  down for the rail shooter's ship shadow and applied nowhere else. → "Four Ways The Frame Was
+  Paying For Nothing"
+- **And the HUD re-rendered both top-bar readouts to the GPU four times a frame, on a phone only**:
+  `fitRow` sets the base face, measures, then sets the fitted one, so where the row fits the second
+  call never happens and where it does not it ran every frame. → same section
+- **Three HUD `Graphics` were rebuilt every frame**, and underneath that `fillRoundedRect`
+  tessellates every arc at a hardcoded 100 points per corner — ~12 800 path points a frame for the
+  Fever tank, replayed whether or not it was rebuilt. → same section
 - **The exit left a run on the first press, with no way back** — the tap guard protects against a
   drag that begins on the glyph and against nothing else, and a run has no undo. It asks now, over a
   road measured frozen at 0 units across 120 frames. → "Leaving A Run Asks First"

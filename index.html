@@ -11,10 +11,35 @@
       background: #000;
       overflow: hidden;
     }
+    /*
+      ⚠ `dvh`, never `vh`, and this is the whole of "the bottom of the game is off the screen".
+
+      `100vh` is the viewport at its LARGEST — measured with the mobile browser's toolbar
+      collapsed — not the part you can currently see. Inside an in-app webview (Telegram, and the
+      same is true of Safari and Chrome on a phone) that makes the page taller than its own window,
+      and the bottom of it sits behind the browser's chrome. Everything the game puts along its
+      bottom edge is what disappears: the life row, the Fever tank, the result panel's last button,
+      and the mascot itself, whose feet sit at `PLAYER_REST_Y_FRACTION` — about 88% down the frame,
+      i.e. exactly in the band a collapsed toolbar covers.
+
+      Reported as four separate things — "the tank goes off the bottom", "half the interface is
+      missing in landscape", "the snail went off screen and I could not see what it hit" — and
+      every one of them measured *inside* the frame from in here, because from the game's point of
+      view they were: `scale.width/height` are the element's size, and the element was the wrong
+      size. Nothing in a `verify:` script or a viewport sweep can see this; it is a property of the
+      page rather than of the layout.
+
+      `dvh`/`dvw` track the viewport that is actually visible and re-fire `RESIZE` as the toolbar
+      slides, which is what the game's own `bindLayout` is already built to handle. The `vh`/`vw`
+      pair stays as the fallback declaration for anything that predates it — and is exactly right
+      in the one environment where it always was: a Playables iframe, whose height does not move.
+    */
     #app {
       display: flex;
       width: 100vw;
       height: 100vh;
+      width: 100dvw;
+      height: 100dvh;
       align-items: center;
       justify-content: center;
     }

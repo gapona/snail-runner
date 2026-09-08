@@ -34,6 +34,7 @@ import {
   spendSquash,
   type LifeSlotKind,
 } from '../ui/lifeRow'
+import { roundedRectPoints, type RectPoint } from '../ui/roundedRect'
 import { toCssColor } from '../ui/theme'
 import { formatCount } from '../ui/format'
 import { HUD_DEPTH } from './hudDepth'
@@ -163,6 +164,28 @@ export class Hud {
   /** The band as `layout` last solved it, so `update` can re-fit the row without re-solving it. */
   private bar: TopBarLayout | null = null
   private barScale = 1
+  /** What `fitRow` last fitted against, so it can skip a frame that would set the same two faces. */
+  private fittedBar: TopBarLayout | null = null
+  private fittedRow = ''
+  /**
+   * What each of the three `Graphics` readouts was last *drawn* from.
+   *
+   * **⚠ A `Graphics` is rebuilt and replayed on every frame it is redrawn, and these three were
+   * redrawn on every frame full stop.** Measured on the shipped HUD: the tank is **1248**
+   * command-buffer entries and the life row **1326** — eight rounded-rect segments, and five pips
+   * with a fill, a highlight and a stroke each — re-tessellated sixty times a second for readouts
+   * that change when a fruit is banked or a life is lost and at no other time. Hiding the tank
+   * alone took the renderer's own pass below every control in the A/B, which made it the largest
+   * single item in the frame.
+   *
+   * Each signature is built from exactly the values its draw reads, so two frames that agree on it
+   * would have produced the same commands. It is deliberately *not* a timer: the animated terms are
+   * in it, quantised finer than the pixels they move, so a pulse still runs at full rate and a
+   * resting readout costs one string comparison.
+   */
+  private drawnGauge = ''
+  private drawnRow = ''
+  private drawnMilestone = ''
   private shownProgress = 0
   private plaqueScale = 1
 
@@ -353,35 +376,45 @@ export class Hud {
    */
   private drawMilestone(run: RunState, now: number): void {
     const { x, y, w, h } = this.milestoneBox
+    const progress = this.shownProgress
+    const flash = milestoneFlash(this.milestoneAt, now)
+    // **Quantised to the pixel the bar is actually drawn at**, which is exact rather than a
+    // tolerance: the fill's width lands on a whole pixel in the rasteriser anyway, so two frames
+    // whose rounded width agrees draw the identical bar. The run advances this readout
+    // continuously, and without the rounding that would be a rebuild every frame for a bar that
+    // moves one pixel every few of them.
+    const signature = [x, y, w, h, progress > 0 ? 1 : 0, Math.round(Math.max(h, w * progress)), flash.toFixed(3)].join(',')
+
+    if (signature === this.drawnMilestone) return
+
+    this.drawnMilestone = signature
 
     this.milestone.clear()
 
     if (w <= 0) return
 
-    const progress = this.shownProgress
     const radius = h / 2
 
     this.milestone.fillStyle(KIT.plate, 0.7)
-    this.milestone.fillRoundedRect(x, y, w, h, radius)
+    fillRounded(this.milestone, x, y, w, h, radius)
 
     if (progress > 0) {
       this.milestone.fillStyle(KIT.coin, 0.95)
-      this.milestone.fillRoundedRect(x, y, Math.max(h, w * progress), h, radius)
+      fillRounded(this.milestone, x, y, Math.max(h, w * progress), h, radius)
     }
 
     this.milestone.lineStyle(Math.max(1.5, h * 0.22), KIT.muted, 0.6)
-    this.milestone.strokeRoundedRect(x, y, w, h, radius)
+    strokeRounded(this.milestone, x, y, w, h, radius)
 
     // The flash marks the boundary rather than celebrating it: short, and over the bar itself so it
-    // reads as *that* filling rather than as something happening to the whole frame.
-    const flash = milestoneFlash(this.milestoneAt, now)
-
+    // reads as *that* filling rather than as something happening to the whole frame. Computed with
+    // the signature above, because it is one of the terms that decides whether this frame differs.
     if (flash > 0) {
       // **Inside the rule's own box, because the rule spans the band now.** It used to be a
       // centred bar with room either side, so the flash could overhang it; full width, the same
       // overhang runs off the frame.
       this.milestone.fillStyle(0xffffff, flash * 0.8)
-      this.milestone.fillRoundedRect(x, y - h * 0.6, w, h * 2.2, radius * 2)
+      fillRounded(this.milestone, x, y - h * 0.6, w, h * 2.2, radius * 2)
     }
     void run
   }
@@ -485,6 +518,24 @@ export class Hud {
     const pitch = r * 2 + LIFE_PIP.gap * scale
     const cy = this.rowBox.y + this.rowBox.h / 2
     const slid = slideEase(progressIn(this.slide.at, now, LIFE_ENTRY_MS))
+    // **Rebuilt only when the drawn row would differ** — see `drawnRow`. Every term the loop below
+    // reads is here: the box and the scale, the slide, and per element its kind, whether it is
+    // filled, and how far through its entry and its death it is. Those last two are the only
+    // `now`-dependent quantities in the draw, and they are the whole of what makes the row an
+    // animation rather than a picture — so a run in which nothing has been lost or collected
+    // recently is a run in which this readout is not touched at all.
+    let signature = [scale, this.rowBox.x, this.rowBox.y, this.rowBox.w, this.rowBox.h, this.slide.by, slid.toFixed(3)].join(',')
+
+    for (const element of this.elements) {
+      const entry = element.bornAt >= 0 ? progressIn(element.bornAt, now, LIFE_ENTRY_MS) : 1
+      const death = element.diedAt >= 0 ? progressIn(element.diedAt, now, LIFE_SPEND_MS) : -1
+
+      signature += '|' + element.kind + (element.filled ? 1 : 0) + ':' + entry.toFixed(3) + ':' + death.toFixed(3)
+    }
+
+    if (signature === this.drawnRow) return
+
+    this.drawnRow = signature
 
     this.row.clear()
 
@@ -623,6 +674,24 @@ export class Hud {
     const pulse = full ? fullPulse(now) : fillPulse(progressIn(this.bankedAt, now, FRUIT_PULSE_MS))
     const fills = pipFills(fill, FRUIT_GAUGE_PIPS)
 
+    // **⚠ Rebuilt only when the picture would differ, because a `Graphics` is rebuilt AND replayed
+    // every frame it is redrawn.** Eight segments at up to four rounded rects each is **1248
+    // command-buffer entries**, measured on the shipped tank — re-tessellated on `clear()` and
+    // walked again by the renderer, sixty times a second, for a readout that changes when a fruit
+    // is banked and at no other time. Hiding this one object took the renderer's own pass from
+    // 2.2–3.2ms to 1.62ms, which made it the largest single item in the frame.
+    //
+    // **The guard is the drawn values, not a clock.** Everything below reads exactly these, so two
+    // frames with the same signature would produce the same commands; the alpha is set above and
+    // outside it, because that is a property of the object rather than of its geometry and is what
+    // lets the tank yield to the mascot without a rebuild. `pulse` is quantised to a thousandth —
+    // finer than a pixel of the halo it drives, and coarse enough that a resting tank is one string.
+    const signature = `${x},${y},${w},${h},${scale},${body},${lit},${full ? 1 : 0},${pulse.toFixed(3)},${fills.join(',')}`
+
+    if (signature === this.drawnGauge) return
+
+    this.drawnGauge = signature
+
     this.gauge.clear()
 
     for (let i = 0; i < fills.length; i++) {
@@ -633,7 +702,7 @@ export class Hud {
       // The socket: a dark well the fruit sits in, so an unlit segment is a *place* for one rather
       // than a faint one. This is what carries the count when the tank is empty.
       this.gauge.fillStyle(KIT.plate, 0.72)
-      this.gauge.fillRoundedRect(x, top, w, segH, radius)
+      fillRounded(this.gauge, x, top, w, segH, radius)
 
       if (amount > 0) {
         const inset = w * 0.14
@@ -644,16 +713,16 @@ export class Hud {
         const lh = (segH - inset) * amount
 
         this.gauge.fillStyle(body, 1)
-        this.gauge.fillRoundedRect(x + inset / 2, top + inset / 2 + (segH - inset - lh), w - inset, lh, radius * 0.7)
+        fillRounded(this.gauge, x + inset / 2, top + inset / 2 + (segH - inset - lh), w - inset, lh, radius * 0.7)
         // Lit from above, like everything else this game draws.
         this.gauge.fillStyle(lit, 0.5)
-        this.gauge.fillRoundedRect(x + inset, top + inset / 2 + (segH - inset - lh), w - inset * 2, Math.min(lh, segH * 0.3), radius * 0.5)
+        fillRounded(this.gauge, x + inset, top + inset / 2 + (segH - inset - lh), w - inset * 2, Math.min(lh, segH * 0.3), radius * 0.5)
       }
 
       // The rim last, over both states, so a lit and an unlit segment are the same *shape* and the
       // tank reads as one column rather than as two groups.
       this.gauge.lineStyle(Math.max(1.2, w * 0.05), amount > 0 ? lit : KIT.muted, amount > 0 ? 0.9 : 0.5)
-      this.gauge.strokeRoundedRect(x, top, w, segH, radius)
+      strokeRounded(this.gauge, x, top, w, segH, radius)
     }
 
     // **⚠ The full-tank mark is drawn only once the tank IS full.** It used to sit above the
@@ -669,7 +738,7 @@ export class Hud {
 
     if (full) {
       this.gauge.fillStyle(lit, 0.75 + pulse * 0.25)
-      this.gauge.fillRoundedRect(x - over, markY, w + over * 2, thickness, thickness / 2)
+      fillRounded(this.gauge, x - over, markY, w + over * 2, thickness, thickness / 2)
     }
 
     if (pulse > 0.01) {
@@ -679,7 +748,7 @@ export class Hud {
       const top = full ? markY - 2 : y - 2
 
       this.gauge.lineStyle(Math.max(2, w * 0.09), lit, pulse * (full ? 0.5 : 0.75))
-      this.gauge.strokeRoundedRect(x - over * 0.5, top, w + over, y + h - top + 4, radius * 1.6)
+      strokeRounded(this.gauge, x - over * 0.5, top, w + over, y + h - top + 4, radius * 1.6)
     }
   }
 
@@ -698,6 +767,24 @@ export class Hud {
    *
    * Both ends take the *same* factor: the icon and the number are one size by the brief, and a row
    * whose two ends were set at two sizes reads as a heading with a footnote rather than as a row.
+   *
+   * **⚠ And it only re-fits when one of its own inputs has changed, because the measurement is not
+   * free and on a phone it ran twice.** `Text.setFontSize` re-renders the string to a canvas and
+   * re-uploads that canvas to the GPU on every *change* — and the fit is measured by setting the
+   * base face, reading the drawn widths, and then setting the fitted one. Where the row fits
+   * (`fit === 1`, i.e. every desktop frame) the second call never happens and the first is a no-op
+   * after the first frame. Where it does **not** fit — which is a phone, and is the entire reason
+   * this method exists — every frame went base -> measure -> smaller, so both readouts were
+   * re-rendered twice a frame forever.
+   *
+   * Measured in the running game at 375x667: **4.08 `updateText` calls and 4.08 `texImage2D`
+   * uploads a frame**, costing 0.21ms of a 0.35ms HUD pass on a desktop and considerably more of a
+   * phone's, where a texture upload is the expensive half. **The defect is mobile-only by
+   * construction**, which is exactly how it was reported.
+   *
+   * The guard is the *inputs*, not a timer: the two strings and the band. Nothing else can change
+   * what the fit comes out at, so a skipped frame is a frame that would have set the same two font
+   * sizes it already had.
    */
   private fitRow(): void {
     const bar = this.bar
@@ -705,6 +792,15 @@ export class Hud {
     if (bar === null) return
 
     const scale = this.barScale
+    // The whole of what the answer depends on. `bar` is replaced wholesale by `layout`, so its
+    // identity is enough to catch a resize; the two texts are what change during a run.
+    const signature = `${this.distance.text}|${this.coins.text}|${scale}`
+
+    if (this.fittedBar === bar && this.fittedRow === signature) return
+
+    this.fittedBar = bar
+    this.fittedRow = signature
+
     const setFaces = (size: number): void => {
       this.distance.setFontSize(size)
       this.coins.setFontSize(size)
@@ -853,6 +949,35 @@ export const MAX_ROW_SLOTS = MAX_SHIELDS + RUN_LIVES
  * outline of a heart. Both kinds are now one polygon, and `fillPoints`/`strokePoints` over the same
  * list is what guarantees the filled and the hollow states are the same silhouette.
  */
+/**
+ * A rounded rect drawn as a polygon rather than through `fillRoundedRect`.
+ *
+ * **⚠ Only for the two readouts that are on screen for a whole run** — see `ui/roundedRect.ts` for
+ * the hundred-points-per-corner this exists to avoid, and for why every panel and card in the game
+ * should go on using Phaser's own call.
+ */
+/**
+ * `fillPoints`/`strokePoints` as they actually behave.
+ *
+ * **⚠ A `.d.ts` gap, not a cast around a real constraint.** Both are typed `Vector2[]`, and both
+ * implementations read `points[i].x` and `points[i].y` and nothing else
+ * (`Graphics.js`) — so a plain `{ x, y }` is exactly what they want and building 40 `Vector2`s a
+ * redraw would be allocating 35 unused methods apiece. Same shape, and the same reason, as the
+ * `MutableSound` extension `audio.ts` carries for `BaseSound.mute`.
+ */
+interface PointDrawable {
+  fillPoints(points: RectPoint[], closeShape?: boolean): unknown
+  strokePoints(points: RectPoint[], closeShape?: boolean): unknown
+}
+
+function fillRounded(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, radius: number): void {
+  ;(g as unknown as PointDrawable).fillPoints(roundedRectPoints(x, y, w, h, radius), true)
+}
+
+function strokeRounded(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, radius: number): void {
+  ;(g as unknown as PointDrawable).strokePoints(roundedRectPoints(x, y, w, h, radius), true)
+}
+
 function slotPoints(cx: number, cy: number, r: number, kind: LifeSlotKind, sx: number, sy: number): Phaser.Math.Vector2[] {
   return kind === 'heart' ? heartPoints(cx, cy, r, sx, sy) : shieldPoints(cx, cy, r, sx, sy)
 }
