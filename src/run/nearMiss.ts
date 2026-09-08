@@ -84,6 +84,47 @@ export const URGENCY_CAP = 3
  */
 export const NEAR_MISS_BASE = 12
 
+/**
+ * The bottom of the tightness grade — what a pass that *only just* qualified is graded at.
+ *
+ * ## ⚠ Every manoeuvre in the game decayed to `+1`, however dear it was
+ *
+ * `tightness` ran to **zero** at the threshold, so a pass the game had just decided *was* a near
+ * miss was then graded as worth nothing and the payout fell out of `Math.max(1, ...)`. Reported by
+ * pointing at the plaque: the bonuses are laughable, they say 1. Measured across the window, at a
+ * streak of one:
+ *
+ * ```
+ * manoeuvre         tightest   widest   of the window paying under 5
+ * squeeze                 11        1    40%
+ * hop                     29        1    15%
+ * oncoming hop            37        1    15%
+ * ramp                    59        1    10%
+ * hop over three          87        1     5%
+ * ```
+ *
+ * So the dearest manoeuvre in the game — a ramp flight over three things — announced itself as `+1`
+ * at the wide end of a window it had *qualified inside*. A number that small does not read as a
+ * small reward, it reads as the game saying the thing was not worth doing, which is the opposite of
+ * what the whole ladder is for.
+ *
+ * **The fix is to floor the GRADE and not the payout**, and the difference matters: qualifying at
+ * all is a decision and is paid for, while `tightness` goes on saying only how *good* the decision
+ * was. At 0.5 a manoeuvre halves across its window instead of vanishing — a squeeze runs 11 to 6, a
+ * ramp 59 to 30 — and the ordering between the rungs is untouched, because every rung is scaled by
+ * the same term.
+ *
+ * **⚠ Not `NEAR_MISS_BASE`, which is bounded for a reason and stays where it is.** `verify:scoring`
+ * holds it under 20 so that *the streak* is where the numbers come from rather than the base; a
+ * base raised to fix the bottom of the grade would have raised the top with it and made one pass
+ * worth what a run of them should be. The floor moves only the end that was broken.
+ *
+ * The consequence worth checking is that `Math.max(1, ...)` below is now **unreachable** — if the
+ * artificial floor is ever what produces a number again, the grade has come loose from its own
+ * bottom. `verify:scoring` asserts exactly that.
+ */
+export const NEAR_MISS_TIGHTNESS_FLOOR = 0.5
+
 /** How much each unbroken pass adds to the multiplier, and where it stops. */
 export const STREAK_STEP = 0.25
 export const STREAK_MAX = 5
@@ -163,7 +204,9 @@ export function scoreNearMiss(
 ): { miss: NearMiss; streak: StreakState } | null {
   if (!(gap >= 0) || gap >= NEAR_MISS_GAP) return null
 
-  const tightness = 1 - gap / NEAR_MISS_GAP
+  // Graded between the floor and 1 rather than between 0 and 1 — see `NEAR_MISS_TIGHTNESS_FLOOR`
+  // for the `+1` this is written against, and for why the base was left alone.
+  const tightness = NEAR_MISS_TIGHTNESS_FLOOR + (1 - NEAR_MISS_TIGHTNESS_FLOOR) * (1 - gap / NEAR_MISS_GAP)
   const urgency = Math.min(URGENCY_CAP, Math.max(1, closingRatio))
   // **⚠ Commitment is how long AND how irrevocably, and the second half is not decoration.** With
   // the duration alone a ramp flight scored 2.30 against an oncoming hop's 2.29 — two manoeuvres
@@ -233,4 +276,56 @@ export const TIER_COUNT = TIER_THRESHOLDS.length
  */
 export function lateralGap(playerOffsetX: number, otherOffsetX: number, otherHalfWidths: number): number {
   return Math.abs(playerOffsetX - otherOffsetX) - (otherHalfWidths + PLAYER_HALF_WIDTHS)
+}
+
+/**
+ * The clearance between the snail's box and something it went past, in `offsetX` units.
+ *
+ * ## ⚠ A ramp flight scored nothing, and the gap was being measured on one axis at a time
+ *
+ * Reported: the dodging bonus does not work when you fly over a ramp. Measured over every ramp on a
+ * real lap, at `SPEED_CAP`: **0 of 6 scored**, with tightest gaps of 0.07 to 0.44 against a window
+ * of 0.06 — and one of them *negative*.
+ *
+ * The caller chose an axis by whether the snail was airborne: grounded meant lateral, airborne
+ * meant `bodyBand().low - yHigh`, straight down. Both halves are wrong for a flight:
+ *
+ * - **The vertical branch ignored `offsetX` entirely**, so an obstacle in a completely different
+ *   lane was graded as though the snail had flown directly over it. A ramp spans up to 21 segments
+ *   and buffers one to eight obstacles, most of them nowhere near the snail's line.
+ * - **And `settleManoeuvre` grades a manoeuvre on the *tightest* of its buffered passes**, so one
+ *   obstacle crossed early in the ascent — below its top, hence a negative gap — made
+ *   `scoreNearMiss` refuse the **whole flight**, including whatever it had genuinely skimmed.
+ *
+ * **The fix is one expression and it is the ordinary distance between two boxes.** Overlapping in
+ * an axis contributes nothing to the distance; clear in both, and the clearance is the hypotenuse.
+ * So the axis stops being *chosen* and starts falling out of the geometry:
+ *
+ * | | lateral | vertical | graded on |
+ * |---|---|---|---|
+ * | a grounded squeeze past a rock | clear | overlapping | the lateral gap — unchanged |
+ * | a hop that skims a low block | overlapping | clear | the height it cleared it by |
+ * | a flight passing wide of a rock | clear | clear | the diagonal, i.e. correctly not close |
+ * | running under a bee | overlapping | clear | the daylight over the snail's own back |
+ *
+ * That last row is a second thing the old rule got wrong and nobody had reported: a grounded pass
+ * under a flying critter was graded *laterally*, on how far to the side it was, when what the
+ * player actually threaded was the gap over their head.
+ *
+ * **The vertical term is the distance between two intervals, not a subtraction**, which is what
+ * makes passing *under* something work at all — `yLow - high` and `low - yHigh` are the two ways a
+ * pair of bands can be clear of each other, and at most one of them is positive.
+ *
+ * A negative result is unreachable from the run: both axes overlapping is precisely `hits`, and
+ * `resolveObstacles` takes the hit and returns before anything is buffered.
+ */
+export function boxGap(
+  body: { offsetX: number; low: number; high: number },
+  object: { offsetX: number; halfWidths: number; yLow: number; yHigh: number },
+  unitsPerOffset: number,
+): number {
+  const lateral = lateralGap(body.offsetX, object.offsetX, object.halfWidths)
+  const vertical = Math.max(object.yLow - body.high, body.low - object.yHigh) / unitsPerOffset
+
+  return Math.hypot(Math.max(0, lateral), Math.max(0, vertical))
 }

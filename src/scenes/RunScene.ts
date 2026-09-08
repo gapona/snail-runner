@@ -4,6 +4,7 @@ import * as Phaser from 'phaser'
 import { bindAction, bindSteering, type Steering } from '../platform/input'
 import { bindLayout } from '../ui/layout'
 import { launchOverlay } from '../ui/overlay'
+import type { LeavableRun, RunPauseData } from './RunPause'
 import { WorldView } from '../run/WorldView'
 import {
   addShield,
@@ -127,7 +128,7 @@ import { SFX } from '../audio/sfx'
 import {
   breakStreak,
   createStreak,
-  lateralGap,
+  boxGap,
   nearMissTier,
   scoreNearMiss,
   streakMultiplier,
@@ -156,7 +157,7 @@ import { feverSpeedFactor } from '../run/fever'
  * `settleManoeuvre`.
  */
 interface PassedObject {
-  object: { offsetX: number; halfWidths: number; yHigh: number }
+  object: { offsetX: number; halfWidths: number; yLow: number; yHigh: number }
   /** Clearance in road half-widths — lateral on the ground, vertical in the air. */
   gap: number
   /** How fast the two came together, as a multiple of the run's own speed. */
@@ -199,7 +200,7 @@ const DEATH_SHAKE = 0.022
 const DEATH_DUST = 26
 const DEATH_FLASH_ALPHA = 0.3
 
-export class RunScene extends Phaser.Scene {
+export class RunScene extends Phaser.Scene implements LeavableRun {
   private world!: WorldView
   private uiCamera!: Phaser.Cameras.Scene2D.Camera
   private run!: RunState
@@ -537,23 +538,19 @@ export class RunScene extends Phaser.Scene {
     // straight to the menu — so the coins collected, the quest progress and the distance were all
     // lost, because `endRun` is the only place any of that is banked.
     //
-    // Both go through the same door, and that door now **puts the run down rather than ending it**:
-    // the coins and the quest tally are banked exactly as ending banks them, the rest of the run is
-    // snapshotted into the save, and the player is returned to the front screen where Play has
-    // become Continue. See `suspend.ts` for what is kept and what is let go.
+    // **⚠ And then it left immediately, which is a control with no undo behind it.** Firing on the
+    // tap rather than the press is a real guard against a *steer* that begins on the glyph, and it
+    // is no guard at all against a deliberate press the player regrets in the next quarter second —
+    // reported as exactly that. It opens `RunPause` now: the road stops dead (`launchOverlay`
+    // pauses this scene, so the clock, the placer, the collisions and the critters all freeze) and
+    // the dialog says what leaving does before it does it. See `RunPause` for why the safe answer
+    // is the solid button and the leaving one is muted.
     //
-    // **⚠ Except during the tutorial, which ends instead.** Its cards are a hand-placed 900m
-    // stretch taught in an order that does not survive being interrupted — the same argument that
-    // used to gate the stage mode behind it. A tutorial run therefore leaves the way every run used
-    // to: banked, ended, and the panel over it.
-    // **⚠ On the tap, not the press, and this is a safety rule rather than a convention.** An
-    // accidental exit is the worst mistake this game can make — a run is the whole product and
-    // there is no undo — and the one gesture the player makes constantly is a *drag* across the
-    // frame. Firing on the press means a steer that happens to begin on the glyph ends the run;
-    // firing on the tap means a press that goes anywhere is a press the player changed their mind
-    // about. Same rule, and the same reason, as the shop rows and the quest board's collect.
+    // **On the tap for the same reason it always was**: the gesture the player makes constantly is
+    // a drag across the frame, and a press that begins on the glyph and goes somewhere is a press
+    // they changed their mind about. Same rule as the shop rows and the quest board's collect.
     bindAction(this, 'close', { pointer: this.hud.exitTarget, keys: ['ESC'], tap: true }, () =>
-      this.tutorial === null ? this.suspend() : this.endRun(true),
+      launchOverlay(this, 'RunPause', { run: this } satisfies RunPauseData),
     )
 
     bindLayout(this, (width, height) => this.layout(width, height))
@@ -848,26 +845,27 @@ export class RunScene extends Phaser.Scene {
    * one hop, so passes are collected here and settled together — see `settleManoeuvre` for the two
    * moments that happens at and why they differ.
    *
-   * **Lateral on the ground, vertical in the air**, both in road half-widths so `NEAR_MISS_GAP` —
-   * which is derived from a *lateral* residual — means the same thing on either axis. One
-   * `offsetX` unit is `ROAD_WIDTH` world units, which is what converts the vertical one.
+   * **⚠ The axis is not chosen here any more, and choosing it is what broke ramps.** This used to
+   * read lateral on the ground and vertical in the air — so a flight was graded on its height over
+   * an obstacle it may have been three lanes away from, and one obstacle crossed low on the ascent
+   * refused the whole manoeuvre. `boxGap` measures the distance between the two boxes instead and
+   * the axis falls out of it; see its own note for the measurement.
    *
-   * The vertical clearance is measured from the body's own band rather than from its feet, so a
-   * tumble off a ramp is graded on the rectangle it is actually drawn in — see `bodyBand`.
+   * The band is the body's own rather than its feet, so a tumble off a ramp is graded on the
+   * rectangle it is actually drawn in — see `bodyBand`.
    *
    * Nothing needs an invulnerability guard here: both callers return before this while the player
    * cannot be hit, because a pass that costs nothing is not a pass the player made.
    */
-  private notePass(object: { offsetX: number; halfWidths: number; yHigh: number }, closing: number): void {
-    const gap = this.player.grounded
-      ? lateralGap(this.player.offsetX, object.offsetX, object.halfWidths)
-      : (bodyBand({
-          offsetX: this.player.offsetX,
-          y: this.player.y,
-          spinDegrees: spinAngle(this.player),
-        }).low -
-          object.yHigh) /
-        ROAD_WIDTH
+  private notePass(object: { offsetX: number; halfWidths: number; yLow: number; yHigh: number }, closing: number): void {
+    const band = bodyBand({
+      offsetX: this.player.offsetX,
+      y: this.player.y,
+      spinDegrees: spinAngle(this.player),
+    })
+    // One `offsetX` unit is `ROAD_WIDTH` world units, which is what puts the two axes in the same
+    // units as `NEAR_MISS_GAP`.
+    const gap = boxGap({ offsetX: this.player.offsetX, low: band.low, high: band.high }, object, ROAD_WIDTH)
 
     this.passes.push({ object, gap, closing })
   }
@@ -1419,7 +1417,7 @@ export class RunScene extends Phaser.Scene {
     // panel: the panel is where the player is *told*, and a run whose panel never opened — a
     // platform pause, a reload — must not leave a snapshot the front screen would offer to resume.
     this.clearSuspended()
-    launchOverlay(this, 'RunOver', { distance: this.run.distance, coins, run: this, quit })
+    launchOverlay(this, 'RunOver', { distance: this.run.distance, coins, bonus: this.run.bonus, run: this, quit })
   }
 
   /**
@@ -1435,6 +1433,25 @@ export class RunScene extends Phaser.Scene {
    * may never be alive at once — the `glTexture` crash this project has now diagnosed from five
    * directions. That is the whole reason the run comes back as a value rather than as a scene.
    */
+  /**
+   * Whether leaving would put this run down rather than end it — `RunPause`'s one question.
+   *
+   * **⚠ Except during the tutorial, which ends instead.** Its cards are a hand-placed 900m stretch
+   * taught in an order that does not survive being interrupted — the same argument that used to
+   * gate the stage mode behind it. So a tutorial run leaves the way every run used to: banked,
+   * ended, and the panel over it. The dialog reads this to say which of the two is about to happen;
+   * it does not branch on it, because which one is the run's business and not the dialog's.
+   */
+  isSuspendable(): boolean {
+    return this.tutorial === null
+  }
+
+  /** The decision `RunPause` hands back. Both doors bank; only one of them keeps the road. */
+  leaveRun(): void {
+    if (this.isSuspendable()) this.suspend()
+    else this.endRun(true)
+  }
+
   private suspend(): void {
     const coins = this.run.coins - this.bankedCoins
     const snapshot: SuspendedRun = {

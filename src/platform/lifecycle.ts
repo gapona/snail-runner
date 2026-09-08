@@ -12,7 +12,7 @@ import { YTEvents } from './yt'
 // button and the deferred-resume path can never run. `Garage` is deliberately absent, because it is
 // `start`ed rather than launched and is therefore an ordinary gameplay-layer scene as far as this
 // is concerned.
-const OVERLAY_SCENES = new Set(['Settings', 'Shop', 'RunOver', 'Records'])
+const OVERLAY_SCENES = new Set(['Settings', 'Shop', 'RunOver', 'RunPause', 'Records'])
 
 /**
  * Freezes gameplay on `YTEvents.PAUSE` and unfreezes it on `YTEvents.RESUME` — the

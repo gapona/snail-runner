@@ -11632,6 +11632,61 @@ carried, 61 live obstacle buckets); ending it paying only the unbanked remainder
 reload** and the run still offered and resumed at the same seed; and `New run` through its own
 binding discarding the snapshot and starting a fresh one on a different seed.
 
+## Leaving A Run Asks First
+
+`src/scenes/RunPause.ts`, and one line in `RunScene`'s exit binding.
+
+### ⚠ The one control with no undo behind it acted on the first press
+
+Reported in a sentence: pressing the exit mid-run should stop everything and ask whether you really
+mean it, saying that progress is kept.
+
+The exit already fired on the **tap** rather than the press, and that guard is real and is kept — the
+gesture the player makes constantly is a drag across the frame, so a press that begins on the glyph
+and goes somewhere is a press they changed their mind about. What it is no guard against at all is a
+*deliberate* press regretted a quarter of a second later, and a run is the whole product with no
+undo. So the tap opens a dialog and the dialog does the leaving.
+
+- **The road stops dead, and that is `launchOverlay` rather than anything this screen does.** It
+  pauses the caller, so the run's `update` — the clock, the placer, the collisions, the critters and
+  the tutorial's own driver — is frozen for as long as the dialog is up. Measured on a moving run:
+  **0 world units across 120 frames with the dialog open, against 2838 in 60 frames without it.**
+- **A dialog over a road still moving would be the objection that stopped the tutorial's cards**:
+  asking the player to read a question while the thing it is about carries on without them.
+- **The body says what actually happens, and it is two sentences rather than one.** An ordinary run
+  is snapshotted and resumable from the front screen (*"Your progress is saved. Pick this run up
+  again from the menu."*); a tutorial run cannot be resumed part way through — its cards are a
+  hand-placed stretch taught in an order that does not survive being interrupted — so it ends
+  (*"This run will end. The coins you collected are kept."*). Telling the second player the first
+  thing would be the dialog promising something the game is about to not do.
+- **The dialog does not know which of the two it is**, and that is deliberate: `LeavableRun` asks
+  `isSuspendable()` for the *sentence* and calls `leaveRun()` for the *doing*. Which door that opens
+  stays the run's own business, so there is one place that decides and one place that says so.
+  Structural rather than an import of `RunScene`, for `ContinuableRun`'s reason.
+- **The safe answer is the solid button and leaving is muted.** A thumb reaching for the obvious
+  control must not be reaching for the one that ends the run.
+- **⚠ ESC cancels and ENTER confirms, which is deliberately not "ENTER activates the primary".**
+  The primary is chosen for a thumb and a keyboard has no thumb to protect; a player who opened this
+  with ESC can close it or finish it without reaching for the mouse. Both confirmed live by emitting
+  on the scene's own keyboard.
+- **This dialog stops itself before the run acts.** Leaving either starts `MainMenu` or launches the
+  result panel over the run, and an overlay left running would be painted over whatever replaced the
+  thing it was covering — scenes render in registration order, which is the defect `launchOverlay`
+  exists for. Registered in `OVERLAY_SCENES` for the same reason every other overlay is: its own
+  buttons must stay clickable through a platform pause, and its `close` owns the deferred resume.
+
+### Verified in the running game, zero errors throughout
+
+The dialog over a **tutorial** run reading the ending sentence and over a **143m** run reading the
+resumable one; `Keep running` returning to `RunScene`; `Leave run` on the resumable path banking and
+landing on a front screen whose Play reads **Continue** with `New run` beside it; `Leave run` on the
+tutorial path ending into a result panel offering **no continue** (`Again` / `Double coins` / `Menu`),
+which is `quit` doing its one job.
+
+Laid out at 320x568, 375x667, 844x390, 1280x720 and 1920x945: nothing overlaps, nothing leaves the
+frame, and both buttons clear 44px at every one of them — 44/44 exactly at 320x568, which is the fit
+pass doing its work rather than getting lucky.
+
 ## The Mode With An End
 
 **⚠ HISTORY. The stage mode is removed — see "A Run You Can Put Down".** Five stages, a finish
@@ -13146,6 +13201,122 @@ player choosing to **jump** instead of steering — so the dear rungs are exactl
 for a shortened window, and their price has to be computed rather than rounded off. That is why
 `commitment` is a measured duration and not a per-kind constant.
 
+### ⚠ Every manoeuvre in the game decayed to `+1`, and the total was read by nothing
+
+Reported by pointing at the plaque: *if you pass close by there are some laughable bonuses, like 1.*
+Two separate defects behind one sentence, and only the first is about the number on the plaque.
+
+**`tightness` ran to zero at the threshold**, so a pass the game had *just decided was a near miss*
+was then graded as worth nothing and the payout fell out of `Math.max(1, ...)`. Measured across the
+window at a streak of one, before:
+
+| manoeuvre | tightest | widest | of its window paying under 5 |
+|---|---|---|---|
+| squeezed past | 11 | **1** | 40% |
+| hopped it | 29 | **1** | 15% |
+| hopped an oncoming bug | 37 | **1** | 15% |
+| rode a ramp over it | 59 | **1** | 10% |
+| one hop, three objects | 87 | **1** | 5% |
+
+So the dearest manoeuvre in the game announced itself as `+1` at the wide end of a window it had
+qualified inside. A number that small does not read as a small reward; it reads as the game saying
+the thing was not worth doing, which is the opposite of what the ladder is for.
+
+- **The GRADE is floored, not the payout, and the difference is the whole fix.** Qualifying at all
+  is a decision and is paid for; `tightness` goes on saying only how *good* the decision was.
+  `NEAR_MISS_TIGHTNESS_FLOOR` is 0.5, so a manoeuvre halves across its window instead of vanishing
+  — a squeeze runs 12 to 6, a ramp 60 to 31, a hop over three 90 to 46 — and the ordering between
+  the rungs is untouched, because every rung is scaled by the same term.
+- **⚠ Not `NEAR_MISS_BASE`, which is bounded for a reason and did not move.** `verify:scoring`
+  holds it under 20 so that *the streak* is where the numbers come from rather than the base; a base
+  raised to fix the bottom of the grade would have raised the top with it and made one pass worth
+  what a run of them should be. The floor moves only the end that was broken.
+- **The check is the property rather than the constant**: `Math.max(1, ...)` must now be
+  **unreachable**, because the moment the artificial floor produces a number again the grade has
+  come loose from its own bottom. Carried with the old grade as its control, which still bottoms out
+  at 1 on every one of the five.
+
+**And the other half: `RunState.bonus` was accumulated all run and read by nothing at all.** It is
+written on every scoring pass by `earnBonus`, and outside `runState.ts` it had exactly two mentions
+— the suspend snapshot that carries it, and the check that asserts the snapshot carries it. So the
+reward for going near things was a plaque that flashed for a second and a total that existed only
+inside the run. **The sixth piece of authored state this project has found doing nothing**, after
+`cooldownMs`, `fanScale`, `arcRelaid`, `SFX.MILESTONE` and `PICKUP_WEIGHTS` — and the first where
+what the dead state cost was the *feature it belonged to* reading as worthless.
+
+It is a line on the result screen now, `Close passes 340`, between the record and the coins.
+**There rather than in the HUD**, because it is a *total*: the run already announces each pass where
+the player is looking, and a second live counter in a corner would be one more number to read while
+steering. What was missing is the sentence at the end — distance is how far you got, this is what
+you were willing to go near to get there. **The label names the thing that earned it** rather than
+the currency: `Bonus 340` is a number with no story, and this is the only place the game says out
+loud what the plaques were for.
+
+Confirmed on the panel at 1920x945: `520 m` / `Best 2,400 m` / `Close passes 340` / `🪙 +7`, four
+readouts in order with no overlap — the fitted stack absorbing a fifth row without anybody choosing
+a new height, which is what `naturalHeight` measuring itself is for.
+
+### ⚠ A ramp flight paid nothing, and the gap was being measured on one axis at a time
+
+Reported: *the dodging bonus does not work when you fly over a ramp.* It is a bug in what "close"
+means, and it was two bugs.
+
+`notePass` chose its axis by a flag: **lateral when grounded, straight-down vertical when
+airborne.** For a hop over the thing directly underneath, the vertical read is right. For a ramp it
+is not, because a ramp flight is long — up to 21 segments at `MAX_ATTAINABLE_SPEED` — and buffers
+one to eight obstacles, most of them nowhere near the snail's line.
+
+- **The vertical branch ignored `offsetX` entirely**, so an obstacle three lanes away was graded as
+  though the snail had flown directly over it.
+- **And `settleManoeuvre` grades a manoeuvre on the *tightest* of its buffered passes**, so one
+  obstacle crossed early in the ascent — below its top, hence a **negative** gap — made
+  `scoreNearMiss` return `null` and the **whole flight** paid nothing, however well it was flown.
+
+Measured over every ramp on five real laps at the three speeds a run reaches — 77 flights:
+
+| | scored | refused with a negative gap |
+|---|---|---|
+| the axis rule that shipped | 8 | **24** |
+| the box distance | **20** | 0 |
+
+So nearly a third of ramp flights refused themselves outright, and the rest were graded on a number
+that had nothing to do with where the snail was.
+
+**The fix is one expression and it is the ordinary distance between two boxes** (`boxGap`):
+overlapping in an axis contributes nothing, clear in both and the clearance is the hypotenuse. The
+axis stops being *chosen* and falls out of the geometry:
+
+| | lateral | vertical | graded on |
+|---|---|---|---|
+| a grounded squeeze past a rock | clear | overlapping | the lateral gap — unchanged, to the float |
+| a hop that skims a low block | overlapping | clear | the height it cleared it by |
+| a flight passing wide of a rock | clear | clear | the diagonal, i.e. correctly not close |
+| running under a bee | overlapping | clear | the daylight over the snail's own back |
+
+- **That last row is a second defect nobody had reported.** A grounded pass under a flying critter
+  was graded *laterally*, so threading one dead-centre came out **negative** and paid nothing at
+  all — the same refusal, on the manoeuvre the bee exists to demand.
+- **The vertical term is the distance between two intervals rather than a subtraction**, which is
+  what makes passing under something work: `yLow - high` and `low - yHigh` are the two ways a pair
+  of bands can be clear, and at most one is positive.
+- **A negative gap is now unreachable from the run.** Both axes overlapping is precisely `hits`, and
+  `resolveObstacles` takes the hit and returns before anything is buffered.
+- `verify:scoring` holds the four rows above and then drives **every ramp on five real laps at three
+  speeds**, with the shipped axis rule as its control — which still scores 8 and still refuses 24.
+
+**⚠ And the first measurement of this was wrong in a way worth recording**: the probe imported
+`OBSTACLE_DEPTH` from `obstacles.ts`, where it does not live, so every crossing test was `NaN` and
+the answer came back "ramps fly over nothing at all" — a clean, plausible, entirely false finding
+that would have sent the fix somewhere else. *A reimplementation is evidence only for the code it
+actually mirrors*, which this project already records about the sightline harness; an import that
+silently yields `undefined` is the cheapest way to stop mirroring it.
+
+**Live, zero errors**: a real ramp flight (1169ms, the ramp's own air time) buffering its passes and
+being graded at 0.19 rather than on a bogus vertical number, and **not one negative gap across any
+settle**. What was *not* reproduced live is a ramp flight that scores — one ramp turns up per ~40 000
+units of driving and about a quarter of them score, so that rate is measured offline against the
+real placers rather than by driving to it.
+
 ## The Reward Is Announced Where The Player Is Looking
 
 `src/run/rewards.ts` (pure, `npm run verify:scoring`), drawn by `Hud`.
@@ -13528,6 +13699,22 @@ silently reintroduced or re-debugged from scratch. Full detail lives in the sect
 index.
 
 App bugs:
+
+- **The exit left a run on the first press, with no way back** — the tap guard protects against a
+  drag that begins on the glyph and against nothing else, and a run has no undo. It asks now, over a
+  road measured frozen at 0 units across 120 frames. → "Leaving A Run Asks First"
+- **Every manoeuvre in the game announced itself as `+1` at the wide end of its own window**, a ramp
+  flight over three objects included: `tightness` ran to zero at the threshold, so a pass the game
+  had just called a near miss was graded as worth nothing and the number came out of the artificial
+  floor. → "Every manoeuvre in the game decayed to `+1`"
+- **And `RunState.bonus` was written every close pass and read by nothing**, so what the plaques
+  added up to existed only inside the run. Sixth piece of authored state found doing nothing, and
+  the first where the cost was the feature it belonged to reading as worthless. → same section
+- **A ramp flight paid nothing**: the near-miss gap was lateral when grounded and straight-down
+  vertical when airborne, so a flight was graded on its height over an obstacle it might be three
+  lanes from — and one obstacle crossed low on the ascent came out negative, which refused the whole
+  manoeuvre. 24 of 77 ramp flights refused themselves outright. Running under a bee dead-centre had
+  the same defect and nobody had reported it. → "A ramp flight paid nothing"
 
 - **The front screen darkened its own corners**, and the vignette that did it is a lens's artefact
   in a game drawn in flat cel bands. → "The Corners Went Dark"

@@ -8,6 +8,7 @@ import { Settings } from './scenes/Settings'
 import { Shop } from './scenes/Shop'
 import { Garage } from './scenes/Garage'
 import { Records } from './scenes/Records'
+import { RunPause } from './scenes/RunPause'
 
 export const GameConfig: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -36,5 +37,5 @@ export const GameConfig: Phaser.Types.Core.GameConfig = {
    * literal is a rule the next scene added in the wrong place breaks silently. This order is what
    * the list should say anyway.
    */
-  scene: [Boot, Preloader, MainMenu, Garage, RunScene, RunOver, Settings, Shop, Records],
+  scene: [Boot, Preloader, MainMenu, Garage, RunScene, RunOver, RunPause, Settings, Shop, Records],
 }

@@ -90,6 +90,27 @@ const en = {
   resumeRun: 'Continue',
   newRun: 'New run',
   /**
+   * The confirm in front of leaving a run — see `scenes/RunPause.ts`.
+   *
+   * **The body says what happens to the run, and it is not the same sentence twice.** An ordinary
+   * run is *put down* and can be picked up from the front screen; a tutorial run cannot be resumed
+   * half way through, so it ends. Telling the second player the first thing would be the dialog
+   * promising something the game is about to not do.
+   */
+  leaveTitle: 'Leave run?',
+  leaveSaved: 'Your progress is saved. Pick this run up again from the menu.',
+  leaveEnds: 'This run will end. The coins you collected are kept.',
+  leaveKeep: 'Keep running',
+  leaveConfirm: 'Leave run',
+  /**
+   * What the run's close passes added up to, on the result screen.
+   *
+   * **It names the thing that earned it rather than the currency.** "Bonus 340" is a number with no
+   * story; "Close passes 340" is the only place this game says out loud what the plaques were for,
+   * to a player who has just spent a run collecting them.
+   */
+  closePasses: 'Close passes',
+  /**
    * The quest board — see `ui/questBoard.ts`.
    *
    * **A label names the verb and never the sum.** They read `Collect 14 fruit` beside a counter
@@ -297,6 +318,12 @@ const es: Record<StringKey, string> = {
   adTopup: 'Monedas extra',
   resumeRun: 'Continuar',
   newRun: 'Nueva partida',
+  leaveTitle: '¿Salir de la partida?',
+  leaveSaved: 'Tu progreso se guarda. Retoma esta partida desde el menú.',
+  leaveEnds: 'Esta partida terminará. Las monedas que recogiste se conservan.',
+  leaveKeep: 'Seguir jugando',
+  leaveConfirm: 'Salir',
+  closePasses: 'Pasadas cerca',
   questsTitle: 'Misiones',
   questFruit: 'Recoge fruta',
   questNearMiss: 'Pasa cerca',

@@ -7,6 +7,7 @@
 // it ever stops falling out the printed table below goes out of order and the check fails.
 import assert from 'node:assert/strict'
 import {
+  boxGap,
   breakStreak,
   createStreak,
   lateralGap,
@@ -14,6 +15,7 @@ import {
   NEAR_MISS_GAP,
   NEAR_MISS_RESIDUAL,
   NEAR_MISS_SAFETY,
+  NEAR_MISS_TIGHTNESS_FLOOR,
   nearMissTier,
   scoreNearMiss,
   STREAK_MAX,
@@ -25,12 +27,17 @@ import {
 } from '../src/run/nearMiss.ts'
 import {
   JUMP_AIR_MS,
+  JUMP_GRAVITY,
   MAX_ATTAINABLE_SPEED,
+  OBSTACLE_BANDS,
+  OBSTACLE_DEPTH,
+  PLAYER_BODY_H,
   PLAYER_HALF_WIDTHS,
   REACTION_MS,
+  SPEED_BASE,
   SPEED_CAP,
 } from '../src/run/constants.ts'
-import { RAMP_AIR_CONTROL, RAMP_AIR_MS } from '../src/run/ramp.ts'
+import { placeRamps, RAMP_AIR_CONTROL, RAMP_AIR_MS, RAMP_LAUNCH_V, RAMP_SPINS } from '../src/run/ramp.ts'
 import { CRITTER_GAP_Z, CRITTER_KINDS } from '../src/run/critters.ts'
 import {
   announce,
@@ -49,7 +56,7 @@ import {
   plaquePunch,
 } from '../src/run/rewards.ts'
 import { BIOMES, biomeIndexForSegment, biomeRunSegments } from '../src/road/biomes.ts'
-import { obstacleRows, passableLine, placeRunObstacles } from '../src/run/obstacles.ts'
+import { bodyBand, obstacleRows, passableLine, placeRunObstacles } from '../src/run/obstacles.ts'
 import { buildRunCircuit } from '../src/road/circuits.ts'
 import { SEGMENT_LENGTH } from '../src/road/constants.ts'
 import { ROAD_WIDTH } from '../src/road/constants.ts'
@@ -115,6 +122,175 @@ check('tighter always pays more, and nothing else moves', () => {
     assert.ok(scored.miss.points >= previous, 'a tighter pass paid less than a wider one')
     previous = scored.miss.points
   }
+})
+
+check('nothing that qualified as a near miss is announced as worth 1', () => {
+  // **⚠ The defect this is written against: every manoeuvre in the game decayed to `+1`.**
+  // `tightness` ran to zero at the threshold, so a pass the game had *just decided was a near miss*
+  // was graded as worth nothing and the number came out of `Math.max(1, ...)`. A ramp flight over
+  // three objects announced itself as `+1` at the wide end of its own window. Reported by pointing
+  // at the plaque.
+  //
+  // So the check is the property rather than the constant: the artificial floor must be
+  // **unreachable**, because the moment it produces a number again the grade has come loose from
+  // its own bottom. The old grade is carried as the control -- it still bottoms out at 1 on every
+  // one of these, which is what shows this is measuring something.
+  const manoeuvres = [
+    ['squeezed past', 1, 0, 1, 1],
+    ['hopped it', 1, 700, 1, 1],
+    ['hopped an oncoming bug', 1.26, 700, 1, 1],
+    ['rode a ramp over it', 1, 1169, 1, RAMP_AIR_CONTROL],
+    ['one hop, three objects', 1, 700, 3, 1],
+  ]
+  const floor = Math.round(NEAR_MISS_BASE * NEAR_MISS_TIGHTNESS_FLOOR)
+  let worstShipped = Infinity
+  let worstControl = Infinity
+
+  for (const [name, closing, ms, count, air] of manoeuvres) {
+    for (let i = 1; i <= 20; i++) {
+      const gap = NEAR_MISS_GAP * (i / 20) * 0.999
+      const scored = scoreNearMiss(gap, closing, ms, count, 1, createStreak(), 0, air)
+
+      assert.ok(scored, `${name} at ${i}/20 of the window did not score at all`)
+      assert.ok(scored.miss.points >= floor, `${name} paid ${scored.miss.points}, under the grade's own floor`)
+      worstShipped = Math.min(worstShipped, scored.miss.points)
+      // The control: the same pass graded from zero, which is what shipped.
+      const control = Math.max(1, Math.round((scored.miss.points / scored.miss.tightness) * (1 - (i / 20) * 0.999)))
+
+      worstControl = Math.min(worstControl, control)
+    }
+  }
+  console.log(`      worst payout across every manoeuvre and every gap: ${worstShipped}, against ${worstControl} graded from zero`)
+  assert.equal(worstControl, 1, 'the control no longer bottoms out at 1, so this check is measuring nothing')
+})
+
+check('the clearance is the distance between two boxes, not one axis picked by a flag', () => {
+  // **⚠ The defect: the dodging bonus did nothing when you flew off a ramp.** The gap was lateral
+  // when grounded and straight-down-vertical when airborne, so a flight was graded on its height
+  // over an obstacle it might be three lanes away from -- and one obstacle crossed low on the
+  // ascent came out *negative*, which made `scoreNearMiss` refuse the whole manoeuvre.
+  const rock = { offsetX: 0, halfWidths: 0.1, ...OBSTACLE_BANDS.low }
+  const grounded = { offsetX: 0.4, low: 0, high: PLAYER_BODY_H }
+
+  // Unchanged where it was already right: a grounded pass is the lateral arithmetic exactly.
+  assert.ok(
+    Math.abs(boxGap(grounded, rock, ROAD_WIDTH) - lateralGap(grounded.offsetX, rock.offsetX, rock.halfWidths)) < 1e-9,
+    'a grounded squeeze stopped being graded on the lateral gap',
+  )
+
+  // Directly over it and barely clearing: the height is what was cleared, so the height is the grade.
+  const skimming = { offsetX: 0, low: rock.yHigh + 40, high: rock.yHigh + 40 + PLAYER_BODY_H }
+
+  assert.ok(Math.abs(boxGap(skimming, rock, ROAD_WIDTH) - 40 / ROAD_WIDTH) < 1e-9, 'a skimmed hop is not graded on its height')
+
+  // **Wide of it AND high over it is not a close pass**, which is the row the old rule got wrong:
+  // it reported the height alone and called a flight three lanes clear a hair's breadth.
+  const wideAndHigh = { offsetX: 0.9, low: rock.yHigh + 40, high: rock.yHigh + 40 + PLAYER_BODY_H }
+  const oldRule = (rock.yHigh + 40 - rock.yHigh) / ROAD_WIDTH
+
+  assert.ok(boxGap(wideAndHigh, rock, ROAD_WIDTH) > NEAR_MISS_GAP, 'a flight wide of an obstacle still scored as close')
+  assert.ok(oldRule < NEAR_MISS_GAP, 'the control no longer calls a wide flight close, so this is measuring nothing')
+
+  // **And nothing can come out negative unless both axes overlap, which is a hit.** The old rule
+  // could, from a single obstacle crossed below its top, and one of those refused a whole flight.
+  const belowATallOne = { offsetX: 0.9, low: 300, high: 300 + PLAYER_BODY_H }
+  const panel = { offsetX: 0, halfWidths: 0.1, ...OBSTACLE_BANDS.blocking }
+
+  assert.ok(boxGap(belowATallOne, panel, ROAD_WIDTH) >= 0, 'a pass beside a tall obstacle came out negative')
+  assert.ok((300 - panel.yHigh) / ROAD_WIDTH < 0, 'the control stopped going negative, so this is measuring nothing')
+
+  // The mirror, and a second thing the old rule got wrong that nobody had reported: running *under*
+  // a flying critter was graded laterally, so threading it dead-centre came out negative and paid
+  // nothing at all. The clearance over the snail's own back is what the player actually threaded.
+  const bee = { offsetX: 0, halfWidths: 0.17, yLow: 431, yHigh: 741 }
+  const underneath = { offsetX: 0, low: 0, high: PLAYER_BODY_H }
+
+  assert.ok(
+    Math.abs(boxGap(underneath, bee, ROAD_WIDTH) - (bee.yLow - PLAYER_BODY_H) / ROAD_WIDTH) < 1e-9,
+    'passing under a flyer is not graded on the daylight over the snail',
+  )
+  assert.ok(lateralGap(0, bee.offsetX, bee.halfWidths) < 0, 'the control stopped being negative, so this is measuring nothing')
+})
+
+check('a ramp flight scores on the road the placer actually deals', () => {
+  // **The acceptance for the report.** Not a fixture: every ramp on a real lap, flown through the
+  // real arc at the three speeds a run reaches, against the real obstacles.
+  const dt = 1 / 60
+  const flown = (obstacles, ramp, speed, axis) => {
+    const passes = []
+    let y = 0
+    let vy = RAMP_LAUNCH_V
+    let z = ramp.z
+    let first = true
+
+    while (y >= 0 || first) {
+      first = false
+      const fromZ = z
+
+      z += speed * dt
+
+      const spin = ((RAMP_LAUNCH_V - vy) / (2 * RAMP_LAUNCH_V)) * 360 * RAMP_SPINS
+      const band = bodyBand({ offsetX: ramp.offsetX, y, spinDegrees: spin })
+
+      for (const o of obstacles) {
+        const middle = o.z + OBSTACLE_DEPTH / 2
+
+        if (fromZ > middle || middle >= z) continue
+        passes.push(
+          axis === 'box'
+            ? boxGap({ offsetX: ramp.offsetX, low: band.low, high: band.high }, o, ROAD_WIDTH)
+            : (band.low - o.yHigh) / ROAD_WIDTH,
+        )
+      }
+      y += vy * dt - (JUMP_GRAVITY * dt * dt) / 2
+      vy -= JUMP_GRAVITY * dt
+    }
+
+    return passes
+  }
+  const tally = (axis) => {
+    let scored = 0
+    let negative = 0
+    let flights = 0
+
+    for (const seed of [4242, 7, 1234, 99, 555]) {
+      const obstacles = placeRunObstacles(seed, TRACK, TRACK * 3)
+
+      for (const ramp of placeRamps(seed + 1, TRACK, 0, obstacles)) {
+        for (const speed of [SPEED_BASE, SPEED_CAP, MAX_ATTAINABLE_SPEED]) {
+          const passes = flown(obstacles, ramp, speed, axis)
+
+          if (passes.length === 0) continue
+          flights += 1
+
+          const gap = Math.min(...passes)
+
+          if (gap < 0) negative += 1
+          if (scoreNearMiss(gap, 1, RAMP_AIR_MS, passes.length, 1, createStreak(), 0, RAMP_AIR_CONTROL)) scored += 1
+        }
+      }
+    }
+
+    return { scored, negative, flights }
+  }
+  const now = tally('box')
+  const before = tally('vertical')
+
+  console.log(
+    `      ramp flights over real obstacles: ${now.scored}/${now.flights} score (${now.negative} refused for a negative gap), ` +
+      `against ${before.scored}/${before.flights} and ${before.negative} negative on the axis rule that shipped`,
+  )
+  assert.ok(now.scored > 0, 'no ramp flight on any lap scores, i.e. the rung the ladder claims is unreachable')
+  // **The headline number is the refusals, not the scores.** Nearly a third of ramp flights came
+  // out with a negative tightest gap on the shipped rule, and a negative gap is not a small
+  // payout -- `scoreNearMiss` returns null, so the flight paid *nothing at all* however it was
+  // flown. That is the half of the report a player experiences as "it does not work".
+  assert.equal(now.negative, 0, 'a ramp flight still refuses itself with a negative gap')
+  assert.ok(before.negative > 0, 'the control stopped producing a negative gap, so this check is measuring nothing')
+  assert.ok(
+    now.scored > before.scored,
+    `the box rule scored no more ramp flights than the axis rule (${now.scored} against ${before.scored})`,
+  )
 })
 
 check('the ladder is not a table -- it falls out of the three terms', () => {

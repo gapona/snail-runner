@@ -84,6 +84,27 @@ export interface RunOverData {
    * ad attached to that is an ad attached to nothing.
    */
   quit?: boolean
+  /**
+   * What the run's close passes were worth, in points.
+   *
+   * ## ⚠ It was accumulated all run and read by nothing at all
+   *
+   * `RunState.bonus` is written on every scoring pass by `earnBonus` and — until this line — had
+   * exactly two other mentions in the codebase: the suspend snapshot that carries it, and the check
+   * that asserts the snapshot carries it. **Nothing displayed it.** So the reward for going near
+   * things was a plaque that flashed for a second and a total that existed only inside the run, and
+   * a player who asked what the close passes had added up to had nowhere to look.
+   *
+   * It is the sixth piece of authored state this project has found doing nothing, after
+   * `cooldownMs`, `fanScale`, `arcRelaid`, `SFX.MILESTONE` and `PICKUP_WEIGHTS` — and it is the one
+   * that made the reward itself read as worthless, which is how it was reported.
+   *
+   * **Here rather than in the HUD**, because it is a *total*: the run already announces each pass
+   * where the player is looking, and a second live counter in a corner would be one more number to
+   * read while steering. What was missing is the sentence at the end — distance is how far you got,
+   * this is what you were willing to go near to get there.
+   */
+  bonus?: number
 }
 
 /** One world unit is a centimetre; the HUD and this screen both count in metres. */
@@ -118,6 +139,7 @@ export class RunOver extends Phaser.Scene {
   private title!: Phaser.GameObjects.Text
   private distanceText!: Phaser.GameObjects.Text
   private bestText!: Phaser.GameObjects.Text
+  private bonusText!: Phaser.GameObjects.Text
   private coinText!: Phaser.GameObjects.Text
   private againButton!: KitButton
   private menuButton!: KitButton
@@ -142,6 +164,7 @@ export class RunOver extends Phaser.Scene {
 
   private metres = 0
   private coins = 0
+  private bonus = 0
   private doubled = false
   private continuing = false
   private quit = false
@@ -172,6 +195,7 @@ export class RunOver extends Phaser.Scene {
   create(data: RunOverData) {
     this.metres = Math.floor(data.distance / UNITS_PER_METRE)
     this.coins = data.coins
+    this.bonus = Math.max(0, Math.round(data.bonus ?? 0))
     this.doubled = false
     this.continuing = false
     this.run = data.run ?? null
@@ -223,6 +247,7 @@ export class RunOver extends Phaser.Scene {
     this.title = kitTitle(this, this.metres > previousBest ? t('newBest') : t('runOver'))
     this.distanceText = this.add.text(0, 0, '', { fontFamily: 'Arial', fontSize: 52, color: toCssColor(KIT.active) }).setOrigin(0.5)
     this.bestText = this.add.text(0, 0, '', { fontFamily: 'Arial', fontSize: 16, color: toCssColor(KIT.muted) }).setOrigin(0.5)
+    this.bonusText = this.add.text(0, 0, '', { fontFamily: 'Arial', fontSize: 18, color: toCssColor(KIT.active) }).setOrigin(0.5)
     this.coinText = this.add.text(0, 0, '', { fontFamily: 'Arial', fontSize: 22, color: toCssColor(KIT.coin) }).setOrigin(0.5)
     this.divider = kitDivider(this)
 
@@ -335,6 +360,9 @@ export class RunOver extends Phaser.Scene {
   private refresh(best: number): void {
     this.distanceText.setText(`${formatCount(this.metres)} m`)
     this.bestText.setText(`${t('best')} ${formatCount(best)} m`)
+    // Blank rather than a zero, for `coinText`'s reason: a run that never went near anything has
+    // nothing to report, and `0` reads as a score rather than as an absence.
+    this.bonusText.setText(this.bonus > 0 ? `${t('closePasses')} ${formatCount(this.bonus)}` : '')
     this.coinText.setText(this.coins > 0 ? `🪙 +${this.coins}` : '')
   }
 
@@ -521,6 +549,7 @@ export class RunOver extends Phaser.Scene {
     this.title.setFontSize(26 * scale)
     this.distanceText.setFontSize(52 * scale)
     this.bestText.setFontSize(16 * scale)
+    this.bonusText.setFontSize(18 * scale)
     this.coinText.setFontSize(22 * scale)
     this.continueButton?.setFontSize(22 * scale)
     this.continueCoinsButton?.setFontSize(17 * scale)
@@ -534,6 +563,8 @@ export class RunOver extends Phaser.Scene {
       this.distanceText.height +
       BEST_GAP * scale +
       this.bestText.height +
+      BEST_GAP * scale +
+      this.bonusText.height +
       COIN_GAP * scale +
       this.coinText.height
     // Summed over whatever is actually on the panel — three buttons, or five when the continue is
@@ -578,7 +609,9 @@ export class RunOver extends Phaser.Scene {
     this.distanceText.setPosition(width / 2, y + this.distanceText.height / 2)
     y += this.distanceText.height + BEST_GAP * scale
     this.bestText.setPosition(width / 2, y + this.bestText.height / 2)
-    y += this.bestText.height + COIN_GAP * scale
+    y += this.bestText.height + BEST_GAP * scale
+    this.bonusText.setPosition(width / 2, y + this.bonusText.height / 2)
+    y += this.bonusText.height + COIN_GAP * scale
     this.coinText.setPosition(width / 2, y + this.coinText.height / 2)
     y += this.coinText.height + DIVIDER_GAP * scale
 
