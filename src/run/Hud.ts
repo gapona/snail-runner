@@ -16,6 +16,8 @@ import {
   pipFills,
   segmentOffsetY,
   type GaugeBox,
+  gaugeBleed,
+  GAUGE_HALO_FRACTION,
 } from '../ui/fruitGauge'
 import {
   LIFE_ENTRY_MS,
@@ -33,8 +35,11 @@ import {
   spendFlash,
   spendSquash,
   type LifeSlotKind,
+  lifeRowBleed,
+  LIFE_PIP_STROKE_FRACTION,
 } from '../ui/lifeRow'
 import { roundedRectPoints, type RectPoint } from '../ui/roundedRect'
+import { BakedGraphics } from '../ui/bakedGraphics'
 import { toCssColor } from '../ui/theme'
 import { formatCount } from '../ui/format'
 import { HUD_DEPTH } from './hudDepth'
@@ -113,9 +118,9 @@ export class Hud {
   /** The band's own wash, and the milestone rule along its bottom. */
   private readonly wash: Phaser.GameObjects.Image
   /** The survivability row — shields and hearts, one line, drawn rather than set as text. */
-  private readonly row: Phaser.GameObjects.Graphics
+  private readonly row: BakedGraphics
   /** The Fever tank. */
-  private readonly gauge: Phaser.GameObjects.Graphics
+  private readonly gauge: BakedGraphics
   /**
    * The one reward plaque, in the strip the player is already reading the road out of.
    *
@@ -236,8 +241,12 @@ export class Hud {
       .setAlpha(EXIT_ALPHA)
       .setDepth(HUD_DEPTH)
     this.milestone = scene.add.graphics().setDepth(HUD_DEPTH)
-    this.row = scene.add.graphics().setDepth(HUD_DEPTH)
-    this.gauge = scene.add.graphics().setDepth(HUD_DEPTH)
+    // **Baked rather than replayed**: between them these two were a quarter of the frame, redrawn
+    // a handful of times in a run and re-tessellated sixty times a second. See `BakedGraphics`.
+    this.row = new BakedGraphics(scene, 'hud-life-row')
+    this.gauge = new BakedGraphics(scene, 'hud-fruit-gauge')
+    this.row.setDepth(HUD_DEPTH)
+    this.gauge.setDepth(HUD_DEPTH)
   }
 
   /**
@@ -281,7 +290,9 @@ export class Hud {
   }
 
   get gameObjects(): Phaser.GameObjects.GameObject[] {
-    return [this.wash, this.distance, this.coins, this.row, this.gauge, this.plaqueText, this.plaqueSub, this.milestone, this.exit]
+    // The baked pair contribute their `Image`; their authoring `Graphics` is off the display list
+    // entirely, so no camera has to know about it.
+    return [this.wash, this.distance, this.coins, this.row.image, this.gauge.image, this.plaqueText, this.plaqueSub, this.milestone, this.exit]
   }
 
   /**
@@ -516,7 +527,6 @@ export class Hud {
     const scale = this.rowScale
     const r = LIFE_PIP.radius * scale
     const pitch = r * 2 + LIFE_PIP.gap * scale
-    const cy = this.rowBox.y + this.rowBox.h / 2
     const slid = slideEase(progressIn(this.slide.at, now, LIFE_ENTRY_MS))
     // **Rebuilt only when the drawn row would differ** — see `drawnRow`. Every term the loop below
     // reads is here: the box and the scale, the slide, and per element its kind, whether it is
@@ -537,15 +547,44 @@ export class Hud {
 
     this.drawnRow = signature
 
-    this.row.clear()
+    if (this.rowBox.w <= 0) {
+      this.row.hide()
 
-    if (this.rowBox.w <= 0) return
+      return
+    }
+
+    // **Sized for this frame's animation, not for the worst one the row could ever run.** Everything
+    // that puts ink outside the box is in `lifeRowBleed`, and the texture is repainted only when the
+    // picture changes anyway — so a still row pays for a still row. See `BakedGraphics`.
+    const pad = lifeRowBleed(scale, this.slide.by)
+
+    this.row.redraw(
+      this.rowBox.x - pad.x,
+      this.rowBox.y - pad.y,
+      this.rowBox.w + pad.x * 2,
+      this.rowBox.h + pad.y * 2,
+      (g) => this.paintRow(g, pad.x, pad.y, now, scale, r, pitch, slid),
+    )
+  }
+
+  /** The row's own paint, in texture-local coordinates — `(0, 0)` is the padded texture's corner. */
+  private paintRow(
+    g: Phaser.GameObjects.Graphics,
+    padX: number,
+    padY: number,
+    now: number,
+    scale: number,
+    r: number,
+    pitch: number,
+    slid: number,
+  ): void {
+    const cy = padY + this.rowBox.h / 2
 
     for (let i = 0; i < this.elements.length; i++) {
       const element = this.elements[i]
       const dying = element.diedAt >= 0
       const entering = element.bornAt >= 0 && now - element.bornAt < LIFE_ENTRY_MS
-      let cx = this.rowBox.x + slotCentreX(i, scale)
+      let cx = padX + slotCentreX(i, scale)
       let sx = 1
       let sy = 1
       let flash = 0
@@ -578,22 +617,22 @@ export class Hud {
       // gone — reported as looking strange. Same shape, same colour, no fill: the row is then one
       // vocabulary from end to end and the only thing that varies is whether an element is still
       // there.
-      if (element.kind === 'heart') this.strokeSlot(cx, cy, r, 'heart', HEART_COLOR, 0.45, 1, 1)
+      if (element.kind === 'heart') this.strokeSlot(g, cx, cy, r, 'heart', HEART_COLOR, 0.45, 1, 1)
 
       if (!element.filled && !dying) continue
 
       const colour = element.kind === 'shield' ? PICKUP_COLORS.shield.mid : this.heartColour()
       const light = element.kind === 'shield' ? PICKUP_COLORS.shield.light : HEART_LIGHT
 
-      this.fillSlot(cx, cy, r, element.kind, colour, 1, sx, sy)
+      this.fillSlot(g, cx, cy, r, element.kind, colour, 1, sx, sy)
       // Lit from above, like everything else this game draws.
-      this.fillSlot(cx, cy - r * 0.22, r * 0.42, element.kind, light, 0.5, sx, sy)
-      this.strokeSlot(cx, cy, r, element.kind, light, 0.92, sx, sy)
+      this.fillSlot(g, cx, cy - r * 0.22, r * 0.42, element.kind, light, 0.5, sx, sy)
+      this.strokeSlot(g, cx, cy, r, element.kind, light, 0.92, sx, sy)
 
       if (flash > 0) {
         // The flash is what says *now*. Drawn over the squash and slightly proud of it, so the
         // element reads as struck rather than as glowing.
-        this.fillSlot(cx, cy, r * 1.12, element.kind, 0xffffff, flash * 0.85, sx, sy)
+        this.fillSlot(g, cx, cy, r * 1.12, element.kind, 0xffffff, flash * 0.85, sx, sy)
       }
     }
   }
@@ -617,15 +656,15 @@ export class Hud {
 
 
   /** One element's body, in whichever of the two silhouettes it is. */
-  private fillSlot(cx: number, cy: number, r: number, kind: LifeSlotKind, colour: number, alpha: number, sx: number, sy: number): void {
-    this.row.fillStyle(colour, alpha)
-    this.row.fillPoints(slotPoints(cx, cy, r, kind, sx, sy), true)
+  private fillSlot(g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number, kind: LifeSlotKind, colour: number, alpha: number, sx: number, sy: number): void {
+    g.fillStyle(colour, alpha)
+    g.fillPoints(slotPoints(cx, cy, r, kind, sx, sy), true)
   }
 
   /** One element's outline — the half that survives the downscale to a phone. */
-  private strokeSlot(cx: number, cy: number, r: number, kind: LifeSlotKind, colour: number, alpha: number, sx: number, sy: number): void {
-    this.row.lineStyle(Math.max(1.5, r * 0.15), colour, alpha)
-    this.row.strokePoints(slotPoints(cx, cy, r, kind, sx, sy), true)
+  private strokeSlot(g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number, kind: LifeSlotKind, colour: number, alpha: number, sx: number, sy: number): void {
+    g.lineStyle(Math.max(1.5, r * LIFE_PIP_STROKE_FRACTION), colour, alpha)
+    g.strokePoints(slotPoints(cx, cy, r, kind, sx, sy), true)
   }
 
   /**
@@ -644,7 +683,11 @@ export class Hud {
   private drawGauge(run: RunState, now: number, mascot?: MascotBox): void {
     const { x, y, w, h, scale } = this.gaugeBox
 
-    if (w <= 0) return
+    if (w <= 0) {
+      this.gauge.hide()
+
+      return
+    }
 
     // **The one thing about this readout the mascot is allowed to change, and it is not where it
     // is.** The road is wider than the frame at the player's own row, so a column on the right edge
@@ -692,64 +735,74 @@ export class Hud {
 
     this.drawnGauge = signature
 
-    this.gauge.clear()
+    // **Sized from the constants that put ink outside the box**, because the texture clips and a
+    // margin nobody derived is a halo that goes missing on a narrow frame. See `gaugeBleed`.
+    const pad = gaugeBleed(w)
 
-    for (let i = 0; i < fills.length; i++) {
-      // Index 0 is the bottom, which is the whole point of the axis.
-      const top = y + h - segmentOffsetY(i, scale) - segH
-      const amount = fills[i]
+    this.gauge.redraw(x - pad.x, y - pad.y, w + pad.x * 2, h + pad.y * 2, (g) => {
+      // Texture-local: the tank's own corner is the pad in from the texture's, which is what leaves
+      // room for the mark above it and the halo around it.
+      const x = pad.x
+      const y = pad.y
 
-      // The socket: a dark well the fruit sits in, so an unlit segment is a *place* for one rather
-      // than a faint one. This is what carries the count when the tank is empty.
-      this.gauge.fillStyle(KIT.plate, 0.72)
-      fillRounded(this.gauge, x, top, w, segH, radius)
 
-      if (amount > 0) {
-        const inset = w * 0.14
-        // **A partial segment is drawn as a partial segment, not rounded away.** Banking fruit is
-        // already quantised, so this only ever bites while a Fever drains — and it is the one thing
-        // in the tank that says it is emptying rather than sitting still. It shrinks from the top,
-        // because that is the direction it filled from.
-        const lh = (segH - inset) * amount
+      for (let i = 0; i < fills.length; i++) {
+        // Index 0 is the bottom, which is the whole point of the axis.
+        const top = y + h - segmentOffsetY(i, scale) - segH
+        const amount = fills[i]
 
-        this.gauge.fillStyle(body, 1)
-        fillRounded(this.gauge, x + inset / 2, top + inset / 2 + (segH - inset - lh), w - inset, lh, radius * 0.7)
-        // Lit from above, like everything else this game draws.
-        this.gauge.fillStyle(lit, 0.5)
-        fillRounded(this.gauge, x + inset, top + inset / 2 + (segH - inset - lh), w - inset * 2, Math.min(lh, segH * 0.3), radius * 0.5)
+        // The socket: a dark well the fruit sits in, so an unlit segment is a *place* for one rather
+        // than a faint one. This is what carries the count when the tank is empty.
+        g.fillStyle(KIT.plate, 0.72)
+        fillRounded(g, x, top, w, segH, radius)
+
+        if (amount > 0) {
+          const inset = w * 0.14
+          // **A partial segment is drawn as a partial segment, not rounded away.** Banking fruit is
+          // already quantised, so this only ever bites while a Fever drains — and it is the one thing
+          // in the tank that says it is emptying rather than sitting still. It shrinks from the top,
+          // because that is the direction it filled from.
+          const lh = (segH - inset) * amount
+
+          g.fillStyle(body, 1)
+          fillRounded(g, x + inset / 2, top + inset / 2 + (segH - inset - lh), w - inset, lh, radius * 0.7)
+          // Lit from above, like everything else this game draws.
+          g.fillStyle(lit, 0.5)
+          fillRounded(g, x + inset, top + inset / 2 + (segH - inset - lh), w - inset * 2, Math.min(lh, segH * 0.3), radius * 0.5)
+        }
+
+        // The rim last, over both states, so a lit and an unlit segment are the same *shape* and the
+        // tank reads as one column rather than as two groups.
+        g.lineStyle(Math.max(1.2, w * 0.05), amount > 0 ? lit : KIT.muted, amount > 0 ? 0.9 : 0.5)
+        strokeRounded(g, x, top, w, segH, radius)
       }
 
-      // The rim last, over both states, so a lit and an unlit segment are the same *shape* and the
-      // tank reads as one column rather than as two groups.
-      this.gauge.lineStyle(Math.max(1.2, w * 0.05), amount > 0 ? lit : KIT.muted, amount > 0 ? 0.9 : 0.5)
-      strokeRounded(this.gauge, x, top, w, segH, radius)
-    }
+      // **⚠ The full-tank mark is drawn only once the tank IS full.** It used to sit above the
+      // segments at all times, on the argument that a target which appears only when it is met is not
+      // a target — and on a frame that is a stray grey bar floating over the readout, which is how it
+      // was reported. What actually says where full is, and says it from the first frame of a run, is
+      // the column of eight empty sockets: the target is the length of the tank. So this is not a
+      // target marker at all, it is the *reached* state — and it arrives, and pulses, at the one
+      // moment the player has something to do about it.
+      const over = w * FULL_MARK.overhang
+      const thickness = Math.max(2, w * FULL_MARK.thickness)
+      const markY = y - thickness - FULL_MARK.standoff * w
 
-    // **⚠ The full-tank mark is drawn only once the tank IS full.** It used to sit above the
-    // segments at all times, on the argument that a target which appears only when it is met is not
-    // a target — and on a frame that is a stray grey bar floating over the readout, which is how it
-    // was reported. What actually says where full is, and says it from the first frame of a run, is
-    // the column of eight empty sockets: the target is the length of the tank. So this is not a
-    // target marker at all, it is the *reached* state — and it arrives, and pulses, at the one
-    // moment the player has something to do about it.
-    const over = w * FULL_MARK.overhang
-    const thickness = Math.max(2, w * FULL_MARK.thickness)
-    const markY = y - thickness - FULL_MARK.standoff * w
+      if (full) {
+        g.fillStyle(lit, 0.75 + pulse * 0.25)
+        fillRounded(g, x - over, markY, w + over * 2, thickness, thickness / 2)
+      }
 
-    if (full) {
-      this.gauge.fillStyle(lit, 0.75 + pulse * 0.25)
-      fillRounded(this.gauge, x - over, markY, w + over * 2, thickness, thickness / 2)
-    }
+      if (pulse > 0.01) {
+        // The pulse is a halo around the whole tank rather than a change of its colour: the colour is
+        // already carrying which of the two states this is in, and a readout that says two things
+        // with one channel says neither.
+        const top = full ? markY - 2 : y - 2
 
-    if (pulse > 0.01) {
-      // The pulse is a halo around the whole tank rather than a change of its colour: the colour is
-      // already carrying which of the two states this is in, and a readout that says two things
-      // with one channel says neither.
-      const top = full ? markY - 2 : y - 2
-
-      this.gauge.lineStyle(Math.max(2, w * 0.09), lit, pulse * (full ? 0.5 : 0.75))
-      strokeRounded(this.gauge, x - over * 0.5, top, w + over, y + h - top + 4, radius * 1.6)
-    }
+        g.lineStyle(Math.max(2, w * GAUGE_HALO_FRACTION), lit, pulse * (full ? 0.5 : 0.75))
+        strokeRounded(g, x - over * 0.5, top, w + over, y + h - top + 4, radius * 1.6)
+      }
+    })
   }
 
 
@@ -895,6 +948,12 @@ export class Hud {
 
   destroy(): void {
     for (const object of this.gameObjects) object.destroy()
+    // **Their `Image` is in `gameObjects` and the rest of them is not.** A `BakedGraphics` also owns
+    // an off-list `Graphics` and an entry in the texture manager, and neither is reachable from the
+    // display list — so a scene restart would leak both, and the next run's constructor would find
+    // its own key taken. `destroy` is idempotent about the image the loop above already took.
+    this.row.destroy()
+    this.gauge.destroy()
   }
 }
 

@@ -18,6 +18,41 @@ export const ROAD_WIDTH = 2000
 /** How many segments ahead of the camera are considered for drawing each frame. */
 export const DRAW_DISTANCE = 300
 
+/**
+ * The smallest a road quad may be, in screen pixels, before the mesh merges segments into it.
+ *
+ * **`DRAW_DISTANCE` is how far the player can see; this is how finely that distance is drawn**,
+ * and until this existed they were the same number — every one of the 300 segments wrote its own
+ * six quads whatever it projected to, so the mesh submitted 1800 quads a frame at every speed,
+ * viewport and camera height. Measured in the running game at 375x667 over a live run, that is
+ * badly out of proportion to what reaches the screen: the ground band is 253 pixels tall, and
+ * the segments beyond the 120th account for a median of **8.4 of them** (28 at their worst, on a
+ * crest) while costing 60% of the mesh.
+ *
+ * **⚠ Half a pixel rather than a whole one, because the context is multisampled.** The obvious
+ * floor is one pixel — the resolution limit, so a merge bounded by it can only hide something
+ * that could not be resolved — and it is wrong here: `config.ts` leaves `antialias` on, the
+ * context reports `SAMPLES = 4`, and four samples resolve vertical detail at *half*-pixel
+ * spacing. The framebuffer's sample spacing is the resolution limit; the pixel grid is not.
+ * Measured against the shipped-before mesh at three camera positions, on the road alone with
+ * everything else hidden so the comparison is deterministic to the pixel:
+ *
+ * ```
+ * floor   quads submitted   band pixels changed   worst channel delta
+ * (none)            1800                     —                     —
+ * 0.5                564            1.3 – 6.2%               20 – 46
+ * 1.0                372            2.9 – 9.4%               33 – 65
+ * ```
+ *
+ * Every changed pixel at 0.5 lies in a 30-row strip at the horizon and the near field is
+ * identical to the byte, which is what a floor stated in screen pixels buys: the near segments
+ * are tens of pixels tall, so nothing down there ever merges.
+ *
+ * **Raising it is a decision about detail and lowering it is free.** At 0 the mesh emits one span
+ * per drawn segment, which is what `verify:road` uses as its control.
+ */
+export const MIN_ROAD_SPAN_PX = 0.5
+
 /** Camera height above the road surface, in world units. */
 export const CAMERA_HEIGHT = 1000
 

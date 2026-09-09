@@ -41,6 +41,7 @@ import { groundPointInto, type GroundPoint } from './groundProjection'
 import { distanceIndexOf, WORLD_LAYER, worldDepth } from './worldDepth'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowClipFade, shadowScale } from './shadows'
 import { createShadow } from './shadowArt'
+import { hidePooled, showPooled } from './pooled'
 
 /**
  * How many bugs may be drawn at once.
@@ -163,6 +164,16 @@ export class CritterSprites {
     // were each a real defect and none of them was this one. See `assertWorldIsSingleCamera` for why
     // the guard that exists for exactly this could not see it.
     this.gameObjects = this.slots.flatMap((slot) => [slot.shadow, slot.image, ...slot.wings])
+    // **Off the display list from the moment they exist.** A pool hides what it *stopped* using by
+    // walking from `used` to last frame's count, and a slot that has never been used is on no such
+    // walk — so without this the slack sits in the scene's list for its whole life, iterated twice a
+    // frame by the two cameras for nothing. See `pooled.ts`.
+    for (const slot of this.slots) {
+      hidePooled(slot.image)
+      hidePooled(slot.shadow)
+      for (const wing of slot.wings) hidePooled(wing)
+    }
+
   }
 
   /**
@@ -360,9 +371,9 @@ export class CritterSprites {
     }
 
     for (let i = used; i < previousUsed; i++) {
-      this.slots[i].image.setVisible(false)
-      this.slots[i].shadow.setVisible(false)
-      for (const wing of this.slots[i].wings) wing.setVisible(false)
+      hidePooled(this.slots[i].image)
+      hidePooled(this.slots[i].shadow)
+      for (const wing of this.slots[i].wings) hidePooled(wing)
     }
 
     this.usedLastFrame = used
@@ -396,13 +407,13 @@ export class CritterSprites {
     const clipped = shadowRect ? shadowClipFade(shadowRect.y, markHeight, clip) : 0
 
     if (shadowRect && clipped > 0) {
-      slot.shadow.setVisible(true)
+      showPooled(slot.shadow)
       slot.shadow.setPosition(shadowRect.x, shadowRect.y)
       slot.shadow.setDisplaySize(shadowRect.w * SHADOW_FOOTPRINT.width * scale, markHeight)
       slot.shadow.setAlpha(shadowAlpha(height) * SHADOW_DARKEN * clipped)
       slot.shadow.setDepth(worldDepth(distanceIndex, WORLD_LAYER.shadow))
     } else {
-      slot.shadow.setVisible(false)
+      hidePooled(slot.shadow)
     }
 
     if (slot.key !== key) {
@@ -416,7 +427,7 @@ export class CritterSprites {
       slot.key = key
     }
 
-    image.setVisible(true)
+    showPooled(image)
     image.setPosition(rect.x, rect.y)
     image.setDisplaySize(rect.w, Math.max(1, rect.h))
     // Set every frame, because the distance changes every frame — see `worldDepth.ts` for what a
@@ -481,7 +492,7 @@ export class CritterSprites {
     const key = critterWingKey(kind)
 
     if (!spec || !this.textures.exists(key)) {
-      for (const wing of slot.wings) wing.setVisible(false)
+      for (const wing of slot.wings) hidePooled(wing)
       return
     }
 
@@ -503,7 +514,7 @@ export class CritterSprites {
     slot.wings.forEach((wing, i) => {
       const right = i === 0
 
-      wing.setVisible(true)
+      showPooled(wing)
       wing.setTexture(key)
       wing.setOrigin(right ? px : 1 - px, py)
       wing.setFlipX(!right)

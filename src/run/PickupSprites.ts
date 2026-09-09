@@ -28,6 +28,7 @@ import {
 } from './shadows'
 import { groundPointInto, type GroundPoint } from './groundProjection'
 import { createShadow } from './shadowArt'
+import { hidePooled, showPooled } from './pooled'
 
 /**
  * Every pickup on screen, from a fixed pool.
@@ -110,6 +111,15 @@ export class PickupSprites {
     }))
 
     this.gameObjects = this.slots.flatMap((slot) => [slot.shadow, slot.image])
+    // **Off the display list from the moment they exist.** A pool hides what it *stopped* using by
+    // walking from `used` to last frame's count, and a slot that has never been used is on no such
+    // walk — so without this the slack sits in the scene's list for its whole life, iterated twice a
+    // frame by the two cameras for nothing. See `pooled.ts`.
+    for (const slot of this.slots) {
+      hidePooled(slot.image)
+      hidePooled(slot.shadow)
+    }
+
   }
 
   render(
@@ -232,8 +242,8 @@ export class PickupSprites {
     }
 
     for (let i = used; i < previousUsed; i++) {
-      this.slots[i].image.setVisible(false)
-      this.slots[i].shadow.setVisible(false)
+      hidePooled(this.slots[i].image)
+      hidePooled(this.slots[i].shadow)
     }
 
     this.usedLastFrame = used
@@ -243,8 +253,8 @@ export class PickupSprites {
   refreshTextures(): void {
     for (const slot of this.slots) {
       slot.key = ''
-      slot.image.setVisible(false)
-      slot.shadow.setVisible(false)
+      hidePooled(slot.image)
+      hidePooled(slot.shadow)
     }
   }
 
@@ -279,7 +289,7 @@ export class PickupSprites {
     const clipped = shadowRect ? shadowClipFade(shadowRect.y, markHeight, clip) : 0
 
     if (shadowRect && clipped > 0) {
-      slot.shadow.setVisible(true)
+      showPooled(slot.shadow)
       slot.shadow.setPosition(shadowRect.x, shadowRect.y)
       slot.shadow.setDisplaySize(shadowRect.w * SHADOW_FOOTPRINT.width * scale, markHeight)
       // The mark dims with the icon: a full-strength shadow under a greyed pickup reads as the
@@ -288,7 +298,7 @@ export class PickupSprites {
       slot.shadow.setAlpha(shadowAlpha(height) * SHADOW_DARKEN * link * clipped * available)
       slot.shadow.setDepth(worldDepth(distanceIndex, WORLD_LAYER.shadow))
     } else {
-      slot.shadow.setVisible(false)
+      hidePooled(slot.shadow)
     }
 
     if (slot.key !== key) {
@@ -300,7 +310,7 @@ export class PickupSprites {
       slot.key = key
     }
 
-    image.setVisible(true)
+    showPooled(image)
     image.setPosition(rect.x, rect.y)
     image.setDisplaySize(rect.w, Math.max(1, rect.h))
     // A pickup wins a tie against an obstacle on the same segment — it is the small bright thing

@@ -332,8 +332,14 @@ export interface Steering {
   /**
    * Where the player is asking to be, as a fraction across the frame, and whether they are asking
    * at all. Advance by `dtMs` of wall clock — the keyboard's virtual point moves at a rate.
+   *
+   * `deltaFraction` is how far the request moved since the last read, and it is **not** derivable
+   * by the caller from two `targetFraction`s: a fresh press has to report *zero* movement however
+   * far the new column is from the old one, or a relative control would leap the whole way there on
+   * the frame the thumb lands. Same reason the tap path records its own press position rather than
+   * reading `pointer.downX` — the state the answer needs belongs to the binder.
    */
-  read(dtMs: number): { targetFraction: number; active: boolean }
+  read(dtMs: number): { targetFraction: number; active: boolean; deltaFraction: number }
   /** Force-releases every source. Called automatically on focus loss and scene pause. */
   clear(): void
 }
@@ -370,6 +376,8 @@ export function bindSteering(scene: Phaser.Scene, action: string, sources: Steer
 
   let pointerFraction: number | null = null
   let keyboardPoint = 0.5
+  // What `read` last handed back, so a delta can be reported without the caller having to keep it.
+  let lastFraction: number | null = null
 
   const bindKeys = (keys: string[] | undefined, held: HeldSourceSet, id: string) => {
     for (const key of keys ?? []) {
@@ -440,6 +448,7 @@ export function bindSteering(scene: Phaser.Scene, action: string, sources: Steer
     heldLeft.clear()
     heldRight.clear()
     pointerFraction = null
+    lastFraction = null
   }
 
   scene.game.events.on(Phaser.Core.Events.BLUR, clear)
@@ -458,23 +467,40 @@ export function bindSteering(scene: Phaser.Scene, action: string, sources: Steer
 
   return {
     read(dtMs: number) {
+      // A frame with no input breaks the chain: the next press is a new gesture and must report no
+      // movement, however far away it lands.
+      const since = (fraction: number) => (lastFraction === null ? 0 : fraction - lastFraction)
+
       if (pointerFraction !== null) {
         // The virtual point follows the finger, so switching back to the keyboard resumes from
         // where the snail actually is rather than from wherever the point was left.
         keyboardPoint = pointerFraction
 
-        return { targetFraction: pointerFraction, active: true }
+        const deltaFraction = since(pointerFraction)
+
+        lastFraction = pointerFraction
+
+        return { targetFraction: pointerFraction, active: true, deltaFraction }
       }
 
       const axis = axisFrom(heldLeft.isHeld, heldRight.isHeld)
 
-      if (axis === 0) return { targetFraction: keyboardPoint, active: false }
+      if (axis === 0) {
+        lastFraction = null
+
+        return { targetFraction: keyboardPoint, active: false, deltaFraction: 0 }
+      }
 
       const dtSec = Number.isFinite(dtMs) && dtMs > 0 ? dtMs / 1000 : 0
+      const before = keyboardPoint
 
       keyboardPoint = Math.min(1, Math.max(0, keyboardPoint + axis * speed * dtSec))
 
-      return { targetFraction: keyboardPoint, active: true }
+      const deltaFraction = lastFraction === null ? 0 : keyboardPoint - before
+
+      lastFraction = keyboardPoint
+
+      return { targetFraction: keyboardPoint, active: true, deltaFraction }
     },
     clear,
   }

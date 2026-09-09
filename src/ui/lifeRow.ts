@@ -39,6 +39,14 @@
  * one interface rather than two designs, and against the standing report that the readouts are too
  * small: the widest row this game can show is four elements, 129px on a desktop.
  */
+/**
+ * How thick an element's outline is, as a fraction of its radius.
+ *
+ * Named because `lifeRowBleed` has to know it: the stroke is centred on the shape's own path, so
+ * half of it lies outside whatever the fill reaches.
+ */
+export const LIFE_PIP_STROKE_FRACTION = 0.15
+
 export const LIFE_PIP = {
   radius: 13,
   /** Space between two elements, edge to edge. What stops the row reading as one bar. */
@@ -232,4 +240,57 @@ export function spendFlash(t: number): number {
 
 function clamp01(value: number): number {
   return value < 0 ? 0 : value > 1 ? 1 : value
+}
+
+/**
+ * The most an element is ever drawn at, as a multiple of its own radius.
+ *
+ * Sampled from the two curves that stretch one rather than written down beside them: `entryBounce`
+ * overshoots on arrival and `spendSquash` flattens on the way out, and either could be re-tuned
+ * without anyone remembering a constant over here. The flash is drawn at `1.12` of the radius on
+ * top of whichever is running, which is where that term comes from.
+ */
+export const LIFE_PIP_MAX_STRETCH = (() => {
+  let most = 1
+
+  // Finely enough that a check sampling the same curves cannot find a taller point than this did
+  // — which is what a bound has to be, and what a hundred samples was not: `verify:ui` walks 200
+  // and caught the peak between two of them on its first run.
+  for (let i = 0; i <= 1000; i++) {
+    const t = i / 1000
+    const squash = spendSquash(t)
+
+    most = Math.max(most, entryBounce(t), squash.x, squash.y)
+  }
+
+  return most * 1.12
+})()
+
+/**
+ * How far outside its own box the row can draw, in screen pixels.
+ *
+ * **The row is baked into a texture and anything past it is clipped**, so this is a bound rather
+ * than a margin — see `ui/bakedGraphics.ts`. Three things put ink outside `lifeRowBox`: an element
+ * still flying in is up to one slot to the left of home (`entryOffset` reaches 1), the hearts slide
+ * by whole slots when a shield arrives or goes, and a stretched element is `LIFE_PIP_MAX_STRETCH`
+ * of its radius where the box allows it one.
+ *
+ * `slideSlots` is this frame's slide rather than a worst case, because the caller knows it and a
+ * texture sized per redraw costs nothing extra — a bound that has to cover every animation the row
+ * could ever run is a bigger texture on every frame that runs none of them.
+ */
+export function lifeRowBleed(scale: number, slideSlots: number): { x: number; y: number } {
+  const r = LIFE_PIP.radius * scale
+  const pitch = r * 2 + LIFE_PIP.gap * scale
+  // **⚠ A stroke is centred on its path, so half of it is outside the shape.** Left out of the
+  // first version of this, which made a struck element's outline land exactly on the texture's
+  // edge — correct to the arithmetic and a pixel short in practice, since the size is rounded up
+  // to whole pixels and the outline is drawn on both sides of the path.
+  const outline = Math.max(1.5, r * LIFE_PIP_STROKE_FRACTION) / 2
+  const stretch = r * LIFE_PIP_MAX_STRETCH - r + outline
+
+  // **Per axis, because the row only ever travels sideways.** One pad for both would make the
+  // texture as tall as it is wide during a slide — 312px for a 33px readout — which is a lot of
+  // transparent fill for a movement that happens along one of them.
+  return { x: pitch * (1 + Math.abs(slideSlots)) + stretch, y: stretch }
 }

@@ -11,6 +11,7 @@ import { INK, OBSTACLE_MATERIALS } from './artPalette'
 import { RAMP_HEIGHT, type Ramp } from './ramp'
 import { distanceIndexOf, WORLD_LAYER, worldDepth } from './worldDepth'
 import { groundPointInto, type GroundPoint } from './groundProjection'
+import { hidePooled, showPooled } from './pooled'
 
 /** The one texture, drawn rather than loaded — a ramp has no render and needs none. */
 export const RAMP_TEXTURE = 'ramp-wedge'
@@ -191,6 +192,12 @@ export class RampSprites {
     )
     this.cropped = this.slots.map(() => false)
     this.gameObjects = this.slots
+    // **Off the display list from the moment they exist.** A pool hides what it *stopped* using by
+    // walking from `used` to last frame's count, and a slot that has never been used is on no such
+    // walk — so without this the slack sits in the scene's list for its whole life, iterated twice a
+    // frame by the two cameras for nothing. See `pooled.ts`.
+    for (const slot of this.slots) hidePooled(slot)
+
   }
 
   render(
@@ -238,7 +245,7 @@ export class RampSprites {
 
         const image = this.slots[used]
 
-        image.setVisible(true)
+        showPooled(image)
         image.setPosition(rect.x, rect.y)
         image.setDisplaySize(rect.w, rect.h)
         // Where it stands INSIDE its segment -- see `distanceIndexOf`.
@@ -259,7 +266,7 @@ export class RampSprites {
       }
     }
 
-    for (let i = used; i < previousUsed; i++) this.slots[i].setVisible(false)
+    for (let i = used; i < previousUsed; i++) hidePooled(this.slots[i])
     this.usedLastFrame = used
   }
 

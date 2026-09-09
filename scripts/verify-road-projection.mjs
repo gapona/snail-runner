@@ -25,6 +25,7 @@ import {
 } from '../src/road/decorVariation.ts'
 import { createScreenPoint, project, wrapZ } from '../src/road/project.ts'
 import { createRungQuad, rungQuadInto } from '../src/road/surface.ts'
+import { planSpans, spanIsFull } from '../src/road/spans.ts'
 import {
   alignSegmentCount,
   buildStraightTrack,
@@ -108,6 +109,7 @@ import {
   ROAD_WIDTH,
   RUMBLE_LENGTH,
   DRAW_DISTANCE,
+  MIN_ROAD_SPAN_PX,
   FOG_STEPS,
   PALETTE_COLUMNS,
   groundPaletteIndex,
@@ -3522,6 +3524,114 @@ check('approaching the horizon the ground is lighter and less saturated than the
   console.log(
     `    one row short of the horizon, worst margins over 63 biome/theme pairs: ${(worstSat * 100).toFixed(1)} points of saturation (${worstSatAt}), ${(worstLight * 100).toFixed(1)} of lightness (${worstLightAt}); the last row is the sky exactly`,
   )
+})
+
+// ---------------------------------------------------------------------------------------------
+// The road mesh's far field: how many segments one quad covers. See src/road/spans.ts.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A run of per-segment screen heights shaped like a real frame: tens of pixels near the camera,
+ * falling away to well under one at the horizon, with a crest hiding a stretch in the middle.
+ */
+function sampleHeights() {
+  const heights = []
+
+  for (let n = 0; n < DRAW_DISTANCE; n++) {
+    // The projected height of a segment falls as roughly 1/n^2 -- near ones are tens of pixels and
+    // the far half is a small fraction of one.
+    heights.push(n >= 140 && n < 160 ? 0 : 900 / ((n + 6) * (n + 6)))
+  }
+
+  return heights
+}
+
+check('spans: every drawn segment lands in exactly one span, and a cull breaks the run', () => {
+  const heights = sampleHeights()
+  const spans = planSpans(heights, MIN_ROAD_SPAN_PX)
+  const drawn = heights.filter((h) => h > 0).length
+
+  assert.equal(
+    spans.reduce((a, b) => a + b, 0),
+    drawn,
+    'a span plan must cover every drawn segment and no culled one',
+  )
+  assert.ok(spans.every((n) => n >= 1), 'a span covering no segment would be an empty quad')
+
+  // The cull at 140..159 has to end a span rather than being swallowed into one: the geometry
+  // there is discontinuous, and a trapezoid reaching across it would be drawn over the hill.
+  let walked = 0
+  const before = heights.slice(0, 140).filter((h) => h > 0).length
+
+  for (const n of spans) {
+    walked += n
+    if (walked >= before) break
+  }
+
+  assert.equal(walked, before, 'a cull must close the open span exactly where it starts')
+})
+
+check('spans: a merge can only ever hide something under the floor', () => {
+  const heights = sampleHeights()
+  const spans = planSpans(heights, MIN_ROAD_SPAN_PX)
+  let n = 0
+  let worst = 0
+
+  for (const length of spans) {
+    // Skip the segments a cull dropped, exactly as the planner does.
+    while (heights[n] <= 0) n++
+
+    let height = 0
+    let closing = 0
+
+    for (let i = 0; i < length; i++) {
+      closing = heights[n]
+      height += closing
+      n++
+    }
+
+    // A span is emitted the moment it *reaches* the floor, so its height is the floor plus at most
+    // whatever the segment that closed it added. That is the whole bound: what a merge hides is
+    // bounded by the size of the thing that hid it.
+    assert.ok(
+      height <= MIN_ROAD_SPAN_PX + closing + 1e-9,
+      `a span covered ${height.toFixed(3)}px, past the floor plus its closing segment`,
+    )
+    // Only the merged ones are interesting: a single segment tall enough to close a span on its
+    // own is the near field, which is exactly what the floor leaves alone.
+    if (length > 1) worst = Math.max(worst, height)
+  }
+
+  console.log(`    tallest span covering more than one segment: ${worst.toFixed(2)}px, floor ${MIN_ROAD_SPAN_PX}px`)
+})
+
+check('spans: the floor is what buys the cut, and zero is the shipped-before mesh', () => {
+  const heights = sampleHeights()
+  const drawn = heights.filter((h) => h > 0).length
+  const control = planSpans(heights, 0)
+  const shipped = planSpans(heights, MIN_ROAD_SPAN_PX)
+
+  // The control is the mesh as it shipped: one span per drawn segment, nothing merged.
+  assert.equal(control.length, drawn, 'at a floor of zero every drawn segment must be its own span')
+  assert.ok(control.every((n) => n === 1), 'a floor of zero may not merge anything')
+  assert.ok(
+    shipped.length < drawn * 0.75,
+    `the floor bought only ${drawn - shipped.length} of ${drawn} spans, which is not worth the merge`,
+  )
+
+  console.log(`    ${drawn} drawn segments -> ${shipped.length} spans at ${MIN_ROAD_SPAN_PX}px (control, 0px: ${control.length})`)
+})
+
+check('spans: the floor is the framebuffer sample spacing, not its pixel spacing', () => {
+  // `config.ts` leaves `antialias` on and the context comes back with SAMPLES = 4, which resolves
+  // vertical detail at half-pixel spacing. A whole pixel would be the right floor on a
+  // single-sampled framebuffer and is too coarse on this one -- see MIN_ROAD_SPAN_PX.
+  assert.ok(
+    MIN_ROAD_SPAN_PX > 0 && MIN_ROAD_SPAN_PX <= 0.5,
+    'the span floor must be positive and no coarser than a 4x multisampled framebuffer resolves',
+  )
+  assert.ok(spanIsFull(10, 9.5, 0.5), 'half a pixel must close a span at the floor')
+  assert.ok(!spanIsFull(10, 9.6, 0.5), 'less than the floor must not')
 })
 
 console.log(`${passed} checks passed`)

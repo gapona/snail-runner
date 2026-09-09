@@ -25,6 +25,9 @@ import {
   MAX_COLUMN_HEIGHT_FRACTION,
   pipFills,
   segmentOffsetY,
+  gaugeBleed,
+  GAUGE_HALO_FRACTION,
+  FULL_MARK,
 } from '../src/ui/fruitGauge.ts'
 import {
   LIFE_ENTRY_MS,
@@ -41,6 +44,9 @@ import {
   slotCentreX,
   spendFlash,
   spendSquash,
+  lifeRowBleed,
+  LIFE_PIP_MAX_STRETCH,
+  LIFE_PIP_STROKE_FRACTION,
 } from '../src/ui/lifeRow.ts'
 import {
   FEVER_FRUIT_TARGET,
@@ -1899,6 +1905,139 @@ check('a fast flick across the road is a steer, which is what the distance backs
   assert.ok(!isJumpTap(200, 0, 100), 'a 200px flick in 100ms is a dodge, not a jump')
   assert.ok(!isJumpTap(120, 0, 333), 'a held 120px steer is not a jump either')
   assert.ok(!isJumpTap(0, JUMP_TAP_SLOP_PX + 1, 50), 'the backstop applies on both axes')
+})
+
+// ---------------------------------------------------------------------------------------------
+// The two baked readouts: how far outside its own box each one draws. See src/ui/bakedGraphics.ts.
+// ---------------------------------------------------------------------------------------------
+
+check('the fruit tank bleed covers everything it draws outside its box', () => {
+  // Three widths, from the narrowest phone to a desktop.
+  for (const w of [18, 28, 46]) {
+    const bleed = gaugeBleed(w)
+    const over = w * FULL_MARK.overhang
+    const thickness = Math.max(2, w * FULL_MARK.thickness)
+    const halo = Math.max(2, w * GAUGE_HALO_FRACTION)
+
+    // Recomputed from the exported constants rather than read off the function, so that moving
+    // `FULL_MARK` or the halo without moving the bleed is a failed check rather than a clipped
+    // halo on somebody's phone. The texture crops silently — that is the whole reason this exists.
+    assert.ok(bleed.x >= over - 1e-9, `w=${w}: the full mark overhangs ${over} and the pad is ${bleed.x}`)
+    assert.ok(bleed.x >= over * 0.5 + halo / 2 - 1e-9, `w=${w}: the halo reaches past the pad sideways`)
+    assert.ok(
+      bleed.y >= thickness + FULL_MARK.standoff * w + 2 + halo / 2 - 1e-9,
+      `w=${w}: the mark and its halo reach past the pad above the tank`,
+    )
+    assert.ok(bleed.y >= 4 + halo / 2 - 1e-9, `w=${w}: the halo reaches past the pad below the tank`)
+  }
+
+  console.log(
+    `    tank pad ${gaugeBleed(28).x.toFixed(1)}px sideways and ${gaugeBleed(28).y.toFixed(1)}px above, at w=28`,
+  )
+})
+
+check('the life row bleed covers a slot in flight, and one pitch alone does not', () => {
+  // The worst an element is drawn at, sampled from the curves rather than restated: `entryBounce`
+  // overshoots on arrival, `spendSquash` flattens on the way out, and the flash sits at 1.12 of
+  // the radius on top of whichever is running.
+  let stretch = 1
+
+  for (let i = 0; i <= 200; i++) {
+    const t = i / 200
+    const squash = spendSquash(t)
+
+    stretch = Math.max(stretch, entryBounce(t), squash.x, squash.y)
+  }
+  stretch *= 1.12
+
+  assert.ok(
+    LIFE_PIP_MAX_STRETCH >= stretch - 1e-9,
+    `the stated stretch ${LIFE_PIP_MAX_STRETCH.toFixed(3)} is under the measured ${stretch.toFixed(3)}`,
+  )
+
+  for (const scale of [0.8, 1, 1.35]) {
+    const r = LIFE_PIP.radius * scale
+    const pitch = r * 2 + LIFE_PIP.gap * scale
+
+    for (const slide of [0, 1, -3]) {
+      const bleed = lifeRowBleed(scale, slide)
+      // An arriving element is a whole slot to the left of home (`entryOffset` reaches 1) *and*
+      // the hearts may be sliding by `slide` slots at the same time, and it is drawn `stretch` of
+      // its radius where the box allows it one.
+      const outline = Math.max(1.5, r * LIFE_PIP_STROKE_FRACTION) / 2
+      const worst = pitch * (1 + Math.abs(slide)) + r * stretch - r + outline
+
+      assert.ok(
+        bleed.x >= worst - 1e-9,
+        `scale ${scale}, slide ${slide}: pad ${bleed.x.toFixed(1)} under the ${worst.toFixed(1)} it has to cover`,
+      )
+      // Vertically the row does not travel, so the pad only has to cover a stretched element.
+      assert.ok(bleed.y >= r * stretch - r + outline - 1e-9, `scale ${scale}: the vertical pad clips a struck element`)
+      // The control: one pitch is the obvious pad and it is not enough — an element can be a slot
+      // from home while the row slides under it, and it is drawn bigger than its slot as it lands.
+      if (slide !== 0) assert.ok(pitch < worst, `scale ${scale}, slide ${slide}: one pitch would have been enough, so this check proves nothing`)
+    }
+  }
+
+  console.log(
+    `    row pad ${lifeRowBleed(1, 0).x.toFixed(1)}x${lifeRowBleed(1, 0).y.toFixed(1)}px at rest, ` +
+      `${lifeRowBleed(1, -3).x.toFixed(1)}x${lifeRowBleed(1, -3).y.toFixed(1)}px mid-slide (scale 1)`,
+  )
+})
+
+// ---------------------------------------------------------------------------------------------
+// The pools keep their slack off the display list -- see src/run/pooled.ts.
+// ---------------------------------------------------------------------------------------------
+
+check('every pool shows and hides through `pooled.ts`, including the slots it creates', () => {
+  // A source-grep for `Preloader`'s reason: every one of these imports `phaser` as a value, so no
+  // logic suite can reach them. What it guards is a silent no-op — a pool that keeps calling
+  // `setVisible(false)` on its slack leaves it on the display list, where it is iterated twice a
+  // frame for nothing, and *nothing about the frame looks wrong*.
+  const pools = [
+    'src/road/RoadSprites.ts',
+    'src/run/ObstacleSprites.ts',
+    'src/run/PickupSprites.ts',
+    'src/run/CritterSprites.ts',
+    'src/run/RampSprites.ts',
+  ]
+
+  for (const path of pools) {
+    const src = readFileSync(path, 'utf8')
+
+    assert.match(src, /from '\.[./]*(?:run\/)?pooled'/, `${path}: does not import the pooled helpers`)
+    assert.ok(src.includes('showPooled('), `${path}: never shows a slot through the helper`)
+    assert.ok(src.includes('hidePooled('), `${path}: never hides a slot through the helper`)
+
+    // The constructor case is the one worth asserting separately: `render` only hides what it
+    // *stopped* using, so a slot that has never been used is on no walk at all and would sit on
+    // the list for the life of the scene. Which is most of a pool.
+    const built = src.slice(0, src.indexOf('this.gameObjects ='))
+
+    assert.ok(
+      src.slice(built.length, built.length + 900).includes('hidePooled('),
+      `${path}: does not take its freshly built slots off the display list`,
+    )
+  }
+})
+
+check('the camera guard walks the pools as well as the display list', () => {
+  // With the slack off the list, a guard that runs once at create and reads only `children.list`
+  // sees no pooled object at all — every slot starts hidden. The union is what keeps it as strong
+  // as it was, and this is the check that stops it being "simplified" back.
+  const src = readFileSync('src/scenes/RunScene.ts', 'utf8')
+  const guard = src.slice(src.indexOf('private assertWorldIsSingleCamera'))
+  const body = guard.slice(0, guard.indexOf('\n  }\n'))
+
+  assert.ok(body.includes('this.children.list'), 'the guard must still ask the display list')
+  assert.ok(body.includes('this.worldObjects()'), 'the guard must also cover the pooled slack')
+  assert.ok(body.includes('new Set'), 'the two halves have to be a union, or an object is checked twice')
+
+  // The control: the shipped-before guard read the display list alone, which is exactly the shape
+  // that would go quiet now.
+  const control = 'const both = this.children.list.filter('
+
+  assert.ok(!body.includes(control), 'the display-list-only guard is the arrangement this replaced')
 })
 
 console.log(`${passed} checks passed`)

@@ -49,6 +49,8 @@ import {
   STEER_EDGE_MARGIN,
 } from '../src/run/constants.ts'
 import { FIXED_STEP_MS } from '../src/race/constants.ts'
+import { STEER_PRESETS, relativeTarget } from '../src/run/steerTuning.ts'
+import { createSteerProbe, steerReport, stepSteerProbe } from '../src/run/steerProbe.ts'
 import { billboardRectInto, createBillboardRect } from '../src/road/billboard.ts'
 import { groundPointInto } from '../src/run/groundProjection.ts'
 import {
@@ -1372,6 +1374,143 @@ check('the idle clock fires inside its own window and never twice at once', () =
       `two glances ${gap}ms apart, outside the ${LOOK_BACK.minGapMs}..${LOOK_BACK.maxGapMs} window`,
     )
   }
+})
+
+/* ------------------------------------------------------------------ *
+ * The steering tuning, and the probe that measures it
+ *
+ * Both exist because of a report that the controls are awkward on a phone -- see
+ * `src/run/steerTuning.ts` and `scripts/measure-steering.mjs`. What is asserted here is only what
+ * a check can hold: that switching nothing changes nothing, that the presets are the points they
+ * are documented as, and that the two pure rules do what their docstrings claim.
+ * ------------------------------------------------------------------ */
+
+check('the spring defaults are the shipped constants, so nothing moved by existing', () => {
+  const input = { targetOffsetX: 0.6, active: true }
+  let bare = createPlayerState()
+  let named = createPlayerState()
+
+  for (let i = 0; i < 60; i++) {
+    bare = stepPlayer(bare, input, 16.67)
+    named = stepPlayer(named, input, 16.67, { stiffness: PLAYER_STIFFNESS, damping: PLAYER_DAMPING })
+  }
+
+  assert.equal(bare.offsetX, named.offsetX, 'passing the shipped constants explicitly is not a no-op')
+})
+
+check('the `current` preset is the shipped pair exactly, so the comparison carries its own control', () => {
+  assert.equal(STEER_PRESETS.current.stiffness, PLAYER_STIFFNESS)
+  assert.equal(STEER_PRESETS.current.damping, PLAYER_DAMPING)
+})
+
+check('all three presets are stable, and `snappy` beats `current` on every axis at once', () => {
+  const solved = {}
+
+  for (const [name, preset] of Object.entries(STEER_PRESETS)) {
+    const response = playerResponse(preset.stiffness, preset.damping)
+
+    assert.ok(Number.isFinite(response.timeConstantSec), `${name} diverges`)
+    assert.ok(response.timeConstantSec > 0, `${name} does not settle`)
+    solved[name] = response
+
+    // ...and the closed form has to agree with the integrator it claims to solve, or every number
+    // printed on the panel is a measurement of a fiction.
+    let state = createPlayerState()
+    const options = { stiffness: preset.stiffness, damping: preset.damping, clamp: false }
+    let worst = 0
+
+    for (let i = 0; i < 240; i++) {
+      state = stepPlayer(state, { targetOffsetX: 1, active: true }, 16.67, options)
+      worst = Math.max(worst, Math.abs(state.offsetX - 1))
+    }
+    assert.ok(Math.abs(state.offsetX - 1) < 0.01, `${name} does not reach its target (${state.offsetX.toFixed(3)})`)
+    assert.ok(worst < 2, `${name} diverges under the real tick (worst ${worst.toFixed(2)})`)
+  }
+
+  assert.ok(solved.viscous.dampingRatio > 1, 'viscous overshoots, so it is not the viscous one')
+  assert.ok(solved.snappy.timeConstantSec < solved.current.timeConstantSec, 'snappy is not faster')
+  assert.ok(solved.snappy.dampingRatio > solved.current.dampingRatio, 'snappy overshoots more, not less')
+  assert.ok(solved.snappy.lagPerPointerSpeed < solved.current.lagPerPointerSpeed, 'snappy trails a drag more')
+
+  console.log(
+    `    viscous zeta ${solved.viscous.dampingRatio.toFixed(2)} tau ${(solved.viscous.timeConstantSec * 1000).toFixed(0)}ms | ` +
+      `current ${solved.current.dampingRatio.toFixed(2)} ${(solved.current.timeConstantSec * 1000).toFixed(0)}ms | ` +
+      `snappy ${solved.snappy.dampingRatio.toFixed(2)} ${(solved.snappy.timeConstantSec * 1000).toFixed(0)}ms`,
+  )
+})
+
+check('a relative drag integrates the request, and does not read the snail back', () => {
+  // Three arguments and none of them is a position: `relativeTarget` cannot see where the snail
+  // got to, so the spring's own lag cannot feed back into the request. Asserted as the arity, the
+  // same way `stepCritters` is held to being unable to steer.
+  assert.equal(relativeTarget.length, 3, 'relativeTarget takes something other than (previous, delta, sensitivity)')
+
+  const sensitivity = 1.75
+  let target = 0
+
+  for (let i = 0; i < 10; i++) target = relativeTarget(target, 0.05, sensitivity)
+
+  assert.ok(
+    Math.abs(target - 10 * 0.05 * sensitivity) < 1e-9,
+    `ten equal pushes did not sum (${target.toFixed(4)})`,
+  )
+  assert.equal(relativeTarget(0.4, 0, sensitivity), 0.4, 'a still finger moved the request')
+})
+
+check('the probe files a gesture, not a frame, and only counts visible overshoots', () => {
+  const snailHalf = PLAYER_HALF_WIDTHS
+  const dt = 16.67
+
+  /** Drives the probe: the thumb slides to `to` over `frames`, then holds while the snail settles. */
+  const gesture = (to, snailAt) => {
+    const probe = createSteerProbe()
+    let want = 0
+    let now = 0
+
+    for (let i = 0; i < 12; i++) {
+      want += to / 12
+      stepSteerProbe(probe, { want, active: true, at: snailAt(now), gapPx: 0, snailHalf, now })
+      now += dt
+    }
+    for (let i = 0; i < 90; i++) {
+      stepSteerProbe(probe, { want, active: true, at: snailAt(now), gapPx: 0, snailHalf, now })
+      now += dt
+    }
+    stepSteerProbe(probe, { want, active: false, at: snailAt(now), gapPx: 0, snailHalf, now })
+
+    return probe
+  }
+
+  // **A thumb sliding for twelve frames is one ask, not twelve.** This is the rule the first
+  // version of the probe got wrong: it opened a request per movement, filed 35 of them for one
+  // drag, and reported that 34 never arrived because each was superseded by the next.
+  const sliding = gesture(0.6, () => 0.6)
+
+  assert.equal(sliding.requests.length, 1, `one slide filed ${sliding.requests.length} gestures`)
+
+  // The arrival clock starts when the thumb *stops*, so a snail already there arrives at once.
+  assert.equal(sliding.requests[0].arriveMs, 0, 'a snail already on the target reported a settling time')
+
+  // A snail that never gets there reports no arrival rather than a wrong one.
+  const missed = gesture(0.6, () => 0)
+
+  assert.equal(missed.requests[0].arriveMs, null, 'a snail that never arrived reported a time anyway')
+  assert.ok(missed.requests[0].travel > 0.5, 'the gesture did not record how far it asked')
+
+  // A settle inside the noise is not an overshoot; a full crossing past the target is.
+  const settled = gesture(0.6, (now) => (now < 12 * dt ? 0 : 0.6 + 0.02 * Math.sign(Math.sin(now))))
+  // Approaches from below, *through* the request, out the far side, and back — one overshoot. It
+  // has to pass through: a snail that teleports past without ever arriving has not overshot, it has
+  // been somewhere else, and the counter deliberately says nothing until the request was met once.
+  const swung = gesture(0.6, (now) => (now < 12 * dt ? 0 : now < 20 * dt ? 0.6 : now < 45 * dt ? 0.9 : 0.6))
+
+  assert.equal(settled.requests[0].overshoots, 0, 'settling noise was counted as an overshoot')
+  assert.ok(swung.requests[0].overshoots >= 1, 'a full crossing past the request was not counted')
+
+  const report = steerReport(swung, snailHalf)
+
+  assert.equal(report.requests, 1)
+  assert.ok(report.arriveMsMean !== null, 'a gesture that arrived reported no arrival time')
 })
 
 console.log(`${passed} checks passed`)

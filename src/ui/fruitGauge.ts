@@ -259,3 +259,35 @@ export function gaugeYield(
 
   return 1 - (1 - YIELD_ALPHA) * covered
 }
+
+/**
+ * The pulse halo's stroke width, as a fraction of the tank's own width.
+ *
+ * Here rather than as a literal in `Hud.ts` because `gaugeBleed` has to know it: the halo is drawn
+ * *around* the tank, so half its width is the widest thing outside the box on three sides.
+ */
+export const GAUGE_HALO_FRACTION = 0.09
+
+/**
+ * How far outside its own box the tank can draw, in screen pixels.
+ *
+ * **The tank is baked into a texture and anything past it is clipped**, so this is a bound rather
+ * than a margin — see `ui/bakedGraphics.ts`. Two things put ink outside `fruitGaugeBox`: the
+ * full-tank mark, which overhangs by `FULL_MARK.overhang` of the width and stands off above the
+ * first segment; and the pulse halo, a stroke around the whole column that reaches half its own
+ * width beyond whichever edge it is drawn on. Per axis, because the tank is tall and narrow and
+ * what reaches furthest above it is not what reaches furthest beside it.
+ */
+export function gaugeBleed(w: number): { x: number; y: number } {
+  const over = w * FULL_MARK.overhang
+  const thickness = Math.max(2, w * FULL_MARK.thickness)
+  const halo = Math.max(2, w * GAUGE_HALO_FRACTION)
+
+  return {
+    // Sideways: the full mark reaches furthest, with the halo close behind it.
+    x: Math.max(over, over * 0.5 + halo / 2),
+    // Vertically the mark's own height and its stand-off dominate, and the halo is drawn two
+    // pixels above that and four below the tank. One number covers both ends.
+    y: Math.max(thickness + FULL_MARK.standoff * w + 2 + halo / 2, 4 + halo / 2),
+  }
+}

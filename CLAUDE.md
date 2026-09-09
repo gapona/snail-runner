@@ -134,7 +134,9 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
   Node-native-TS + extensionless-import loader hook, no bundler/browser involved) covering the road
   renderer's pure math: `src/road/project.ts`, `src/road/track.ts` (including `decorateTrack`),
   `src/road/billboard.ts`, `src/race/rng.ts`, `paletteU` in `src/road/constants.ts`,
-  `src/road/decals.ts`, `src/road/particles.ts`, and `src/road/sightline.ts` — see "Road Renderer",
+  `src/road/decals.ts`, `src/road/particles.ts`, `src/road/spans.ts` (how many segments the mesh
+  merges into one quad, and the bound on what a merge can hide — see "Four More Ways") and
+  `src/road/sightline.ts` — see "Road Renderer",
   "Billboards & Scenery" and "The Sightline". **The sightline floor is now stated in world units
   rather than seconds** (`MIN_SIGHTLINE_UNITS`): it is a claim about the circuit's geometry, and
   writing it in seconds silently rescaled it when the fork's speeds changed.
@@ -147,6 +149,12 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
 - `npm run verify:run-speed` — the run's own clock: `src/run/runState.ts`'s distance integration is
   frame-rate invariant, and `wrapZ` on a negative `z` returns to the end of the track rather than to
   zero. See "The Run".
+- `npm run measure:steering` — not a suite and
+  it asserts nothing: it drives the shipped spring, placer and collision under a *simulated player*
+  and reports what the steering costs on each frame the game supports — finger-to-snail lag, time to
+  arrive, overshoots, and hits split into "asked in time and the snail was not there" against "had
+  not asked yet". **It is the instrument the mobile-controls decision is taken with**, and its
+  in-game counterpart is `window.__steer.report()`. See "Steering On A Phone".
 - `npm run verify:player` — the player module, motion **and death**: `playerDeath.ts`'s wreck (the
   run does not end on the frame the last life goes, a second fatal hit neither restarts it nor ends
   the run twice, the swell and the fade ease opposite ways, and the flash is over before the panel
@@ -226,8 +234,13 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
   Play: **a row's four columns are a function of its own box** (asserted as an arity, with the
   shipped-before arithmetic as the control), the track is the Fever gauge's own eight segments, the
   open panel always has somewhere to go on every accepted frame, and the secondary action stays
-  inside its share of the Play button above it. See "The Interface Kit", "A Selector And A Panel,
-  Where There Were Two Lines Of Text" and "A Run You Can Put Down".
+  inside its share of the Play button above it. **It also holds the two baked readouts' own pads**
+  — `gaugeBleed` and `lifeRowBleed`, recomputed term by term from the constants that create the
+  bleed, because a texture clips what leaves it silently — **and that every pool shows and hides
+  through `pooled.ts`, the slots it creates included**, since a pool that keeps its slack on the
+  display list is a silent no-op nothing about the frame would show. See "The Interface Kit", "A
+  Selector And A Panel, Where There Were Two Lines Of Text", "A Run You Can Put Down" and "Four
+  More Ways".
 - `py -3.11 scripts/build-sprites.py [--only snail,obstacles,pickups,decor]` — turns the picked
   renders in `dev-assets/sprites/` into the files under `public/assets/`, reading which variant
   won from `dev-assets/picks.json`. Run by hand when the picks change; the output is committed, so
@@ -13827,6 +13840,217 @@ whole of the report.
 510), build clean, and the frame was looked at — the tank's corners, the shadows under the mascot
 and the pickups, and the whole HUD at rest — because none of that is visible to a number.
 
+## Four More Ways, And Where The Frame Actually Goes
+
+Reported again after the round above: *it still stutters on mobile.* So this one starts with a full
+accounting rather than a hypothesis, and the accounting is most of the value — two of the four
+things that looked most likely turned out to cost nothing at all.
+
+**Everything below is measured in the running game at 375x667, on a live run, with the loop
+hand-stepped.** End to end, on the same harness with only the code differing:
+
+| | median frame | five runs |
+|---|---|---|
+| before (git HEAD) | **1.556ms** | 1.374 / 1.426 / 1.556 / 1.570 / 1.736 |
+| after | **0.886ms** | 0.756 / 0.821 / 0.862 / 0.886 / 1.032 / 1.140 / 1.187 |
+
+The two ranges do not overlap. The tail moved with it — over 4000 frames afterwards, p50 **0.70ms**,
+p90 1.3, p99 **2.3**, max 9.2, with 6 frames over 5ms, against p99 4.7 and max 16.1 before. A mid-range phone runs JS roughly four to
+six times slower than the desktop these were taken on, which is what turns a 1.5ms frame into a
+dropped one and a 0.9ms frame into one with room in it.
+
+### ⚠ What it is NOT, measured first so nobody re-checks it
+
+- **It is not fill rate, and it is not the device pixel ratio.** `ScaleManager.js` has no
+  `devicePixelRatio` term anywhere in it — `resize` assigns `canvas.width = baseSize.width`, i.e.
+  CSS pixels — so a DPR-3 phone renders **375x667 and the browser upscales**. Confirmed live at
+  DPR 1; the arithmetic is the same at 3. 250k pixels with about eight layers over them is nothing
+  for any phone GPU of the last decade. **The frame is CPU-bound.**
+- **It is not draw calls or state changes.** 32 `drawElements` a frame, 23,517 indices,
+  `maxTextures` 16. Well batched.
+- **It is not texture uploads.** `texImage2D`/`texSubImage2D` are **0 per frame** and
+  `Text.updateText` 0.00 — the previous round's `fitRow` guard holds.
+- **It is not a lap build.** `LapLayout.advance` never exceeded 1ms over 3000 frames and 16 laps.
+- **It is not the second camera.** An extra empty camera costs **0.034ms**, so collapsing the
+  world/UI split would buy almost nothing and would spend a documented contract to get it.
+
+### Where it actually goes
+
+Every pass wrapped at once, on a 1.27ms frame:
+
+```
+SceneMgr.render   0.814     of which renderer.render 0.375 PER CAMERA (x2)
+SceneMgr.update   0.438     of which world.render 0.271 (decor 0.193, road mesh 0.067)
+                            hud.update 0.072, critters 0.047, obstacles 0.026, pickups 0.015
+```
+
+**`CameraManager.getVisibleChildren` is `children.filter(child => child.willRender(camera))`** — a
+fresh array and a closure per camera per frame, over every object on the display list. Measured by
+adding 600 hidden `Image`s and taking them away again: **0.155us per hidden display-list entry per
+frame.** The scene carries 645 objects of which **476 are hidden pool slots**, so the pools cost
+**0.074ms a frame to skip** — measured again in one session once the fix existed, and worth
+**0.118ms**. All four of the things this bought are below.
+
+### 1. The road mesh drew 1800 quads to paint 253 pixels
+
+`src/road/spans.ts` (pure, `npm run verify:road`), `MIN_ROAD_SPAN_PX`, and a rewritten emit in
+`RoadMesh.render`.
+
+**`DRAW_DISTANCE` is how far the player can see and there was no separate answer for how finely
+that distance is drawn.** Every one of the 300 segments wrote its own six quads whatever it
+projected to. Measured over a live run, the far field is not merely small, it is *unresolvable*:
+the ground band is 253 pixels tall, and everything past the 120th segment accounts for a median of
+**8.4 of them** — 28 at its worst, on a crest — across 180 segments.
+
+- **Merged, never culled.** Culling at 120 would take 28 pixels of road off a crest, which is a
+  hole in the picture at the one moment the player can see furthest. A span accumulates segments
+  until it reaches `MIN_ROAD_SPAN_PX` of screen height and is then emitted as one trapezoid, so the
+  near field — where a segment is tens of pixels tall — merges nothing and is untouched.
+- **⚠ The floor is half a pixel because the framebuffer is multisampled.** One pixel is the obvious
+  answer and it is wrong here: `config.ts` leaves `antialias` on and the context reports
+  `SAMPLES = 4`, which resolves vertical detail at half-pixel spacing. The sample spacing is the
+  resolution limit; the pixel grid is not.
+- **The acceptance is a pixel diff against the shipped-before mesh**, taken with everything but the
+  road hidden and the camera pinned so the capture is deterministic — verified at a **noise floor of
+  exactly 0 differing pixels** between two captures of the same frame. At three camera positions:
+
+  ```
+  floor   quads submitted   band pixels changed   worst channel delta   rows touched
+  (none)            1800                     —                     —              —
+  0.5                564            1.3 – 6.2%               20 – 46      9 – 32 of 301
+  1.0                372            2.9 – 9.4%               33 – 65     21 – 46 of 301
+  ```
+
+  Every changed pixel at 0.5 lies in a strip at the horizon; the near field is identical to the
+  byte. Live over a run: **quads submitted p50 534, p90 678, max 810**, against a constant 1800.
+- **The submitter is what the saving comes from, and truncating the index list is how.**
+  `SubmitterMeshToQuad.run` walks `indicesOrdered` in strides of 8 and transforms four vertices per
+  quad, so the quads that reach the GPU are exactly the ones it walks. Spans are written far-first
+  into slots `0..spans-1` and `indicesOrdered` is set to a cached `subarray` of that length —
+  which is why the ordered list is **built by hand rather than by `buildOrderedIndices`**: the
+  truncation is only correct if quad `i` provably occupies entries `i * 8 ..`, and a property of
+  somebody else's optimiser is not a thing to build a render loop on.
+- **⚠ So "a culled segment cannot be skipped, only degenerated" is now half true.** It still holds
+  inside the submitted range — the rung relies on it — and it is no longer true of the tail, which
+  is unread rather than degenerate. `degenerateSegment` is deleted; `degenerateQuad` is the rung's.
+- Interleaved A/B against the full 1800-quad list, 24 rounds of 120 frames: **frame 1.373 → 1.246ms
+  (−0.128), the renderer's own pass 0.447 → 0.376 (−0.070).** The rest is the mesh writing 1100
+  fewer quads of vertices.
+
+### 2. The decor pass mixed a colour in OKLab per prop per frame
+
+`RoadSprites` already cached the nine **biome** tints against the theme's identity, with a docstring
+explaining that `themedProp` is an OKLab round trip and eighteen of them a frame was too many. One
+level in, `place` was calling `tintFor(tint, variation)` **per drawn prop per frame** — another
+round trip each, up to 143 of them — plus a `variationFor` that allocates a record and six hashed
+numbers, to answer the same question about the same prop sixty times a second.
+
+Both are pure functions of the prop's own placement, so both are cached in a `WeakMap` keyed on the
+`RoadSprite` record (unique per placement, so it carries the segment, the side, the prop and
+therefore the biome), thrown away by the same theme-identity check that rebuilds the biome tints.
+
+**Measured: the decor pass 0.193ms → 0.087ms.**
+
+### 3. Two HUD readouts were re-tessellated sixty times a second for a picture nobody changed
+
+`src/ui/bakedGraphics.ts`, and the two draws in `Hud.ts` rewritten in texture-local coordinates.
+
+**⚠ A `Graphics` is rebuilt and replayed on every frame it is *visible*, not on every frame it is
+redrawn** — and the previous round guarded the rebuild and stopped there. Measured afterwards:
+
+| | command buffer | rebuilt per frame | cost per frame |
+|---|---|---|---|
+| life row | 1326 | 0.117 | **0.143ms** |
+| fruit tank | 1096 | **0.000** | **0.107ms** |
+
+A quarter of a millisecond for two pictures that change a handful of times in a run — and the tank
+was not rebuilt *once* in 1200 frames. The same shape as the shadows, which ran `Earcut` every frame
+for marks that never change: **the fix is to stop asking the renderer to draw something whose answer
+nobody has changed.**
+
+So the `Graphics` is off the display list — an *author*, not an object in the scene — and what the
+scene draws is an `Image` of a `DynamicTexture` it paints on the frames the signature already says
+differ. `DynamicTexture` suits this exactly: `draw()` only queues and `render()` returns immediately
+with an empty buffer, so a readout at rest costs one quad and no tessellation.
+
+- **⚠ Nothing in Phaser flushes a `DynamicTexture` for you.** `draw()` pushes a command and its own
+  class docs say to call `render()`; without it the image comes up empty with no error anywhere,
+  which is exactly how this was found — by taking a screenshot after every number said it worked.
+- **The caller draws in texture-local coordinates and the pad is derived, not eyeballed.** Content
+  past the texture is silently clipped, so `gaugeBleed` and `lifeRowBleed` live in the two pure
+  modules beside the constants that create the bleed — the full mark's overhang, the halo's half
+  width, an element still flying in, the row sliding under it — and `verify:ui` recomputes each term
+  from the exported constants and holds the pad to it. **Per axis**, because the row only ever
+  travels sideways and one pad for both made a 33px readout a 312px texture during a slide.
+- **⚠ A stroke is centred on its path, so half of it is outside the shape.** Left out of the first
+  bleed, which put a struck element's outline exactly on the texture's edge — right to the
+  arithmetic and a pixel short in practice. `LIFE_PIP_STROKE_FRACTION` exists so the bleed sees it.
+- **⚠ And `LIFE_PIP_MAX_STRETCH` sampled its own curves too coarsely.** It walked 100 points and
+  `verify:ui` walks 200 and found a taller peak between two of them on its first run — 1.581 against
+  1.582. A bound sampled more coarsely than the check that tests it is not a bound. 1000 now.
+- **The texture key is removed before it is added**, the same ordering `applyTheme` is under and for
+  the same reason: a key is global, the scene is rebuilt on every restart, and `addDynamicTexture`
+  refuses a key it already holds rather than replacing it. And `Hud.destroy` destroys the pair
+  explicitly — their `Image` is in `gameObjects` and the `Graphics` and the texture are not, so a
+  restart would otherwise leak both and the next run would find its own key taken.
+- **Looked at, not only measured**: the row magnified 6x on a real frame, the tank at four
+  viewports, and a full die-and-restart cycle. WebGL1 cannot multisample a framebuffer, so the worry
+  was aliased hearts; the magnified capture shows proper gradation on every edge.
+
+### 4. Most of the display list was pool slack
+
+`src/run/pooled.ts`, and the five pools' show/hide paths.
+
+**A hidden object is not a free object.** `CameraManager.render` builds its render list with
+`children.filter(child => child.willRender(camera))` — a fresh array and a closure per camera per
+frame, over every object the scene holds, whatever its `visible` flag says. The pools are sized
+against measured peaks, which is right and which `DECOR_POOL_SIZE`'s own docstring argues for at
+length, so on an ordinary frame most of a pool is slack: **476 of the scene's 645 objects were
+hidden slots.** The 112 obstacle shadows are the sharpest case — nothing in the game casts one
+today, and every one of them was iterated twice a frame anyway.
+
+So a slot off duty comes off the display list entirely and goes back on when it is used. Measured
+interleaved in one session, forcing the slack back onto the list as the control: **0.923ms → 0.805ms,
+−0.118ms.** The list now tracks demand — 91 to 247 entries depending on the stretch of road, with
+**zero hidden pooled objects on it**, confirmed again after a die-and-restart.
+
+- **`visible` is kept in step rather than replaced.** Other code reads the flag, and a slot put back
+  on the list while it still said `false` would not draw.
+- **The `displayList` back-reference is what makes the common case free.** `addToDisplayList` asks
+  `List.exists`, an `indexOf` over the whole scene, and this runs for every drawn object every
+  frame; reading the object's own pointer first means only a transition costs anything. Measured:
+  **0.09 adds and 0.13 removes a frame, 0.0023ms.** The churn was the thing to be afraid of and it
+  is not there — a slot in use stays in use.
+- **⚠ A pool has to hide the slots it CREATES, not just the ones it stops using.** `render` walks
+  from `used` to last frame's count, so a slot that has never been used is on no walk at all and
+  would sit on the list for the life of the scene. Which is most of a pool, i.e. the entire point.
+  `verify:ui` asserts it per pool and is shown to reject a constructor without it.
+- **Camera membership is untouched.** `cameraFilter` is a property of the object, not of the list it
+  is on, so a slot keeps its `ignore()` across every add and remove.
+
+**⚠ And `assertWorldIsSingleCamera` had to widen, or it would have gone quiet.** It runs once at
+create and asks whether anything on the display list is drawn by both cameras — and every slot
+starts hidden, so after this change it would have seen no pooled object at all. It walks the union
+of the display list and `worldObjects()` now, which is exactly as strong as the list alone was: **an
+object a pool forgot to list is also one it never hides, so it stays on the display list for good**,
+which is the half that cannot be opted out of. That is the guard the flyers' wings cost four rounds
+to get right, so `verify:ui` holds its shape and carries the display-list-only form as its control.
+
+### Harness notes
+
+- **`javascript_tool` reaches `window.__game` directly here** — the isolated-world limitation this
+  file records for other tooling did not apply, which removed the `<script>`-injection dance.
+- **A capture is only deterministic once the camera is pinned inside `world.render`.** Setting
+  `run.z` before the snapshot is not enough: the callback lands some frames later and `stepRun` has
+  moved the camera by then. Two captures of "the same" frame differed by **21.7% of the band** until
+  `world.render` was wrapped to force `cameraZ` and `cameraLean`; after that, **0 differing pixels**.
+- **A hidden tab never decodes an `Image`**, so a `toDataURL` round trip through `img.decode()` hangs
+  forever. Compare raw pixel arrays instead, base64'd through `localStorage` if the comparison spans
+  a reload.
+- **Watch for the run dying under a long measurement.** Several early readings here were taken on a
+  frozen wreck and understated everything; topping the lives up from a wrapped `sys.sceneUpdate` is
+  what keeps a bench honest.
+
 ## Six Things From A Phone, And One Of Them Was The Page
 
 Six reports off screenshots of the real build on a phone, in a Telegram in-app webview. Three of
@@ -13960,6 +14184,182 @@ counter, which is *this run's* coins, not the balance the price is charged again
   frame. The shop shows about one and a half rows there, which is the documented scroll-window trade
   and not new.
 
+## Steering On A Phone: Measured Before It Is Redesigned
+
+Reported: the controls are awkward on mobile, and lanes were named as the obvious fix. **Nothing
+about the steering has been changed** — this round is the instrument, the three presets and the one
+alternative mapping, so the decision is taken against numbers instead of against a guess.
+
+**Why lanes were not built, stated first because it is the expensive thing to undo.** Discrete lanes
+would take `NEAR_MISS_GAP` (0.0608 half-widths — on three lanes "close" is not a quantity that
+exists), the wave chains in `formations.ts`, `provePassable`'s 81-sample scan and the soft wall at
+the verge with them. That is the scoring, the placer and the input rewritten at once, to fix
+something that had never been measured.
+
+### STEP 0: the instrument, and what it found
+
+`scripts/measure-steering.mjs` (offline, ten runs a configuration) and `src/run/steerProbe.ts`
+(DEV, in the running game, `window.__steer.report()`).
+
+**The offline harness drives the shipped modules** — `stepPlayer`'s spring, `placeRunObstacles`'
+road, `hits`' collision, `steerTarget`'s mapping — under a *simulated player*, because ten runs by
+hand here would be ten runs with a mouse on a desktop, which is the one device the report is not
+about. Three lags in series, each with a source: a 250ms visual-motor response (the same figure
+`REACTION_MS` cites), a thumb that slews at 1400px/s, and a thumb that cannot be *placed* more
+accurately than about 14px. Two players are simulated, and the split matters more than either:
+
+- **`patient`** puts the thumb where the snail should end up and waits. That is the correct strategy
+  for an absolute control and it is what a player eventually learns.
+- **`chasing`** watches the snail lag behind the thumb and pushes the thumb further, which is what
+  everybody does for the first hour. A human closing a loop around a lag is the textbook way to make
+  a stable system oscillate.
+
+#### ⚠ The same law, the same road, the same player: 7 hits on a desktop and 52 on a phone
+
+| frame | patient | chasing | of chasing, "asked in time and the snail was not there" |
+|---|---|---|---|
+| phone portrait 375x667 | **44** | 141 | 68 (48%) |
+| phone landscape 844x390 | **14** | 132 | 55 (42%) |
+| small portrait 320x568 | **52** | 134 | 60 (45%) |
+| desktop 1920x945 | **7** | 158 | 59 (37%) |
+
+Hits per ten 90-second runs. **Nothing differs between those rows except how many screen pixels the
+same fraction of road occupies.** The road is sized off the frame's *width* and the thumb is not, so
+a portrait phone asks a thumb to hit a target a sixth the size of the one a desktop mouse hits.
+
+The geometry underneath it, which is the whole finding in one line:
+
+| frame | road half-width | snail | steerable travel | **gap the thumb must land in** | thumb patch |
+|---|---|---|---|---|---|
+| phone portrait | 108 px | 27 px | 330 px | **19.9 px** | 60 px |
+| phone landscape | 244 px | 61 px | 743 px | **44.8 px** | 63 px |
+| small portrait | 93 px | 23 px | 282 px | **17.0 px** | 60 px |
+| desktop | 556 px | 139 px | 1690 px | 102.0 px | 35 px |
+
+**The median gap a row leaves is a third of a thumb's own contact patch on a portrait phone**, and
+two thirds of one in landscape. On a desktop the target is three times the pointer. That is not a
+spring problem and no spring constant reaches it.
+
+#### The spring is not the bottleneck, and the sweep is what says so
+
+How many hits at each amount of warning, portrait, ten runs:
+
+```
+lead     patient                        chasing
+1500ms    44 /   0 late,  44 not asked   179 /  53 late, 126 not asked
+ 900ms    44 /   0 late,  44 not asked   141 /  68 late,  73 not asked
+ 600ms    47 /   3 late,  42 not asked   157 /  15 late, 142 not asked
+ 450ms    46 /   4 late,  42 not asked   199 /  43 late, 156 not asked
+ 300ms    55 /  16 late,  39 not asked   141 /  42 late,  99 not asked
+```
+
+**A patient player's "late" hits are zero down to 450ms** — which is exactly `REACTION_MS`, i.e. the
+control law fits the budget the road promises and starts failing only below it. Their 44 hits are
+*placement*: the thumb aimed at the middle of the gap and missed it. **More warning does not help
+the chasing player at all**, because their problem is the loop and not the time.
+
+#### The in-game half
+
+`steerProbe.ts` records the same four numbers off a real thumb, because the model has none.
+**A gesture, not a frame and not a sample**: a sliding thumb moves every frame, so a rule that
+opened a request per movement filed 35 of them for one drag and reported that 34 never arrived. The
+unit is the thumb moving and then stopping — the "did it answer" clock starts when the thumb starts
+and the "did it get there" clock starts when the thumb **stops**.
+
+Measured live at 375x667, two gestures each:
+
+| preset | finger-to-snail | thumb stops -> snail arrives | overshoots |
+|---|---|---|---|
+| viscous | 21.9 px | **617 ms** | 0% |
+| current | 6.9 px | 250 ms | **100%** |
+| snappy | **1.8 px** | **233 ms** | **0%** |
+
+### STEP 1: three presets, and the shipped pair is not on the frontier
+
+`src/run/steerTuning.ts`. `PLAYER_STIFFNESS = 60` and `PLAYER_DAMPING = 0.85` are the rail shooter's
+`SHIP_STIFFNESS`/`SHIP_DAMPING` unchanged, and were set there by measuring a dodge against a
+**telegraph** — a craft that flew in screen pixels and never had to *stop* anywhere in particular.
+A runner asks the opposite question, and nothing has ever measured these two against it.
+
+| preset | k | d | zeta | tau | lag |
+|---|---|---|---|---|---|
+| viscous | 34 | 0.82 | 1.073 | 264 ms | 0.3874 |
+| current | 60 | 0.85 | 0.655 | 205 ms | 0.1765 |
+| snappy | 100 | 0.78 | **0.793** | **134 ms** | **0.1692** |
+
+**⚠ `snappy` beats `current` on all three at once.** It settles faster, overshoots *less* and trails
+a moving finger less. That is arithmetic through `playerResponse()` — the same closed form
+`verify:player` asserts against the real integrator — confirmed on the frame by the table above, and
+it means the shipped pair is one point on a curve drawn for a different game with strictly better
+ones next to it. **`viscous` is too slow for this road**: 617ms to arrive against a 450ms budget.
+
+- **`stepPlayer` takes the pair as options**, defaulting to the constants, so every existing caller
+  is byte-for-byte unchanged — `verify:player` asserts the defaults *are* the constants.
+- Live in a run on **1 / 2 / 3**, mode on **M**, the panel on **T** (`SteerTuner`), all DEV.
+- **The panel pauses the run and has to.** Steering reads `pointer.x` anywhere on the canvas, so a
+  slider dragged during a run would steer the snail while it was being adjusted.
+
+### STEP 2: the thumb covers the snail, and the mapping is why the phone is worse
+
+**Steering reads `pointer.x` and nothing else**, so the finger is free vertically — and a thumb
+comes from the bottom edge while the snail sits at 90.9% down the frame:
+
+| frame | feet row | room below the feet | thumb patch | |
+|---|---|---|---|---|
+| phone portrait | 606 px | 60.5 px | 59.8 px | just fits |
+| phone landscape | 355 px | **35.4 px** | 62.8 px | **a thumb does not fit under it** |
+| small portrait | 517 px | **51.5 px** | 59.8 px | **does not fit** |
+| desktop | 859 px | 85.7 px | 35.3 px | fits |
+
+So on two of the three phone frames there is nowhere to hold the thumb except on the creature.
+
+**`relative` mode is the candidate, and it is measured rather than argued.** The thumb's *movement*
+is the request, from wherever it was pressed, so its error is a share of the push instead of a
+number of pixels — and the frame's size drops out of it:
+
+| frame | player | absolute | relative | |
+|---|---|---|---|---|
+| phone portrait | patient | 44 | **8** | −82% |
+| phone landscape | patient | 14 | **8** | −43% |
+| small portrait | patient | 52 | **8** | −85% |
+| desktop | patient | 7 | 7 | 0% |
+| any | chasing | 132–158 | 121–157 | −10%..+1% |
+
+**All four frames converge on 8 — the device stops mattering.** And it does nothing at all for the
+chasing player, which is the other half and is Step 1's. Neither fixes the other's.
+
+Confirmed live: the same 60px push moved the snail **+0.276 and +0.275** half-widths from two
+different starting places, while absolute put the same finger column at the same offset to three
+decimals every time.
+
+- **The request is integrated, never read back off the snail.** Anchoring to the snail would feed
+  the spring's own lag into the request, and the control would quietly get heavier the faster the
+  player pushed. `relativeTarget` takes three arguments and none of them is a position — asserted as
+  the arity, the way `stepCritters` is held to being unable to steer.
+- **⚠ `Steering.read` had to report a `deltaFraction` the caller cannot derive.** A fresh press must
+  report *zero* movement however far the new column is from the old one, or a relative control leaps
+  the whole way there on the frame the thumb lands. Same reason the tap path records its own press
+  position rather than reading `pointer.downX`.
+- **⚠ And switching mode mid-press has to re-seed the request.** `relativeTarget` is only maintained
+  while relative is live, so a switch with a finger already down pushed from a stale one — measured
+  live before the fix, a 60px push moved the snail most of the way across the road.
+
+### STEP 3 is not built, and the measurement is why
+
+Soft attraction to three notional positions was to be tried only if 1 and 2 left it imprecise. What
+the numbers say is that the placement error is the whole of the phone's penalty and relative drag
+removes it — so the thing snapping would fix is already fixed by the cheaper change, and a magnet
+would put lanes' worst property (a "close" that is not a quantity) back into a game whose scoring is
+built on the opposite. It stays available and unbuilt.
+
+### What is still unknown
+
+**Everything above is a measurement of a model and of a synthetic thumb.** The one thing neither can
+supply is whether `snappy` and `relative` *feel* right, which is what the presets and the panel
+exist for. `window.__steer.report()` after a real run on a real phone is what checks the model
+against a person — and this project's standing rule is that a model nobody has checked against a
+person is a model.
+
 ## Known Issues Fixed
 
 Bugs and gotchas hit and fixed while building the platform/save/audio layers — recorded so they don't get
@@ -13968,6 +14368,18 @@ index.
 
 App bugs:
 
+- **The same control law is six times worse on a phone than on a desktop, and it is the *mapping*
+  rather than the spring** — steering is absolute, so the thumb has to land on a column, and the
+  road is a fraction of the frame while the thumb is not. Measured: the median gap a row leaves is
+  19.9px on a portrait phone against a 60px thumb patch, and a patient player takes 7 hits on a
+  desktop and 52 on a small portrait frame with nothing else changed. Not yet fixed — instrumented,
+  with the two candidate changes built behind DEV switches. → "Steering On A Phone"
+- **`PLAYER_STIFFNESS`/`PLAYER_DAMPING` are not on the efficient frontier**: `k = 100, d = 0.78`
+  settles faster (134ms against 205), overshoots less (zeta 0.793 against 0.655) *and* trails a
+  moving finger less. The shipped pair is one point on a curve drawn for the rail shooter's
+  telegraph. → same section
+- **In landscape there are 35px below the snail's feet against a 63px thumb**, so there is nowhere
+  to hold the thumb except on the creature. → same section
 - **`#app` was `height: 100vh`, which on a phone is the viewport with the toolbar COLLAPSED** — so
   the page was taller than its own window and everything along the game's bottom edge sat behind the
   browser chrome. Reported three ways (the tank cut off, half the interface missing in landscape,
@@ -13982,6 +14394,23 @@ App bugs:
 - **A disabled kit button still accepted the press** and did nothing — `setEnabled` only changed the
   drawing. → same section
 - **The quest track drew eight segments for a target of two.** → same section
+- **476 of the scene's 645 objects were hidden pool slots**, and `CameraManager.render` filters
+  every one of them twice a frame whatever `visible` says — 0.118ms to skip objects that draw
+  nothing. A slot off duty is off the display list now; the camera guard widened with it, or it
+  would have gone quiet. → "Four More Ways"
+- **The road mesh submitted 1800 quads a frame to paint a 253-pixel band**, because `DRAW_DISTANCE`
+  was doing two jobs: how far the player can see and how finely that distance is drawn. Everything
+  past the 120th segment draws a median of 8.4 pixels. → "Four More Ways"
+- **`RoadSprites` mixed an OKLab colour per drawn prop per frame** — the same finding its own
+  biome-tint cache already records, one level in and up to 143 times a frame instead of nine. →
+  same section
+- **The life row and the fruit tank were re-tessellated sixty times a second** for pictures that
+  change a handful of times in a run; the previous round guarded the *rebuild* and a `Graphics` is
+  replayed on every frame it is **visible**. The tank was not rebuilt once in 1200 frames and still
+  cost 0.107ms. → same section
+- **⚠ And nothing in Phaser flushes a `DynamicTexture`** — `draw()` only queues, `render()` is the
+  caller's to call, and without it the image is empty with nothing in the console. Found by looking
+  at the frame after every number said it worked. → same section
 - **Four shadow pools re-tessellated a 64-point ellipse and ran `Earcut` on it every frame** —
   ~830 short-lived objects a frame for marks that never change shape, with the fix already written
   down for the rail shooter's ship shadow and applied nowhere else. → "Four Ways The Frame Was

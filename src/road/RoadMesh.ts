@@ -4,6 +4,7 @@ import {
   CAMERA_HEIGHT,
   DRAW_DISTANCE,
   fogStepFor,
+  MIN_ROAD_SPAN_PX,
   GROUND_EXTENT,
   groundPaletteIndex,
   roadPaletteIndex,
@@ -19,7 +20,8 @@ import { logWarning } from '../platform/yt'
 import { biomeForSegment, biomeIndex, groundShadeFor, roadShadeFor } from './biomes'
 import { quadWriteAction } from './meshGuard'
 import { createRoadPalette } from './palette'
-import { projectInto, type ScreenPoint } from './project'
+import { createScreenPoint, projectInto, type ScreenPoint } from './project'
+import { spanIsFull } from './spans'
 import { createRungQuad, rungQuadInto, type RungQuad } from './surface'
 import { findSegment, segmentPercent, surfaceHeight, trackLengthOf, type Segment } from './track'
 
@@ -36,8 +38,60 @@ const PALETTE_TEXTURE_KEY = 'road-palette'
  */
 const QUADS_PER_SEGMENT = 6
 
-/** Total quads in the mesh — fixed for the mesh's whole lifetime. See the class docstring. */
+/**
+ * Total quads the mesh can hold — fixed for its whole lifetime. See the class docstring.
+ *
+ * Still one allocation per segment, because a frame where nothing merges (every segment over
+ * `MIN_ROAD_SPAN_PX` tall) needs exactly that many. What varies is how many are *submitted*.
+ */
 const QUAD_COUNT = DRAW_DISTANCE * QUADS_PER_SEGMENT
+
+/**
+ * One trapezoid of road, covering one segment or several.
+ *
+ * `near` and `far` are copies rather than references into the segments' own `ScreenPoint`s: a
+ * span outlives the loop iteration that opened it, and holding a reference would break the day a
+ * track shorter than `DRAW_DISTANCE` made the walk revisit a segment and reproject it underneath
+ * an open span. Six numbers copied per span is cheaper than that class of bug.
+ *
+ * `rungFar` is the *opening segment's* own far edge, not the span's. A rung is a marking one
+ * segment deep, so a merged span must not stretch it to the span's depth — and in the near
+ * field, where nothing merges, the two are the same point and the rung is pixel-identical to
+ * what it always was.
+ */
+interface RoadSpan {
+  near: ScreenPoint
+  far: ScreenPoint
+  rungFar: ScreenPoint
+  alternate: boolean
+  rung: boolean
+  fogV: number
+  biome: number
+  shade: number
+  roadShade: number
+}
+
+/** Copies a projected point into a span's own storage. See `RoadSpan` for why it is a copy. */
+function copyPoint(out: ScreenPoint, from: ScreenPoint): void {
+  out.x = from.x
+  out.y = from.y
+  out.w = from.w
+  out.scale = from.scale
+}
+
+function createSpan(): RoadSpan {
+  return {
+    near: createScreenPoint(),
+    far: createScreenPoint(),
+    rungFar: createScreenPoint(),
+    alternate: false,
+    rung: false,
+    fogV: 0,
+    biome: 0,
+    shade: 0,
+    roadShade: 0,
+  }
+}
 
 /**
  * Whether the production overflow path has already reported this session.
@@ -58,19 +112,44 @@ const QUAD_VERTEX_STRIDE = VERTEX_STRIDE * 4
 const INDEX_STRIDE = 4
 
 /**
+ * Index-buffer entries one quad occupies in the ordered list: two triangles of `a, b, c, page`.
+ *
+ * The submitter walks `indicesOrdered` in strides of this, so **the used quads have to be a
+ * prefix of the list** — which is why spans are written far-first into slots `0..spans-1` and
+ * the list is then truncated to them. See `viewFor`.
+ */
+const INDICES_PER_QUAD = INDEX_STRIDE * 2
+
+/**
+ * Hands the mesh an index list that is a typed array rather than a `number[]`.
+ *
+ * Phaser types `indicesOrdered` as `number[]` because that is what its own builder produces, and
+ * the renderer only ever reads `ordered[i]` and `ordered.length` (confirmed in
+ * `SubmitterMeshToQuad.run`) — both of which a `Uint32Array` answers identically. A typed array
+ * is what makes a per-frame `subarray` view cheap, which is the whole mechanism behind the
+ * truncation. Same shape as the `MutableSound` cast in `audio.ts`: an interface that is wider
+ * at runtime than in the `.d.ts`.
+ */
+function setOrderedIndices(mesh: Phaser.GameObjects.Mesh2D, indices: Uint32Array): void {
+  ;(mesh as unknown as { indicesOrdered: ArrayLike<number> }).indicesOrdered = indices
+}
+
+/**
  * The whole road surface, rendered as a single `Mesh2D`.
  *
- * **Topology is fixed; only vertex positions and UVs change.** The mesh always holds exactly
- * `QUAD_COUNT` quads, whatever the camera sees. `indices` is built once in the constructor
- * and `buildOrderedIndices(2, true)` runs there too — neither is ever touched again, and
- * `render()` below writes only into `mesh.vertices`. That is what makes the per-frame cost
- * pure array writes with no reallocation and no index rebuild.
+ * **Topology is fixed; only vertex positions, UVs and how many quads are submitted change.**
+ * The mesh always *holds* `QUAD_COUNT` quads and the index list is built once in the constructor;
+ * `render()` writes into `mesh.vertices` and then hands the renderer a truncated view of that
+ * list. So the per-frame cost is array writes with no reallocation and no index rebuild, over
+ * only the quads that reach the screen.
  *
- * The consequence, and the one non-obvious rule here: **a culled segment cannot be skipped.**
- * Its slot in the buffer still exists and its indices still reference four vertices, so
- * skipping it would leave last frame's geometry behind and shift nothing. Culled segments are
- * *degenerated* instead — all four vertices collapsed onto one point — and the rasteriser
- * discards the zero-area triangles for free. See `degenerateSegment`.
+ * **⚠ The rule used to be that a culled segment cannot be skipped, only degenerated**, because
+ * the index list had a fixed length and a skipped slot would keep last frame's geometry. That is
+ * still true of any slot inside the submitted range — the rung relies on it — and it is no longer
+ * true of the tail: `render` packs the spans it drew into slots `0..spans-1` and truncates the
+ * list to them, so everything past the last span is unread rather than degenerate. Which is the
+ * point: the submitter transforms and batches four vertices per quad it walks, and it used to
+ * walk 1800 of them a frame to draw a road that is 253 pixels tall. See `MIN_ROAD_SPAN_PX`.
  *
  * `renderAsTriangles` stays `false` so the mesh routes through the quad batch handler and can
  * batch together with ordinary sprites — which matters from chunk 4, when billboards join the
@@ -121,6 +200,36 @@ export class RoadMesh {
 
   private readonly vertices: number[]
 
+  /**
+   * Every span the walk can produce, allocated once.
+   *
+   * `DRAW_DISTANCE` of them, because a frame in which nothing merges opens one per segment —
+   * the ceiling is the shipped-before behaviour, which is the honest size for a pool whose
+   * demand is bounded by the model rather than emergent. Reused in place, so a frame allocates
+   * nothing however the road bends.
+   */
+  private readonly spans: RoadSpan[] = Array.from({ length: DRAW_DISTANCE }, createSpan)
+
+  /**
+   * The ordered index list, in slot order, built once.
+   *
+   * Built here rather than by `buildOrderedIndices` because **the truncation depends on the
+   * order**: quad `i` has to occupy entries `i * INDICES_PER_QUAD ..`, or shortening the list
+   * would drop arbitrary quads rather than the unused tail. Phaser's own builder happens to
+   * produce exactly this order for a topology whose quads share no vertices, and the check in
+   * the constructor asserts it — but a property of somebody else's optimiser is not a thing to
+   * build a render loop on.
+   */
+  private readonly ordered: Uint32Array
+
+  /**
+   * A truncated view of `ordered` per span count, so a frame allocates none.
+   *
+   * `subarray` is cheap but not free, and the count changes on almost every frame; there are at
+   * most `DRAW_DISTANCE + 1` distinct answers, so each is made once and kept.
+   */
+  private readonly views: (Uint32Array | undefined)[] = new Array<Uint32Array | undefined>(DRAW_DISTANCE + 1)
+
   constructor(scene: Phaser.Scene, track: Segment[]) {
     this.track = track
     this.trackLength = trackLengthOf(track.length)
@@ -167,10 +276,30 @@ export class RoadMesh {
     // painting the fog colour magenta and screenshotting: the *near* road came back pure magenta.
     this.gameObject = scene.add.mesh2d(0, 0, paletteTexture, this.vertices, indices, true)
 
-    // Built exactly once, here, because the topology never changes. The second argument
-    // sets `useOrderedIndices` — without it the ordered list is built but never consumed,
-    // and the mesh silently falls back to submitting one degenerate quad per triangle.
-    this.gameObject.buildOrderedIndices(2, true)
+    // Built exactly once, here, because the topology never changes — and built by hand rather
+    // than by `buildOrderedIndices`, so that quad `i` provably occupies entries `i * 8 ..` and
+    // the per-frame truncation in `render` drops the unused tail rather than an arbitrary
+    // scattering of quads. `useOrderedIndices` still has to be set, or the mesh silently falls
+    // back to submitting one degenerate quad per triangle.
+    this.ordered = new Uint32Array(QUAD_COUNT * INDICES_PER_QUAD)
+
+    for (let quad = 0; quad < QUAD_COUNT; quad++) {
+      const v = quad * 4
+      const i = quad * INDICES_PER_QUAD
+
+      this.ordered[i] = v
+      this.ordered[i + 1] = v + 1
+      this.ordered[i + 2] = v + 2
+      this.ordered[i + 3] = 0
+
+      this.ordered[i + 4] = v + 1
+      this.ordered[i + 5] = v + 2
+      this.ordered[i + 6] = v + 3
+      this.ordered[i + 7] = 0
+    }
+
+    this.gameObject.setUseOrderedIndices(true)
+    setOrderedIndices(this.gameObject, this.ordered)
     this.gameObject.renderAsTriangles = false
     // Below every billboard: scenery draws at `-n` for its distance index, so the nearest
     // possible one is depth 0 and the ground has to sit under all of them.
@@ -219,6 +348,12 @@ export class RoadMesh {
     let dx = -(base.curve * basePercent)
     let maxY = screenHeight
 
+    // How many spans the walk has opened, and the one still taking segments. **A span is closed
+    // by height, not by segment count** — see `MIN_ROAD_SPAN_PX` — so the near field, where every
+    // segment is tens of pixels tall, still emits one span per segment and is untouched.
+    let spans = 0
+    let open: RoadSpan | null = null
+
     for (let n = 0; n < DRAW_DISTANCE; n++) {
       const segment = track[(base.index + n) % track.length]
 
@@ -260,9 +395,6 @@ export class RoadMesh {
       x += dx
       dx += segment.curve
 
-      // Written back-to-front: slot 0 is the farthest segment, so it is submitted first.
-      const slot = DRAW_DISTANCE - 1 - n
-
       // Recorded for EVERY segment, before the cull below, and using the clip established by
       // the nearer segments already walked. A culled segment is precisely the case that
       // matters: it is culled because a hill in front of it hides it, and a billboard standing
@@ -279,32 +411,56 @@ export class RoadMesh {
       //   ordering just past its peak) and it renders as a bow-tie if drawn.
       // - `s2.y >= maxY` is the running horizon clip: already hidden behind nearer road.
       if (!Number.isFinite(s1.scale) || s1.scale <= 0 || s2.y >= s1.y || s2.y >= maxY) {
-        this.degenerateSegment(slot)
+        // **A cull closes the open span rather than being merged into it.** It is culled because
+        // the geometry is discontinuous there — behind a crest, inside-out over one, or behind the
+        // camera — and a span reaching across that would draw a trapezoid over the hill that hid
+        // it. What is already in the span stays: it is emitted at whatever height it reached.
+        open = null
         continue
       }
 
-      // The fog row is chosen by how far this segment is from the camera, and travels to
-      // the GPU as the quad's V — no tint, no second pass. See `createRoadPalette`.
-      this.writeSegment(
-        slot,
-        s1,
-        s2,
-        segment.alternate,
-        hasRung(segment.index),
-        paletteV(fogStepFor(n)),
+      if (open === null) {
+        open = this.spans[spans]
+        spans++
+
+        copyPoint(open.near, s1)
+        // The opening segment's own far edge, kept for the rung alone -- see `RoadSpan`.
+        copyPoint(open.rungFar, s2)
+        // **Every colour on a span is the opening segment's**, i.e. the one nearest the camera and
+        // so the one most of the span's pixels belong to. A merged span can therefore miss a
+        // biome seam, a shade patch or a rumble beat by up to its own length — which is bounded
+        // by `MIN_ROAD_SPAN_PX`, so what it can hide is under a pixel.
+        open.alternate = segment.alternate
+        open.rung = hasRung(segment.index)
+        // The fog row is chosen by how far this segment is from the camera, and travels to
+        // the GPU as the quad's V — no tint, no second pass. See `createRoadPalette`.
+        open.fogV = paletteV(fogStepFor(n))
         // Derived from the segment index rather than stored on the segment: it costs nothing to
         // ask and cannot drift out of sync with itself. See `biomeForSegment`.
-        biomeIndex(biomeForSegment(segment.index, track.length).id),
+        open.biome = biomeIndex(biomeForSegment(segment.index, track.length).id)
         // Keyed on the segment's own index, so the patch a piece of ground belongs to is a
         // property of that piece of ground: it is the same on the next lap, at every viewport
         // size and in whatever pool slot the segment happens to land.
-        groundShadeFor(segment.index),
+        open.shade = groundShadeFor(segment.index)
         // Offset from the verge's own draw, so the two surfaces never change shade on the same
         // segment -- see `roadShadeFor`.
-        roadShadeFor(segment.index),
-      )
+        open.roadShade = roadShadeFor(segment.index)
+      }
+
+      copyPoint(open.far, s2)
+
+      if (spanIsFull(open.near.y, s2.y, MIN_ROAD_SPAN_PX)) open = null
+
       maxY = s2.y
     }
+
+    // **Written far-to-near, into a contiguous prefix.** Both halves are load-bearing: the
+    // painter's order needs the farthest span submitted first, and the truncation below needs the
+    // used quads to start at slot 0. Nothing degenerates the rest — an unsubmitted slot is never
+    // read, so last frame's numbers sitting in it cost nothing and cannot be seen.
+    for (let i = 0; i < spans; i++) this.writeSpan(i, this.spans[spans - 1 - i])
+
+    setOrderedIndices(this.gameObject, this.viewFor(spans))
 
     // What the curvature integration ended up at: the horizon's lateral offset, for the sky.
     this.horizonDriftX = x
@@ -335,20 +491,33 @@ export class RoadMesh {
   }
 
   /**
-   * Writes one segment's quads: the two ground bands, the asphalt trapezoid, the two rumble
+   * The ordered index list truncated to `spans` worth of quads, cached per count.
+   *
+   * The submitter walks `indicesOrdered.length`, so this is the whole of what stops it
+   * transforming and batching quads nothing can see: at 375x667 it takes the median from 1800
+   * quads a frame to about 430.
+   */
+  private viewFor(spans: number): Uint32Array {
+    const cached = this.views[spans]
+
+    if (cached) return cached
+
+    const view = this.ordered.subarray(0, spans * QUADS_PER_SEGMENT * INDICES_PER_QUAD)
+
+    this.views[spans] = view
+
+    return view
+  }
+
+  /**
+   * Writes one span's quads: the two ground bands, the asphalt trapezoid, the two rumble
    * stripes flanking it, and the surface rung.
    */
-  private writeSegment(
-    slot: number,
-    s1: ScreenPoint,
-    s2: ScreenPoint,
-    alternate: boolean,
-    rung: boolean,
-    fogV: number,
-    biome: number,
-    shade: number,
-    roadShade: number,
-  ): void {
+  private writeSpan(slot: number, span: RoadSpan): void {
+    const s1 = span.near
+    const s2 = span.far
+    const { alternate, rung, fogV, biome, shade, roadShade } = span
+
     // **The asphalt picks one of five shades by noise, not one of two by the rumble beat.** A beat
     // across the largest surface in the frame is a stripe; the stripes themselves still ride
     // `alternate` below, which is the rhythm it was always for. See `ROAD_SHADES_PER_THEME`.
@@ -428,7 +597,7 @@ export class RoadMesh {
     if (rung) {
       // Geometry in `road/surface.ts`, which imports no Phaser and is asserted by `verify:road`
       // — see that file for why this one piece of the road is worth testing on its own.
-      rungQuadInto(this.rung, s1, s2)
+      rungQuadInto(this.rung, s1, span.rungFar)
 
       this.writeQuad(
         near + 5,
@@ -514,17 +683,12 @@ export class RoadMesh {
   }
 
   /**
-   * Collapses a segment's whole run of quads to a single point, so the rasteriser drops them as
-   * zero-area triangles. The buffer slot has to be *filled*, not skipped — see the class
-   * docstring.
-   */
-  private degenerateSegment(slot: number): void {
-    for (let quad = 0; quad < QUADS_PER_SEGMENT; quad++) this.degenerateQuad(slot * QUADS_PER_SEGMENT + quad)
-  }
-
-  /**
-   * Collapses one quad. Separate from `degenerateSegment` because the centre dash is drawn on
-   * only half the segments, and the half that does not draw it must still write its slot.
+   * Collapses one quad onto a point, so the rasteriser drops it as two zero-area triangles.
+   *
+   * **The rung is the only quad that still needs this**, and it needs it for the reason the whole
+   * mesh used to: it is one of a span's six submitted slots, so a span without a rung has to
+   * *fill* that slot rather than skip it or last frame's marking stays on screen. Slots past the
+   * last span are a different case — they are not submitted at all, so nothing reads them.
    */
   private degenerateQuad(quad: number): void {
     const v = this.vertices

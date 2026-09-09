@@ -1,4 +1,19 @@
 import { DebugMarks } from '../run/DebugMarks'
+import {
+  createSteerProbe,
+  stepSteerProbe,
+  steerReport,
+  type SteerProbeState,
+} from '../run/steerProbe'
+import {
+  applySteerPreset,
+  getSteerTuning,
+  relativeTarget,
+  setSteerTuning,
+  steerPresetName,
+  type SteerMode,
+  type SteerPresetName,
+} from '../run/steerTuning'
 import { HUD_DEPTH } from '../run/hudDepth'
 import * as Phaser from 'phaser'
 import { bindAction, bindSteering, type Steering } from '../platform/input'
@@ -117,7 +132,10 @@ import {
   LANDING_HITSTOP_MS,
   OBSTACLE_DEPTH,
   OFFROAD_DRAG,
+  OFFROAD_LIMIT,
+  PLAYER_HALF_WIDTHS,
   PLAYER_Z,
+  steerTarget,
   SPEED_BASE,
 } from '../run/constants'
 import { DRAW_DISTANCE, SEGMENT_LENGTH } from '../road/constants'
@@ -136,7 +154,7 @@ import {
 } from '../run/nearMiss'
 import { nearMissDetuneCents, nearMissGain } from '../audio/sfx'
 import { critterMidpointCrossings, CRITTER_KINDS, type Critter } from '../run/critters'
-import { ROAD_WIDTH } from '../road/constants'
+import { CAMERA_DEPTH, ROAD_WIDTH } from '../road/constants'
 import { applyTally, createTally, QUEST_KINDS, resolveQuestBoard } from '../run/quests'
 import {
   announce,
@@ -207,6 +225,17 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
   private player!: PlayerState
   private playerView!: PlayerView
   private steering!: Steering
+  /**
+   * Where a relative drag has asked the snail to be, in half-widths. Unused in `absolute` mode.
+   *
+   * Held by the scene rather than by the binder because it is a *road* position and the binder
+   * deals in screen fractions — the same split that keeps `bindSteering` free of the projection.
+   */
+  private relativeTarget = 0
+  /** Which mode the previous frame steered in, so a switch can re-seed the relative request. */
+  private steerModeWas: SteerMode = 'absolute'
+  /** DEV only: what the steering actually did this run. See `steerProbe.ts`. */
+  private steerProbe: SteerProbeState | null = null
   private squash!: SquashState
   private obstacles!: Obstacle[]
   private obstacleSprites!: ObstacleSprites
@@ -504,6 +533,44 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
         reset: () => { this.reactionSamples.length = 0; this.reactionSeen?.clear(); this.reactionRefused.clear() },
       }
       this.cameras.main.ignore(this.debugMarks.gameObjects)
+
+      // **The steering instrument and the panel that changes what it is measuring.** Both DEV-only
+      // and both `window.__*`-shaped for the reason `__marks` and `__adGate` are: a module imported
+      // from an injected script is a different instance, so the only way to reach the live one is a
+      // hook the game itself installed. `check-bundle.mjs` greps for the name.
+      this.steerProbe = createSteerProbe()
+
+      const steerHook = window as unknown as {
+        __steer?: {
+          preset(name: SteerPresetName): void
+          mode(mode: 'absolute' | 'relative'): void
+          set(overrides: object): void
+          get(): object
+          report(): object
+          reset(): void
+        }
+      }
+
+      steerHook.__steer = {
+        preset: (name) => { applySteerPreset(name) },
+        mode: (mode) => { setSteerTuning({ mode }) },
+        set: (overrides) => { setSteerTuning(overrides) },
+        get: () => ({ ...getSteerTuning(), preset: steerPresetName() }),
+        report: () => (this.steerProbe ? steerReport(this.steerProbe, PLAYER_HALF_WIDTHS) : {}),
+        reset: () => { this.steerProbe = createSteerProbe() },
+      }
+
+      // Live, without stopping: three presets on 1/2/3 and the mode on M, so the same stretch of
+      // road can be driven under two springs a few seconds apart. The panel is for the values in
+      // between and has to pause the run -- see `SteerTuner` for why a slider cannot share a screen
+      // with a control that reads `pointer.x`.
+      bindAction(this, 'steer-viscous', { keys: ['ONE'] }, () => applySteerPreset('viscous'))
+      bindAction(this, 'steer-current', { keys: ['TWO'] }, () => applySteerPreset('current'))
+      bindAction(this, 'steer-snappy', { keys: ['THREE'] }, () => applySteerPreset('snappy'))
+      bindAction(this, 'steer-mode', { keys: ['M'] }, () =>
+        setSteerTuning({ mode: getSteerTuning().mode === 'absolute' ? 'relative' : 'absolute' }),
+      )
+      bindAction(this, 'steer-panel', { keys: ['T'] }, () => launchOverlay(this, 'SteerTuner'))
       // **⚠ Off unless asked for.** It shipped on, and a diagnostic that labels every mark in the
       // frame is unreadable to look past -- it was reported the first time it was seen. A dev
       // overlay defaults to silent; this is the same `window.__*` hook shape `__adGate` and
@@ -626,7 +693,14 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     // What it asks now is the property rather than the bookkeeping: **is anything on this scene's
     // display list drawn by both cameras?** An object belongs to exactly one of them, so a
     // `cameraFilter` carrying neither camera's id is the defect, whatever list it was left out of.
-    const both = this.children.list.filter(
+    // **⚠ And it walks the pools as well as the list, now that a slot off duty is off the list.**
+    // `pooled.ts` takes an unused slot out of the display list entirely — which is what makes the
+    // property still true (an object on no list is drawn by neither camera) and would make a guard
+    // that runs once at create blind to a pool, since every slot starts hidden. The union is as
+    // strong as the list alone was: an object a pool forgot to list is also one it never hides, so
+    // it stays on the display list for good — which is the half that cannot be opted out of.
+    const seen = new Set<Phaser.GameObjects.GameObject>([...this.children.list, ...this.worldObjects()])
+    const both = [...seen].filter(
       (object) =>
         (object.cameraFilter & this.uiCamera.id) === 0 && (object.cameraFilter & this.cameras.main.id) === 0,
     )
@@ -1678,8 +1752,57 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     // advance either and the frame it thaws on is a clean one.
     if (!dying && !isFrozen(this.playerFreeze, time)) {
       const wasAt = this.player.offsetX
+      const tuning = getSteerTuning()
 
-      this.player = stepPlayer(this.player, { targetFraction: steer.targetFraction, active: steer.active }, delta)
+      // **The two modes differ in what the thumb's movement *means*, and nothing else.** Absolute
+      // hands the column straight to the spring, which is the shipped scheme; relative integrates
+      // the movement into a request the thumb pushes around, so the frame's size drops out of the
+      // placement error. See `steerTuning.ts` for the measurement that made this worth having a
+      // switch for, and note that the spring underneath is the same either way.
+      if (tuning.mode === 'relative') {
+        // **⚠ Switching mode mid-press has to re-seed the request, or the first delta is applied to
+        // a stale one.** `relativeTarget` is only maintained while relative is the live mode, so a
+        // switch with a finger already down would push from wherever the request happened to be
+        // left — measured live, a 60px push moved the snail most of the way across the road.
+        if (this.steerModeWas !== 'relative') this.relativeTarget = this.player.offsetX
+
+        if (steer.active) {
+          this.relativeTarget = Math.min(
+            OFFROAD_LIMIT,
+            Math.max(-OFFROAD_LIMIT, relativeTarget(this.relativeTarget, steer.deltaFraction, tuning.sensitivity)),
+          )
+        } else {
+          // Letting go holds the line, and the request has to be put back on the snail or the next
+          // press would push from wherever the thumb had left it. Same rule as `targetFor`.
+          this.relativeTarget = this.player.offsetX
+        }
+      }
+      this.steerModeWas = tuning.mode
+
+      this.player = stepPlayer(
+        this.player,
+        tuning.mode === 'relative'
+          ? { targetOffsetX: this.relativeTarget, active: steer.active }
+          : { targetFraction: steer.targetFraction, active: steer.active },
+        delta,
+        { stiffness: tuning.stiffness, damping: tuning.damping },
+      )
+      // DEV only: what the finger asked for against what the snail did. See `steerProbe.ts`.
+      if (this.steerProbe) {
+        const want =
+          tuning.mode === 'relative' ? this.relativeTarget : steerTarget(steer.targetFraction)
+        const scaleAtLane = CAMERA_DEPTH / PLAYER_Z
+        const perHalfWidth = (scaleAtLane * ROAD_WIDTH * this.scale.width) / 4
+
+        stepSteerProbe(this.steerProbe, {
+          want,
+          active: steer.active,
+          at: this.player.offsetX,
+          gapPx: Math.abs(want - this.player.offsetX) * perHalfWidth,
+          snailHalf: PLAYER_HALF_WIDTHS,
+          now: time,
+        })
+      }
       // **Total travel, not a position reached** — a player who has pushed the snail across the road
       // and back has learned the control, and one whose finger started at the edge has not. The
       // tutorial's first card is the only thing that reads it. See `TUTORIAL_STEER_UNITS`.

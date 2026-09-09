@@ -20,7 +20,8 @@ import {
 import { isDecorArt, type DecorTexture } from './decor'
 import { sceneryDepth } from '../run/worldDepth'
 import { getRoadTheme } from './themes'
-import type { Segment } from './track'
+import type { RoadSprite, Segment } from './track'
+import { hidePooled, showPooled } from '../run/pooled'
 
 /** What one pool slot is currently showing, so a frame can skip work it does not need. */
 interface SlotState {
@@ -83,6 +84,27 @@ export class RoadSprites {
   /** The theme `biomeTints` was last built from, by identity. `null` until the first render. */
   private tintedTheme: ReturnType<typeof getRoadTheme> | null = null
 
+  /**
+   * What each prop is drawn as, cached against the record it belongs to.
+   *
+   * **The same finding as `biomeTints`, one level in.** That check stopped nine `themedProp` calls
+   * a frame; this stops one `tintFor` *per drawn prop* — another OKLab round trip each, 143 of them
+   * on a busy frame, to recompute a colour from a hash of the segment index, the side and the prop
+   * id. None of those move. `variationFor` is cached with it because it is the input: it allocates
+   * a record and six hashed numbers, and it is asked the same question about the same prop sixty
+   * times a second.
+   *
+   * Keyed on the `RoadSprite` record, which `decorateTrack` creates one of per placement and never
+   * replaces — so the key carries the segment, the side, the prop and therefore the biome, and a
+   * prop cannot collide with another. A `WeakMap` rather than a `Map` because the track it is
+   * keyed on is replaced wholesale when a scene rebuilds its world, and nothing here would know to
+   * evict the old one.
+   *
+   * Thrown away by identity on a theme swap, exactly as `biomeTints` is rebuilt: the tint is a
+   * function of the theme, and a stale one would go on painting the light the player has left.
+   */
+  private looks = new WeakMap<RoadSprite, { variation: DecorVariation; tint: number }>()
+
   constructor(scene: Phaser.Scene, poolSize: number, textures: readonly DecorTexture[]) {
     if (textures.length === 0) {
       throw new Error('RoadSprites: needs at least one texture to pool')
@@ -105,6 +127,12 @@ export class RoadSprites {
     }))
 
     this.gameObjects = this.slots.map((slot) => slot.image)
+    // **Off the display list from the moment they exist.** A pool hides what it *stopped* using by
+    // walking from `used` to last frame's count, and a slot that has never been used is on no such
+    // walk — so without this the slack sits in the scene's list for its whole life, iterated twice a
+    // frame by the two cameras for nothing. See `pooled.ts`.
+    for (const slot of this.slots) hidePooled(slot.image)
+
   }
 
   /**
@@ -131,6 +159,9 @@ export class RoadSprites {
     // theme can never be missed, and nothing mutates one in place.
     if (this.tintedTheme !== theme) {
       this.tintedTheme = theme
+      // Every cached prop colour was mixed from the outgoing theme's light. A `WeakMap` has no
+      // `clear`, and replacing it is the honest operation anyway: what is wanted is a new cache.
+      this.looks = new WeakMap()
 
       for (const [index, biome] of BIOMES.entries()) {
         // The theme lights the prop and rotates it; the biome keeps the hue relationships that make
@@ -178,8 +209,21 @@ export class RoadSprites {
         )
         // **The instance's own look, derived from where it stands.** Not stored on the sprite
         // record and not rolled here: `variationFor` is a pure function of the coordinate, so the
-        // same prop on the same segment is the same object on every lap and at every screen size.
-        const variation = variationFor(segment.index, Math.sign(sprite.offsetX), sprite.key)
+        // same prop on the same segment is the same object on every lap and at every screen size —
+        // which is exactly why the answer is worth keeping. See `looks`.
+        let look = this.looks.get(sprite)
+
+        if (look === undefined) {
+          const variation = variationFor(segment.index, Math.sign(sprite.offsetX), sprite.key)
+
+          // The biome's colour under the theme's light, moved for this instance. Computed once per
+          // prop per theme rather than once per prop per frame; it is a hue rotation in OKLab, and
+          // nothing that goes into it changes between frames.
+          look = { variation, tint: tintFor(tint, variation) }
+          this.looks.set(sprite, look)
+        }
+
+        const variation = look.variation
 
         // **⚠ THE DRAWN SIZE IS RESOLVED HERE, BEFORE ANYTHING REASONS ABOUT THE RECTANGLE.**
         // Both scales used to be applied inside `place`, i.e. after the clip, the on-screen test
@@ -213,7 +257,7 @@ export class RoadSprites {
           rect,
           visible,
           n,
-          tint,
+          look.tint,
           variation,
           decorFogCeiling(sprite.tierScale),
           sprite.offsetX,
@@ -225,7 +269,7 @@ export class RoadSprites {
 
     // Only the slots that were in use last frame and are not in use now need hiding.
     for (let i = used; i < previousUsed; i++) {
-      this.slots[i].image.setVisible(false)
+      hidePooled(this.slots[i].image)
     }
 
     this.usedLastFrame = used
@@ -244,7 +288,7 @@ export class RoadSprites {
   refreshTextures(): void {
     for (const slot of this.slots) {
       slot.key = ''
-      slot.image.setVisible(false)
+      hidePooled(slot.image)
     }
   }
 
@@ -259,6 +303,7 @@ export class RoadSprites {
     rect: { x: number; y: number; w: number; h: number },
     visibleFraction: number,
     distanceIndex: number,
+    /** This instance's finished colour, already through `tintFor` — see `looks`. */
     tint: number,
     variation: DecorVariation,
     /** Which tier's fog ceiling this prop fades under -- see `decorFogCeiling`. */
@@ -297,7 +342,7 @@ export class RoadSprites {
     // props on the SAME segment need a tiebreak of their own, or the pool's own slot order decides
     // and changes under the player. See `sceneryDepth`.
     image.setDepth(sceneryDepth(distanceIndex, offsetX, indexInSegment, DECOR_TIERS.far.maxOffset))
-    image.setVisible(true)
+    showPooled(image)
     // Distance haze, on the same curve the ground fades by. Applied every frame rather than
     // cached per slot: a slot's distance changes on almost every frame anyway, so a dirty check
     // would cost more than the assignment it skips.
@@ -307,12 +352,10 @@ export class RoadSprites {
     // held down by the reaction budget. Scenery is not on one -- but it is on a gate, so the
     // near field keeps the alpha it always had. See `DECOR_FOG_GATE`.
     image.setAlpha((1 - decorFog(distanceIndex, fogCeiling)) * billboardAppear(distanceIndex))
-    // Art gets its biome's colour under the theme's light; a generated silhouette already *is*
-    // the theme's colour, and multiplying it again would darken it twice over.
-    // The biome's colour under the theme's light, moved a little for this instance. A generated
-    // silhouette is left alone: it already *is* the theme's colour, and tinting it again would
-    // darken it twice over.
-    image.setTint(this.artKeys.has(key) ? tintFor(tint, variation) : 0xffffff)
+    // Art gets its biome's colour under the theme's light, moved a little for this instance —
+    // already mixed, once, by the caller's cache. A generated silhouette is left alone: it already
+    // *is* the theme's colour, and tinting it again would darken it twice over.
+    image.setTint(this.artKeys.has(key) ? tint : 0xffffff)
 
     if (visibleFraction < 1) {
       // Crop rather than squash: shrinking the display height would slide the object down the

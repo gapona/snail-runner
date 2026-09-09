@@ -102,6 +102,17 @@ export interface PlayerInput {
 
 export interface PlayerStepOptions {
   /**
+   * The spring to integrate, defaulting to the shipped `PLAYER_STIFFNESS`/`PLAYER_DAMPING`.
+   *
+   * **Parameters rather than a module read, so the pair can be changed while a run is going** —
+   * see `steerTuning.ts` for why the shipped values are inherited from a different game and have
+   * never been measured against this one. Every existing caller passes neither and is byte-for-byte
+   * unchanged; `verify:player` asserts that the defaults are the constants themselves, so a
+   * silently different default could not ship.
+   */
+  stiffness?: number
+  damping?: number
+  /**
    * Whether to hold the snail inside `±OFFROAD_LIMIT`. Defaults to `true`.
    *
    * The one caller that passes `false` is `verify:player`'s steady-state lag measurement, which
@@ -267,6 +278,8 @@ export function stepPlayer(
   options: PlayerStepOptions = {},
 ): PlayerState {
   const clamp = options.clamp ?? true
+  const springK = options.stiffness ?? PLAYER_STIFFNESS
+  const springD = options.damping ?? PLAYER_DAMPING
   const target = targetFor(input, clamp, state.offsetX)
 
   const s: Kinematics = {
@@ -282,9 +295,9 @@ export function stepPlayer(
     // damping instead would make the snail *drift* rather than answer slowly, and scaling the
     // target would make it answer fully to a smaller request — neither is "the controls are
     // heavier in the air", which is what a ramp is trading the player for its height.
-    const stiffness = s.grounded ? PLAYER_STIFFNESS : PLAYER_STIFFNESS * state.airControl
+    const stiffness = s.grounded ? springK : springK * state.airControl
 
-    s.vx = (s.vx + (target - s.offsetX) * stiffness * dtSec) * PLAYER_DAMPING
+    s.vx = (s.vx + (target - s.offsetX) * stiffness * dtSec) * springD
     s.offsetX += s.vx * dtSec
 
     if (clamp) clampInPlace(s)

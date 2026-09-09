@@ -7,6 +7,7 @@ import { RunOver } from './scenes/RunOver'
 import { Settings } from './scenes/Settings'
 import { Shop } from './scenes/Shop'
 import { Garage } from './scenes/Garage'
+import { SteerTuner } from './scenes/SteerTuner'
 import { Records } from './scenes/Records'
 import { RunPause } from './scenes/RunPause'
 
@@ -37,5 +38,12 @@ export const GameConfig: Phaser.Types.Core.GameConfig = {
    * literal is a rule the next scene added in the wrong place breaks silently. This order is what
    * the list should say anyway.
    */
-  scene: [Boot, Preloader, MainMenu, Garage, RunScene, RunOver, RunPause, Settings, Shop, Records],
+  scene: [
+    Boot, Preloader, MainMenu, Garage, RunScene, RunOver, RunPause, Settings, Shop, Records,
+    // **A static import whose only reference is inside a DEV branch, which is what tree-shakes.**
+    // Gating the *call* leaves the module in the bundle -- the finding `perfReport.ts` exists for --
+    // and `check-bundle.mjs` greps the built output for `__steer` so "we gated it" and "it is gone"
+    // stay separate claims.
+    ...(import.meta.env.DEV ? [SteerTuner] : []),
+  ],
 }
