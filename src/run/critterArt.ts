@@ -29,6 +29,31 @@ import { CRITTER_KINDS, CRITTER_KIND_IDS, type CritterKind } from './critters'
 export const CRITTER_FRAMES = 2
 
 /**
+ * How many DISTINCT body drawings a kind ships, which is not how many poses its cycle has.
+ *
+ * **⚠ Every kind shipped its body twice, byte for byte.** `CRITTER_STEP_UNITS` says why for the
+ * flyers in as many words — *a flyer's body does not step, both of its frames are the same drawing
+ * and the motion is in the wings* — and the frog is the same case from the other side: its motion
+ * is the hop, and `critter-frog-air` is where that lives. So four PNGs were downloaded, decoded and
+ * uploaded to the GPU as second copies of four others: **374KB, 10% of the game's image payload**,
+ * which on a phone over mobile data is the part of a load a player actually waits through.
+ *
+ * The cycle stays two poses — the wings beat on it and `verify:critters` holds the step rates to it
+ * — and what collapses is only the *key* a pose resolves to. A kind that genuinely draws its gait
+ * puts 2 here and ships two files; nothing else has to change.
+ *
+ * It also puts the fallback back in step with the art, which is this project's own standing rule:
+ * `createCritterTextures` drew an alternating tripod across two poses while the shipped creature
+ * held still, so a failed load animated legs the PNG does not have.
+ */
+export const CRITTER_BODY_DRAWINGS: Record<CritterKind, number> = {
+  frog: 1,
+  bee: 1,
+  hornet: 1,
+  mosquito: 1,
+}
+
+/**
  * How far a critter travels per frame of its cycle, in world units, per kind.
  *
  * 60 units at the beetle's walk is 9.7 poses a second — nearly five gait cycles — which is
@@ -50,9 +75,16 @@ export const CRITTER_STEP_UNITS: Record<CritterKind, number> = {
   mosquito: 1,
 }
 
-/** The texture key for one pose of one kind. */
+/**
+ * The texture key for one pose of one kind.
+ *
+ * Wrapped by how many drawings the kind *has* rather than by the cycle's length, so a kind with one
+ * body resolves every pose to it — see `CRITTER_BODY_DRAWINGS`.
+ */
 export function critterFrameKey(kind: CritterKind, index: number): string {
-  return `critter-${kind}-${((index % CRITTER_FRAMES) + CRITTER_FRAMES) % CRITTER_FRAMES}`
+  const drawings = CRITTER_BODY_DRAWINGS[kind]
+
+  return `critter-${kind}-${((index % drawings) + drawings) % drawings}`
 }
 
 /** Every key this module owns, for a loader or a camera list that wants the set. */
@@ -82,7 +114,7 @@ export const CRITTER_WING_KINDS: readonly CritterKind[] = ['bee', 'hornet', 'mos
 
 export const CRITTER_TEXTURE_KEYS: readonly string[] = [
   ...CRITTER_KIND_IDS.flatMap((kind) =>
-    Array.from({ length: CRITTER_FRAMES }, (_, i) => critterFrameKey(kind, i)),
+    Array.from({ length: CRITTER_BODY_DRAWINGS[kind] }, (_, i) => critterFrameKey(kind, i)),
   ),
   ...CRITTER_AIR_KINDS.map(critterAirKey),
   ...CRITTER_WING_KINDS.map(critterWingKey),
@@ -160,7 +192,7 @@ export function createCritterTextures(scene: Phaser.Scene): void {
   for (const kind of CRITTER_KIND_IDS) {
     const { width, height } = CRITTER_CANVAS[kind]
 
-    for (let frame = 0; frame < CRITTER_FRAMES; frame++) {
+    for (let frame = 0; frame < CRITTER_BODY_DRAWINGS[kind]; frame++) {
       const key = critterFrameKey(kind, frame)
 
       if (scene.textures.exists(key)) continue

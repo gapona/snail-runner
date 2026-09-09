@@ -10,7 +10,8 @@
 // the placer but an arithmetic consequence of one constant, `GROUND_MAX_BAND.yHigh < JUMP_APEX`, and
 // is checked from both ends here.
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { readdirSync, readFileSync } from 'node:fs'
 import {
   BEE_BAND,
   BEE_CLEARANCE,
@@ -49,6 +50,7 @@ import {
   CRITTER_CANVAS,
   CRITTER_WING_KINDS,
   CRITTER_FRAMES,
+  CRITTER_BODY_DRAWINGS,
   CRITTER_STEP_UNITS,
   createCritterTextures,
 } from '../src/run/critterArt.ts'
@@ -1110,7 +1112,10 @@ check('the SHIPPED art is its own collision box too, not just the fallback canva
     // against 2.044:1 -- a correct sprite failed for being measured against the wings as well.
     const target = wings ? wings.bodyAspect : boxW / boxH
 
-    for (let pose = 0; pose < CRITTER_FRAMES; pose++) {
+    // The *drawings* a kind ships, not the poses its cycle has — every kind today holds still and
+    // ships one. See `CRITTER_BODY_DRAWINGS`, and the 374KB of byte-identical second copies that
+    // constant exists because of.
+    for (let pose = 0; pose < CRITTER_BODY_DRAWINGS[kind]; pose++) {
       const file = `public/assets/critter/critter-${kind}-${pose}.png`
       const png = readFileSync(file)
       // The IHDR width and height, big-endian at a fixed offset in every PNG.
@@ -1440,6 +1445,34 @@ check('the hit test is the obstacles\' own, with no second rule anywhere', () =>
   // while the same snail at the same height is still inside a `blocking` barrier.
   assert.ok(!hits(body(0, JUMP_APEX), bug))
   assert.ok(hits(body(0, JUMP_APEX), createObstacle({ id: 1, z: 0, offsetX: 0, halfWidths: 0.2, kind: 'blocking' })))
+})
+
+
+check('a kind ships exactly the body drawings it declares, and no second copy of one', () => {
+  // **⚠ The whole set shipped twice before this existed**: `CRITTER_FRAMES` is the gait *cycle* and
+  // was being used as the number of files, so four bodies were downloaded, decoded and uploaded to
+  // the GPU as identical second copies -- 374KB, a tenth of the game's image payload, for nothing.
+  // Nothing about the frame could show it, which is why it is a check rather than a fixed comment.
+  const dir = 'public/assets/critter'
+  const shipped = readdirSync(dir)
+    .filter((f) => /-[0-9]+\.png$/.test(f))
+    .sort()
+  const declared = CRITTER_KIND_IDS.flatMap((kind) =>
+    Array.from({ length: CRITTER_BODY_DRAWINGS[kind] }, (_, i) => `critter-${kind}-${i}.png`),
+  ).sort()
+
+  assert.deepEqual(shipped, declared, 'the body drawings on disk are not the ones the table declares')
+
+  const seen = new Map()
+
+  for (const file of shipped) {
+    const hash = createHash('md5').update(readFileSync(`${dir}/${file}`)).digest('hex')
+
+    assert.ok(!seen.has(hash), `${file} is byte-identical to ${seen.get(hash)}`)
+    seen.set(hash, file)
+  }
+
+  console.log(`    ${shipped.length} body drawings for ${CRITTER_KIND_IDS.length} kinds, all distinct`)
 })
 
 console.log(`\n${passed} checks passed`)

@@ -1,6 +1,5 @@
 import * as Phaser from 'phaser'
 import { SFX_FILES, renderSfxUris } from '../audio/sfx'
-import { MUSIC_KEY, renderMusicUri } from '../audio/music'
 import { ensureSkyTextures, skyPlateKey, SKYLINE_TEXTURE, skyTextureKey } from '../road/Backdrop'
 import { BIOMES, groundPairForTheme } from '../road/biomes'
 import { getRoadTheme } from '../road/themes'
@@ -99,7 +98,6 @@ export class Preloader extends Phaser.Scene {
   private progress = 0
   private elapsedMs = 0
   private failed: string[] = []
-  private musicFileFailed = false
 
   constructor() {
     super('Preloader')
@@ -111,7 +109,6 @@ export class Preloader extends Phaser.Scene {
     this.progress = 0
     this.elapsedMs = 0
     this.failed = []
-    this.musicFileFailed = false
 
     // Zero bytes and no theme file: `ensureSkyTextures` paints its gradient onto a canvas from the
     // active theme's own two sky colours. The road is deliberately not drawn — it is the expensive
@@ -137,14 +134,9 @@ export class Preloader extends Phaser.Scene {
       this.progress = progress
     })
     this.load.on(Phaser.Loader.Events.FILE_LOAD_ERROR, (file: Phaser.Loader.File) => {
-      // **The music is the one file whose absence is not fatal**, because there is a track that
-      // needs no file at all — see `create`. Everything else here is art the game cannot be played
-      // without, so it stops the handover.
-      if (file.key === MUSIC_KEY) {
-        this.musicFileFailed = true
-
-        return
-      }
+      // Everything this screen loads is art the game cannot be played without, so any failure
+      // here stops the handover. The one file whose absence is survivable is no longer on this
+      // screen at all — see `audio/musicFile.ts`.
       this.failed.push(file.key)
     })
 
@@ -201,13 +193,11 @@ export class Preloader extends Phaser.Scene {
 
     this.load.setPath('assets')
     this.load.audio('sfx', 'audio/blip.wav')
-    // **The music is a file again, and what changed is the provenance rather than the rule.** It
-    // went out once for being the one entry in `AUDIO-SOURCES.md` that could not satisfy
-    // CC0-or-self-generated: no source, no licence. It is self-generated — a Stable Audio render —
-    // and that is what the registry now records, so the rule is met rather than bent. What it
-    // costs is 1.85MB of the build's own ceiling, which is the trade a recording is worth against
-    // the chiptune bed in `music.ts` — still here, and still what plays if this file is missing.
-    this.load.audio(MUSIC_KEY, 'audio/music.mp3')
+    // **⚠ The music is NOT loaded here, and that is the point.** It is 1.85MB against 4.95MB of
+    // everything else, so **37% of this bar** was a two-minute stereo mp3 the front screen does not
+    // need to exist — on a phone over mobile data, several seconds of a player looking at a
+    // loading screen before anything they can touch. `MainMenu` asks for it once it is up; see
+    // `audio/musicFile.ts`, which also owns the rendered fallback that used to live below.
   }
 
   create() {
@@ -217,19 +207,6 @@ export class Preloader extends Phaser.Scene {
     // its art, so the honest outcome is a message and a retry.
     if (this.failed.length > 0) {
       this.showFailure()
-
-      return
-    }
-
-    // **⚠ A missing music file would otherwise crash the front screen, not merely silence it**:
-    // `playMusic` calls `soundManager.add(key)`, which throws on a key that is not in the cache.
-    // So the bed from `music.ts` is rendered and queued here, in a second load cycle — a cycle
-    // that only ever runs when the file did not arrive, which is why it is not paid for on boot.
-    if (this.musicFileFailed) {
-      console.warn('[preload] audio/music.mp3 did not load; falling back to the rendered loop')
-      this.load.audio(MUSIC_KEY, renderMusicUri())
-      this.load.once(Phaser.Loader.Events.COMPLETE, () => this.scene.start('MainMenu'))
-      this.load.start()
 
       return
     }

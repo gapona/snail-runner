@@ -217,8 +217,11 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
   premise**: 168 jump-only rows across ten laps, none carrying a `blocking` obstacle, so the air is
   100% clear and a bee can never seal a row the player was forced into. The sizes are asserted
   against the bounds they are *solved* from rather than against literals, and the drawing is driven
-  under a recording stub — which caught a leg drawn 4.8px off the canvas on its first run. See "Bugs
-  That Run At You".
+  under a recording stub — which caught a leg drawn 4.8px off the canvas on its first run. It also
+  **hashes the shipped PNGs against the drawings the table declares** — the set on disk must be
+  exactly the set declared and no two files may be byte-identical, which is the only way a second
+  copy of a texture is visible at all. See "Bugs That Run At You" and "The Third Round Was Not
+  The Frame, It Was The Wire".
 - `npm run verify:sightline` — how a billboard comes out from behind a crest: that the crop is
   measured from the top, that it slides rather than steps as the camera moves, and that a taller
   prop clears the ridge earlier than a short one. Reimplements the mesh's own walk under Node,
@@ -14149,6 +14152,101 @@ is correct and self-maintaining, not because it was worth 3% of a frame.
   Unlike the ground quad this is a real change to the picture — the stripe is what marks the road's
   edge and `verify:road` holds its contrast — so it needs its own pixel diff and its own argument.
 
+## The Third Round Was Not The Frame, It Was The Wire
+
+Two rounds of this went at frame time and the report was still *"it lags on mobile"*. **A phone's
+first impression of this game is not a frame at all, it is the wait** — 6.80MB over mobile data
+before anything can be touched, which no amount of milliseconds inside `render` reaches. So the
+third round is payload and load order, and nothing in it changes what a frame draws.
+
+### ⚠ Every critter shipped its body twice, byte for byte
+
+`CRITTER_BODY_DRAWINGS` in `src/run/critterArt.ts`.
+
+`critterFrameKey` wrapped its index by `CRITTER_FRAMES`, which is **2** — the gait *cycle* — and
+`CRITTER_TEXTURE_KEYS` was built from the same number, so `Preloader` asked for two body PNGs per
+kind. All four kinds ship one drawing and a second copy of it: **374KB, a tenth of the game's image
+payload**, downloaded, decoded and uploaded to the GPU for nothing.
+
+**The file that says why was already in the repo and had been for two rounds.**
+`CRITTER_STEP_UNITS` states it for the flyers in as many words — *a flyer's body does not step, both
+of its frames are the same drawing and the motion is in the wings* — and the frog is that from the
+other side: its motion is the hop, and `critter-frog-air` is where the hop lives. So the fact was
+written down beside the constant that contradicted it, and nothing could see the contradiction,
+because a duplicate texture draws correctly.
+
+- **The cycle stays two poses.** The wings beat on it, `CRITTER_STEP_UNITS` is per pose and
+  `verify:critters` holds every kind's step rate against it. What collapsed is only the *key* a pose
+  resolves to, so a kind that genuinely draws its gait puts `2` in the table and ships two files.
+- **It also put the procedural fallback back in step with the art**, which is this project's own
+  standing rule: `createCritterTextures` drew an alternating tripod across two poses while the
+  shipped creature holds still, so a failed load animated legs the PNG does not have.
+- **`verify:critters` hashes what is on disk against what the table declares** — the set on disk
+  must be exactly the set declared, and no two files may be byte-identical. **Nothing about a frame
+  could ever have shown this**, which is why it is a check and not a fixed comment: a second copy of
+  a texture is invisible in every direction except the wire.
+
+Delivered: **dist 7.15MB -> 6.80MB.**
+
+### ⚠ A third of the loading bar was a two-minute mp3 the front screen does not need
+
+`src/audio/musicFile.ts`, and `Preloader` no longer loads the track at all.
+
+`music.mp3` is **1.85MB — 27% of everything the game downloads, and 37% of what the loading bar
+itself waited for**, since the JS bundle arrives before the bar exists. The front screen does not
+need it: the menu draws a world, and the track is something to hear while looking at it. So the menu
+asks for it once it is up and plays it when it lands, and the bar reaches the end without it.
+
+**The one thing that must not happen is asking for it before it is there.** `playMusic` calls
+`soundManager.add(key)`, which **throws** on a key the cache does not hold — so a deferral written
+carelessly does not merely silence the menu, it takes the menu with it. `ensureMusic` is the whole
+of the guard: play if it is cached, otherwise request it once and play on completion.
+
+- **The rendered loop stays as the fallback and moved here with it.** `Preloader` used to own a
+  second load cycle for a missing file; that cycle is gone and the same fallback now sits behind the
+  same throw, one scene along. **Proved live and by accident** — see the path bug below, which 404'd
+  the track and brought the game up on the 17.14s bed with the menu alive and zero errors.
+- **⚠ A loader's base path belongs to its SCENE, and this is what made the deferral wrong on its
+  first run.** `Preloader` calls `load.setPath('assets')` at the end of its own `preload` and the
+  music line sat under it, so `'audio/music.mp3'` moved to `MainMenu` — whose loader has no base
+  path — and asked for `/audio/music.mp3`. Measured in the running game: the request 404'd, the
+  fallback fired, and **the game came up on the rendered loop instead of the track with nothing on
+  screen to say so.** Every suite was green, the typecheck was clean, and the only thing that caught
+  it was reading the decoded buffer's own length — **17.14s where the track is 120s.** The path is
+  spelled out from the root now, like every other `assets/...` in `Preloader`.
+- **`loading` is cleared on `SHUTDOWN`**, because the loader belongs to the scene: a player who
+  presses Play while the request is in flight aborts it, and without that the track would never be
+  asked for again for the rest of the session.
+- **What it costs, stated:** a player who presses Play in the first seconds gets a silent first run
+  and the track when they come back. That is a fair trade for a third off every boot, and it is why
+  this retries on every entry rather than giving up.
+
+**Measured in the running game**, dev build, hand-stepped: on the frame `MainMenu` becomes active
+the cache holds **no** `music` key; a moment later it holds a **120s** buffer and it is playing.
+Driven through the awkward path too — abandon the menu for a run while the request is in flight,
+then come back — and the track plays with zero errors.
+
+### What was measured and rejected
+
+- **Lossless PNG recompression** of the whole sprite set: **0.6%**. The pipeline already quantises
+  to 64 colours, which is where the bytes went.
+- **Alpha quantisation**: **0.4%**, and it is exactly the band `verify:mattes` exists to police.
+- **Dropping `physics: 'arcade'`**: 70 bytes. Phaser's main entry imports the plugin whatever the
+  config says. Recorded in the previous round and re-confirmed.
+
+### ⚠ Found and deliberately not fixed: two decor props are the same 31KB picture
+
+`for_mushroom.png` and `fun_cluster.png` are byte-identical. They are not a build artefact the way
+the critters were: both are rendered from `mushroom_tanGroup` in `smooth_render.py`, as separate
+picks, for two different biomes. Aliasing one key to the other would save 31KB and quietly put the
+same object in two places — which is a **content** decision about whether `fungal` should have a
+cluster of its own, not something a payload round gets to take. Named here so the next art round has
+it.
+
+**Also available and not taken: re-encoding `music.mp3` at 96kbps mono**, worth about 1.15MB of the
+build's own ceiling. It is an audible change and nobody in this loop can listen, which is this
+project's standing limitation on every audio claim — so it is the owner's call.
+
 ## Six Things From A Phone, And One Of Them Was The Page
 
 Six reports off screenshots of the real build on a phone, in a Telegram in-app webview. Three of
@@ -14466,6 +14564,18 @@ index.
 
 App bugs:
 
+- **Every critter shipped its body twice, byte for byte** — `critterFrameKey` wrapped by the gait
+  *cycle* (2) rather than by how many drawings a kind has (1), so 374KB, a tenth of the game's
+  image payload, was downloaded and uploaded to the GPU as four second copies. The reason it was
+  wrong was written down beside it two rounds earlier, in `CRITTER_STEP_UNITS`. Invisible in every
+  direction except the wire. → "The Third Round Was Not The Frame, It Was The Wire"
+- **And the loading bar waited for a two-minute mp3 the front screen does not need** — 1.85MB,
+  37% of the bytes that bar was measuring. → same section
+- **⚠ Then the deferral asked for the wrong URL, and every suite was green.** A loader's base path
+  belongs to its scene: `Preloader` sets `assets` and `MainMenu` does not, so the relative path
+  404'd and the game came up on the 17.14s rendered fallback instead of the 120s track, with
+  nothing on screen to say so. Caught only by reading the decoded buffer's own length in the
+  running game. → same section
 - **The same control law is six times worse on a phone than on a desktop, and it is the *mapping*
   rather than the spring** — steering is absolute, so the thumb has to land on a column, and the
   road is a fraction of the frame while the thumb is not. Measured: the median gap a row leaves is

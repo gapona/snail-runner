@@ -420,16 +420,24 @@ check('⚠ the music file ships WITH a registry row, which is the rule it once f
   console.log(`    ${MUSIC_KEY}: ${(bytes / 1024 / 1024).toFixed(2)}MB shipped, Stable Audio render`)
 })
 
-check('⚠ and the rendered loop is still live, because a missing file must not crash the menu', () => {
-  // `playMusic` calls `soundManager.add(key)`, which throws on a key that is not in the cache — so
-  // a music file that 404s takes the front screen with it rather than merely silencing it.
-  // `Preloader.create` renders this loop into that gap. It is the fallback the sky plates and the
-  // procedural sprites already have, arriving in the one place a throw was the alternative.
+check('⚠ the track is off the loading screen, and the rendered loop is still its fallback', () => {
+  // **The mp3 is 1.85MB — 31% of the wire — and it was on the blocking path.** Nothing on the front
+  // screen needs it, so `MainMenu` asks for it once it is up. What must not happen is asking for it
+  // before it is there: `playMusic` calls `soundManager.add(key)`, which throws on a key the cache
+  // does not hold, and that takes the front screen with it rather than merely silencing it — which
+  // is why the rendered loop is kept as the fallback rather than deleted with the loader step.
+  const src = readFileSync('src/audio/musicFile.ts', 'utf8')
   const preloader = readFileSync('src/scenes/Preloader.ts', 'utf8')
 
-  assert.ok(preloader.includes("this.load.audio(MUSIC_KEY, 'audio/music.mp3')"), 'the file is not what is loaded')
-  assert.ok(preloader.includes('renderMusicUri()'), 'the rendered loop has no caller — it is dead state')
-  console.log(`    fallback: ${(MUSIC_LENGTH_MS / 1000).toFixed(2)}s of ${MUSIC.bars} bars at ${MUSIC.bpm}bpm, rendered`)
+  // **⚠ The path is spelled out from the root, not relative.** A loader's base path is the scene's:
+  // `Preloader` sets `assets` and `MainMenu` does not, so a relative path 404s and the fallback
+  // fires -- measured live, the game came up on the rendered loop with nothing to say so.
+  assert.ok(src.includes("MUSIC_PATH = 'assets/audio/music.mp3'"), 'the file is not what is loaded')
+  assert.ok(existsSync('public/assets/audio/music.mp3'), 'the path the loader asks for is not on disk')
+  assert.ok(src.includes('renderMusicUri()'), 'the rendered loop has no caller — it is dead state')
+  assert.ok(src.includes('Phaser.Scenes.Events.SHUTDOWN'), 'a scene torn down mid-request never retries')
+  assert.ok(!preloader.includes('audio/music.mp3'), 'the mp3 is still on the blocking path')
+  console.log(`    deferred to MainMenu; fallback ${(MUSIC_LENGTH_MS / 1000).toFixed(2)}s of ${MUSIC.bars} bars at ${MUSIC.bpm}bpm`)
 })
 
 check('⚠ the loop joins to itself without a click, which is what the wrap is for', () => {

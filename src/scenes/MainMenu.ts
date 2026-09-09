@@ -1,9 +1,8 @@
 import * as Phaser from 'phaser'
 import { bindAction } from '../platform/input'
 import { gameReady } from '../platform/yt'
-import { playMusic } from '../audio/audio'
+import { ensureMusic } from '../audio/musicFile'
 import { SFX } from '../audio/sfx'
-import { MUSIC_KEY } from '../audio/music'
 import { t } from '../i18n/strings'
 import { getCatalog, type ShopItem } from '../shop/catalog'
 import { resolveSelectedSnail } from '../run/snailSkins'
@@ -396,7 +395,11 @@ export class MainMenu extends Phaser.Scene {
      * sound manager holds it locked and plays it on the first input, so this is a request rather
      * than a guarantee about the very first frame.
      */
-    playMusic(MUSIC_KEY)
+    // **⚠ Fetched here rather than by the loading screen**, because it is 1.85MB — 37% of what
+    // that bar waited for — and nothing on this screen needs it to exist. See
+    // `ensureMusic`, which is what keeps `playMusic` from being asked for a key that is not there
+    // yet: that call throws, and it takes the front screen with it.
+    ensureMusic(this)
 
     // The world is up, the interface is interactable, the preloader is gone.
     gameReady()
