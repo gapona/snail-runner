@@ -14,6 +14,7 @@
     "verify:suspend": "node --import ./scripts/register-ts-loader.mjs scripts/verify-suspend.mjs",
     "verify:player": "node --import ./scripts/register-ts-loader.mjs scripts/verify-player.mjs",
     "measure:steering": "node --import ./scripts/register-ts-loader.mjs scripts/measure-steering.mjs",
+    "measure:frame": "node --import ./scripts/register-ts-loader.mjs scripts/measure-frame.mjs",
     "verify:jump": "node --import ./scripts/register-ts-loader.mjs scripts/verify-jump.mjs",
     "verify:tutorial": "node --import ./scripts/register-ts-loader.mjs scripts/verify-tutorial.mjs",
     "verify:obstacles": "node --import ./scripts/register-ts-loader.mjs scripts/verify-obstacles.mjs",

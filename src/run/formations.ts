@@ -279,6 +279,69 @@ export function clearOfObstacles(
  */
 const OBSTACLE_REACH_Z = SEGMENT_LENGTH * 2
 
+/**
+ * The obstacles of a lap, bucketed along the track so a point can ask about its own stretch.
+ *
+ * ## ⚠ The scan was over the WHOLE lap, and nearly every visit was a miss
+ *
+ * `clearOfObstacles` states the rule and walks every obstacle on the lap for every point of every
+ * attempt of every chain. That is the readable form and it is what the checks are written against;
+ * what it costs is that a lap of ~250 obstacles is visited **~90 000 times per build**, of which
+ * the handful within `OBSTACLE_REACH_Z` are the only ones that could ever answer anything.
+ * Measured, it is **50–68% of `placeFormations`** — and `placeFormations` is most of the one frame
+ * per lap that builds the next one.
+ *
+ * A bucket is exactly `OBSTACLE_REACH_Z` wide, so a point is answered by its own bucket and the
+ * two either side of it — the reach cannot span more than three of them by construction. Nothing
+ * about the answer changes: the same obstacles are considered against the same two tests, and the
+ * ones no longer visited are the ones the longitudinal test was already rejecting. `verify:formations`
+ * asserts the two agree over a dense sweep **and** that a whole lap comes out identical, with the
+ * unindexed walk as its control.
+ */
+export interface ObstacleIndex {
+  readonly buckets: readonly (readonly Obstacle[])[]
+  readonly trackLength: number
+}
+
+/** Buckets a lap's obstacles for `clearOfIndexedObstacles`. Once per placer call, never per point. */
+export function indexObstacles(obstacles: readonly Obstacle[], trackLength: number): ObstacleIndex {
+  const count = Math.max(1, Math.ceil(trackLength / OBSTACLE_REACH_Z))
+  const buckets: Obstacle[][] = Array.from({ length: count }, () => [])
+
+  for (const obstacle of obstacles) {
+    buckets[bucketOf(obstacle.z, trackLength, count)].push(obstacle)
+  }
+
+  return { buckets, trackLength }
+}
+
+/** Which bucket a track position falls in. Wrapped first, because a chain's tail can run past the lap. */
+function bucketOf(z: number, trackLength: number, count: number): number {
+  const at = wrapZ(z, trackLength)
+
+  return Math.min(count - 1, Math.max(0, Math.floor(at / OBSTACLE_REACH_Z)))
+}
+
+/**
+ * `clearOfObstacles`, asked of the three buckets that can hold an answer.
+ *
+ * **The rule is not restated here and that is deliberate** — it delegates to `clearOfObstacles`
+ * itself over each bucket, so there is exactly one place that says what standing inside an obstacle
+ * means and the index can only ever change *which* obstacles are offered to it.
+ */
+export function clearOfIndexedObstacles(point: { z: number; offsetX: number }, index: ObstacleIndex): boolean {
+  const count = index.buckets.length
+  const home = bucketOf(point.z, index.trackLength, count)
+
+  for (let step = -1; step <= 1; step++) {
+    const bucket = index.buckets[(((home + step) % count) + count) % count]
+
+    if (bucket.length > 0 && !clearOfObstacles(point, bucket, index.trackLength)) return false
+  }
+
+  return true
+}
+
 export interface FormationOptions {
   rng: () => number
   fromZ: number
@@ -306,6 +369,7 @@ export interface FormationOptions {
  */
 export function placeFormations(options: FormationOptions): Pickup[] {
   const { rng, fromZ, toZ, trackLength, obstacles } = options
+  const index = indexObstacles(obstacles, trackLength)
   const launches = options.launches ?? []
   const pickups: Pickup[] = []
   let id = 0
@@ -422,7 +486,7 @@ export function placeFormations(options: FormationOptions): Pickup[] {
       // Below the kind's own minimum it stops being a chain and becomes a couple of strays, which
       // is the thing `CHAIN` states a minimum to prevent. Better nothing there than that.
       if (fitted.length < CHAIN[pickup].min) break
-      if (fitted.every((point) => clearOfObstacles(point, obstacles, trackLength))) placed = fitted
+      if (fitted.every((point) => clearOfIndexedObstacles(point, index))) placed = fitted
     }
 
     if (!placed) {

@@ -270,6 +270,13 @@ export const FLIGHT_LENGTH_Z = (JUMP_AIR_MS / 1000) * MAX_ATTAINABLE_SPEED
  * the worst case (the flight covers the full `FLIGHT_LENGTH_Z` after the row) is a strictly
  * stronger condition, so a layout that passes is passable at every speed — which is the property
  * worth having.
+ *
+ * **⚠ Nothing in the game calls this any more, and it is not dead.** The placer accepts rows through
+ * `acceptRow`, which is this function restricted to what appending can break; what still runs this
+ * one is `verify:obstacles`, as the **control** that `acceptRow` is measured against row for row.
+ * Delete it and the incremental form is left proving itself. That is the one shape an uncalled
+ * export is allowed to have here — see the six times this project has found authored state doing
+ * nothing, every one of which had no such caller.
  */
 export function provePassable(obstacles: readonly Obstacle[]): boolean {
   const rows = obstacleRows(obstacles)
@@ -292,6 +299,56 @@ export function provePassable(obstacles: readonly Obstacle[]): boolean {
 /** Whether some line through this row clears it at the apex. */
 function passableInAir(row: readonly Obstacle[]): boolean {
   return OFFSETS.some((offsetX) => !row.some((obstacle) => hits({ offsetX, y: JUMP_APEX }, obstacle)))
+}
+
+/** A row already proved, reduced to the two facts appending another row can ask about. */
+export interface ProvedRow {
+  readonly z: number
+  /** Whether the only line through it is in the air, i.e. whether it commits the snail to a flight. */
+  readonly jumpOnly: boolean
+}
+
+/**
+ * `provePassable([...placed, ...row])`, restricted to what appending can actually break.
+ *
+ * ## ⚠ The walk re-proved the whole lap for every row, and every redraw of every row
+ *
+ * `placeObstacles` called `provePassable([...placed, ...row])` once per attempt — so row 37 copied
+ * and re-proved all thirty-six rows in front of it, each at 81 samples, and a rejected row paid the
+ * same. Quadratic in a placer that runs on **one frame, once per lap**, and invisible on a desktop
+ * where that frame has 16ms to lose. Measured: `placeRunObstacles` is ~1.0ms of a ~2.9ms build.
+ *
+ * What appending cannot do is take away a line that was already there. Rows are laid at strictly
+ * increasing `z` and `obstacleRows` groups by exact `z`, so a new row is a new group at the end and
+ * every earlier group is untouched — their own lines were proved when they were added. The only
+ * obligation appending creates is the mirror of the flight loop read backwards: **an earlier
+ * jump-only row whose flight now reaches this one**, which is a window of `FLIGHT_LENGTH_Z` and
+ * therefore about two rows rather than the lap.
+ *
+ * Returns the row's own record so the caller does not solve its line twice; `null` means refuse it.
+ * `verify:obstacles` asserts the two agree row for row over the real placer, with the whole-lap
+ * `provePassable` as its control.
+ */
+export function acceptRow(placed: readonly ProvedRow[], row: readonly Obstacle[]): ProvedRow | null {
+  const line = passableLine(row)
+
+  if (!line) return null
+
+  const z = row[0].z
+  // Backwards from the end, because `placed` is ascending in `z` and the window is at the near end
+  // of it: the first row out of reach is where every earlier row also is.
+  let committed = false
+
+  for (let i = placed.length - 1; i >= 0 && placed[i].z + FLIGHT_LENGTH_Z >= z; i--) {
+    if (placed[i].jumpOnly) {
+      committed = true
+      break
+    }
+  }
+
+  if (committed && !passableInAir(row)) return null
+
+  return { z, jumpOnly: line.mode !== 'ground' }
 }
 
 export interface PlacementOptions {
@@ -370,6 +427,9 @@ export function placeObstacles(options: PlacementOptions): Obstacle[] {
   // was also worth fixing; this is the larger half and had nothing to do with the art.
   let id = options.firstId ?? 0
   let z = fromZ + MIN_ROW_GAP_Z
+  // Maintained beside `placed` rather than re-derived: see `acceptRow` for why the whole lap was
+  // being re-proved for every row, and what it cost the one frame a lap build lands on.
+  const rows: ProvedRow[] = []
 
   while (z < toZ) {
     // Density scales the *spacing*, never the floor: at density 1 rows sit at the reaction gap,
@@ -377,7 +437,12 @@ export function placeObstacles(options: PlacementOptions): Obstacle[] {
     const spacing = MIN_ROW_GAP_Z * (1 + (1 - clamp01(density)) * 4)
     const row = drawRow(options, z, () => id++)
 
-    if (row.length > 0 && provePassable([...placed, ...row])) placed.push(...row)
+    const proved = row.length > 0 ? acceptRow(rows, row) : null
+
+    if (proved) {
+      placed.push(...row)
+      rows.push(proved)
+    }
 
     // **The jitter only ever adds distance.** Scaling the whole spacing by `0.85 + rng() * 0.3`
     // reads as more natural and quietly breaks the one guarantee this file makes: it put two rows

@@ -16,6 +16,8 @@
 //    the floor -- see `REACTION_MS`'s own docstring.
 import assert from 'node:assert/strict'
 import {
+  acceptRow,
+  FLIGHT_LENGTH_Z,
   OBSTACLE_HALF_WIDTHS,
   OBSTACLE_POOL_SIZE,
   createObstacle,
@@ -977,6 +979,73 @@ check('every obstacle inside the draw distance can be drawn at once', () => {
 
   assert.ok(OBSTACLE_POOL_SIZE > worst, `the pool is ${OBSTACLE_POOL_SIZE} against a peak demand of ${worst}`)
   console.log(`    pool ${OBSTACLE_POOL_SIZE} against a peak of ${worst} in the draw distance, over five saturated laps`)
+})
+
+check('the incremental row test agrees with the whole-lap proof, row for row', () => {
+  const TRACK = 286800
+  // **⚠ The walk re-proved the entire lap for every row and for every redraw of every row**, at 81
+  // samples a row: quadratic, on the one frame per lap that builds the next one. `acceptRow` checks
+  // only what appending can break -- this row's own line, and an earlier jump-only row whose flight
+  // now reaches it. The control is the form it replaced: `provePassable` over the whole set, which
+  // is what the answer has to keep being.
+  let rowsSeen = 0
+  let refused = 0
+  let windowMax = 0
+
+  for (let seed = 1; seed <= 25; seed++) {
+    const obstacles = placeRunObstacles(seed, TRACK)
+    const rows = obstacleRows(obstacles)
+    const kept = []
+    const proved = []
+
+    for (const row of rows) {
+      // Both forms are asked the same question about the same prefix, so a disagreement is a
+      // disagreement about the rule and not about the order the placer happened to draw in.
+      const incremental = acceptRow(proved, row.obstacles) !== null
+      const whole = provePassable([...kept, ...row.obstacles])
+
+      assert.equal(incremental, whole, `seed ${seed}, row at ${row.z}: ${incremental} against ${whole}`)
+      rowsSeen++
+      if (!whole) refused++
+      else {
+        kept.push(...row.obstacles)
+        proved.push({ z: row.z, jumpOnly: passableLine(row.obstacles).mode !== 'ground' })
+        // How far back the window actually has to look, printed rather than assumed: it is what
+        // makes the incremental form constant-time rather than merely smaller.
+        let back = 0
+
+        for (let i = proved.length - 2; i >= 0 && proved[i].z + FLIGHT_LENGTH_Z >= row.z; i--) back++
+        windowMax = Math.max(windowMax, back)
+      }
+    }
+  }
+
+  console.log(
+    `    ${rowsSeen} rows over 25 laps, ${refused} of them refused by both, ` +
+      `flight window at most ${windowMax} rows back against a lap of ~37`,
+  )
+})
+
+check('and both forms refuse the same impassable row', () => {
+  // **⚠ The comparison above only ever sees rows the placer ACCEPTED**, because it is handed the
+  // placer's own output -- so it exercises one side of the answer and would pass on a form that
+  // never refuses anything. A row walled edge to edge with no gap is the other side.
+  const TRACK = 286800
+  const kept = placeRunObstacles(3, TRACK)
+  const rows = obstacleRows(kept)
+  const at = rows[rows.length - 1].z + MIN_ROW_GAP_Z * 2
+  const walled = []
+
+  for (let offsetX = -1.2; offsetX <= 1.2; offsetX += 0.1) {
+    walled.push(createObstacle({ id: 90000 + walled.length, z: at, offsetX, halfWidths: 0.22, kind: 'blocking' }))
+  }
+
+  const proved = rows.map((row) => ({ z: row.z, jumpOnly: passableLine(row.obstacles).mode !== 'ground' }))
+
+  assert.equal(passableLine(walled), null, 'the fixture is not actually impassable')
+  assert.equal(acceptRow(proved, walled), null, 'the incremental form accepted a row with no line')
+  assert.equal(provePassable([...kept, ...walled]), false, 'the whole-lap form accepted it')
+  console.log(`    a ${walled.length}-block barrier wall at ${at.toFixed(0)} is refused by both`)
 })
 
 console.log(`${passed} checks passed`)

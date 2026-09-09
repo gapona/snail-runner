@@ -155,6 +155,15 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
   arrive, overshoots, and hits split into "asked in time and the snail was not there" against "had
   not asked yet". **It is the instrument the mobile-controls decision is taken with**, and its
   in-game counterpart is `window.__steer.report()`. See "Steering On A Phone".
+- `npm run measure:frame` — not a suite and it asserts nothing either: it reports what the run's own
+  per-frame work costs, and what the one-off work costs on the frames that do it. **It exists because
+  the browser harness cannot measure a frame-time tail and this can** — a tab driven by automation is
+  hidden, so rAF never fires and the loop has to be hand-stepped; big batches then saturate the GPU
+  driver and `renderer.render` measures backpressure, while paced batches stall on the CDP round trip.
+  What that instrument genuinely cannot give is an honest p99. What it can be replaced by, for
+  everything except the draw, is **Node**: `stepRun`, `stepPlayer`, `stepCritters`, every collision and
+  the whole lap build are `phaser`-free by the rule every `verify:*` script is under. See “The Frame
+  That Drops Once A Lap”.
 - `npm run verify:player` — the player module, motion **and death**: `playerDeath.ts`'s wreck (the
   run does not end on the frame the last life goes, a second fatal hit neither restarts it nor ends
   the run twice, the swell and the fade ease opposite ways, and the flash is over before the panel
@@ -14556,6 +14565,127 @@ exist for. `window.__steer.report()` after a real run on a real phone is what ch
 against a person — and this project's standing rule is that a model nobody has checked against a
 person is a model.
 
+## The Frame That Drops Once A Lap
+
+A fourth pass, asked for after three rounds of frame work and a report that it still stutters. It
+starts with an accounting rather than a hypothesis, and the accounting is most of the value: **the
+whole run model costs 0.002ms a frame, and the one thing in it that costs anything at all takes
+2.9ms on a single frame, once per lap.**
+
+### ⚠ The instrument was only half broken, and nobody had drawn the line
+
+Three attempts to measure a frame-time tail in the running game failed, in three different ways: a
+hidden tab suspends rAF so the loop must be hand-stepped; back-to-back batches then queue on the GPU
+driver and `renderer.render` measures backpressure rather than work (200-frame batches reported p90
+28.4ms and a renderer mean of 6.579ms, against a true 0.375); paced batches stall on the CDP round
+trip; and page-side `setTimeout` is throttled to about 1Hz in a hidden tab. A fourth attempt returned
+11 frames with the distance frozen — a run that had died at 100km, i.e. a measurement of a result
+panel.
+
+**What none of that establishes is that the tail is unmeasurable, only that it is unmeasurable
+*there*.** Everything `update` does before the draw is `phaser`-free by the rule the whole `verify:*`
+line is under, so it runs under Node with nothing throttled and no round trip. `measure:frame` is
+that, and it answered the question in one run:
+
+| | mean | p50 | p90 | p99 | max |
+|---|---|---|---|---|---|
+| the whole per-frame step, 20 000 frames | 0.002ms | 0.001 | 0.002 | 0.004 | **3.211** |
+| `buildLap`, 40 laps | **2.921ms** | 2.804 | 3.731 | 5.182 | 5.182 |
+
+The model is free and the tail is one thing: **four frames of twenty thousand went over 1ms, and all
+four were lap boundaries.** On a desktop that is 3ms on top of a 0.9ms frame and invisible; a
+mid-range phone runs this JS four to six times slower, which makes it **15ms of lap build on top of
+the frame's own work — a dropped frame by construction, once every 50 to 80 seconds.** That is what a
+stutter is, as opposed to a low average, and no amount of shaving the *mean* reaches it.
+
+**⚠ And this file's own claim that `LapLayout.advance` “never exceeded 1ms over 3000 frames” was
+wrong.** 3000 frames is under one lap at `SPEED_CAP`, so the sweep that produced it very likely never
+contained a build at all — a measurement whose sample cannot include the event it is clearing.
+
+### ⚠ Two scans made it three times more expensive than it needs to be
+
+Both are the same shape — a question that is *local* to one stretch of road, answered by walking the
+whole lap — and both are invisible on a desktop for the same reason: they live on the one frame a
+minute that has 16ms to lose.
+
+- **`clearOfObstacles` scanned every obstacle on the lap, for every point of every attempt of every
+  chain.** Measured: **~90 000 obstacle visits per build**, of which the handful within
+  `OBSTACLE_REACH_Z` are the only ones that could answer anything — **50–68% of `placeFormations`**.
+  `indexObstacles` buckets them at exactly `OBSTACLE_REACH_Z`, so a point is answered by its own
+  bucket and the two either side; the reach cannot span more than three of them by construction.
+- **`placeObstacles` re-proved the entire lap for every row, and for every redraw of every row.**
+  `provePassable([...placed, ...row])` copies the accumulated set and runs `passableLine` at 81
+  samples over every row again — row 37 re-proving all thirty-six in front of it, and a *rejected*
+  row paying the same. Quadratic. What appending cannot do is take away a line that was already
+  there: rows are laid at strictly increasing `z` and `obstacleRows` groups by exact `z`, so a new
+  row is a new group at the end and every earlier group is untouched. **The only obligation appending
+  creates is the flight loop read backwards** — an earlier jump-only row whose flight now reaches
+  this one — which `acceptRow` measures at **1 row back against a lap of ~37**.
+
+### The acceptance is equality, not judgement
+
+Neither change may move a single number: the layout feeds the RNG stream, and a stream that diverges
+moves the coins a lap pays, the fruit it lays and every quest target derived from them. So the
+acceptance is a fingerprint of the whole layout — obstacles, ramps and pickups — over **40 seeds x 3
+laps**, before and after: **identical hash.** That is what makes this a speed change rather than a
+difficulty change wearing one's clothes.
+
+Measured interleaved in one session, the shipped form and the new one alternating:
+
+| | before | after | |
+|---|---|---|---|
+| `buildLap` mean | 2.959ms | **0.640ms** | 4.6x |
+| `buildLap` max | 4.646ms | **1.537ms** | 3.0x |
+| `placeRunObstacles` mean | 1.301ms | **0.099ms** | 13x |
+| `placeFormations` mean | 2.048ms | **0.343ms** | 6.0x |
+| frames over 1ms, of 20 000 | 4 | **0** | |
+
+On a phone at five times slower that is **15ms to 3.2ms**: a build that no longer needs a frame of
+its own, against a frame's own ~4.4ms and a 16.7ms budget.
+
+### What the two checks hold, and the one that had no teeth until it was given some
+
+- **`verify:formations` sweeps 194 320 points** — deliberately running past both ends of the lap,
+  because a chain's tail can and the wrap is where a bucket rule breaks — and asserts the index and
+  the rule agree on every one. **19 965 of them are blocked**, asserted, because a check that only
+  ever sees `true` is a check that confirms nothing.
+- **⚠ Its second check was written as a tautology and thrown away.** It compared the new placer's
+  fingerprint against *itself* and would have passed on anything. What replaced it is the risk that
+  is actually live: `clearOfIndexedObstacles` must **defer** to `clearOfObstacles` rather than restate
+  it, asserted by reading its body — two statements of one rule is one rule that will drift, and the
+  sweep above cannot see the next edit.
+- **`verify:obstacles` compares `acceptRow` against `provePassable` row for row over 1212 rows of 25
+  real laps**, and prints how far back the window has to look.
+- **⚠ That comparison only ever saw rows the placer ACCEPTED**, because it is handed the placer's own
+  output — so it exercised one side of the answer and would have passed on a form that never refuses
+  anything. A 25-block `blocking` wall is the other side, and both forms refuse it. **⚠ A wall of
+  `low` blocks is not that fixture**: it is the row the jump exists for and has an air line by design,
+  which is what the first version of the check found out by failing.
+
+### What is left, and it is an accounting now rather than a hedge
+
+With the build fixed there is **nothing in the model above 4 microseconds**. Everything else the frame
+costs is the draw, and desktop measures it at **0.886ms of a 16.7ms budget** — p99 2.3ms, max 9.2ms.
+The measured-and-not-taken list totals about **0.1ms**: per-slot caching of the decor setters
+(~0.02–0.04ms at a 58% hit rate), collapsing the two cameras (~0.03ms), and dropping the rumble
+stripes and the rung on sub-pixel spans (~0.04ms, and it needs its own pixel diff because it is a real
+change to the picture). **Micro-optimisation is finished**: the remaining list is a tenth of a
+millisecond against a frame that is already a twentieth of its budget.
+
+What that leaves, stated rather than hidden:
+
+- **`renderer.render` at 0.375ms per camera x 2 is 85% of the frame**, and it is the only structural
+  lever untried. The note above that “an extra empty camera costs 0.034ms” measured a *different
+  thing* — the manager's overhead for an empty camera, not a second full render pass — so the real
+  cost of the split is unmeasured. It is a documented contract with an `ignore()` list on both sides,
+  and it is not worth spending on a guess.
+- **Under saturation `renderer.render` balloons to 6.6ms.** That is the harness's own artefact and
+  also the honest shape of a device that cannot keep up: the renderer is where the headroom goes.
+- **`antialias` is not set, so it is on, and nobody chose it** — the context reports `SAMPLES = 4`. At
+  375x667 that is a million samples, which is nothing for any phone GPU of the last decade, so it is
+  recorded as ruled out rather than as a lead. It is also what currently hides the 1px seams between
+  adjacent road quads, so turning it off is a change to the picture and not a free win.
+
 ## Known Issues Fixed
 
 Bugs and gotchas hit and fixed while building the platform/save/audio layers — recorded so they don't get
@@ -14564,6 +14694,17 @@ index.
 
 App bugs:
 
+- **The whole run model costs 0.002ms a frame and the lap build costs 2.9ms on one of them**, so the
+  only tail the game has is a guaranteed dropped frame every 50–80 seconds on a phone. Two scans made
+  it three times worse than it needed to be: `clearOfObstacles` walked the whole lap for every point of
+  every chain attempt (~90 000 visits a build, nearly all misses), and `placeObstacles` re-proved the
+  entire lap for every row and every redraw of every row. Output-identical to fix — asserted by a
+  layout fingerprint over 40 seeds x 3 laps. → “The Frame That Drops Once A Lap”
+- **And the browser harness could not have found it**: a hidden tab measures GPU backpressure, not
+  work. Everything before the draw is `phaser`-free and therefore measurable under Node, which is what
+  `measure:frame` is. → same section
+- **A documented claim was wrong**: `LapLayout.advance` “never exceeded 1ms over 3000 frames” — 3000
+  frames is under one lap at `SPEED_CAP`, so the sweep very likely never contained a build. → same
 - **Every critter shipped its body twice, byte for byte** — `critterFrameKey` wrapped by the gait
   *cycle* (2) rather than by how many drawings a kind has (1), so 374KB, a tenth of the game's
   image payload, was downloaded and uploaded to the GPU as four second copies. The reason it was

@@ -14,6 +14,7 @@
 // 2. *No chain crosses an obstacle.* A coin a hair in front of a boulder is an invitation to drive
 //    into the boulder, which is not a decision.
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   ARC_REFERENCE_SPEED,
   ARC_RELAY_NEAR_Z,
@@ -24,6 +25,8 @@ import {
   chainPoints,
   chainSpacingZ,
   clearOfObstacles,
+  clearOfIndexedObstacles,
+  indexObstacles,
   placeFormations,
   WAVE,
 } from '../src/run/formations.ts'
@@ -697,6 +700,52 @@ check('every pickup a lap lays can be drawn at once', () => {
   // is a number nobody has to justify, and it stops being answerable to a measurement.
   assert.ok(PICKUP_POOL_SIZE < worst * 2, `the pool is ${PICKUP_POOL_SIZE} against a demand of only ${worst}`)
   console.log(`    pool ${PICKUP_POOL_SIZE} against a peak of ${worst} in the draw distance, over five laps`)
+})
+
+check('the bucketed index answers exactly what the whole-lap scan answers', () => {
+  // **⚠ The scan was 50-68% of this placer and nearly every visit was a miss.** A lap of ~250
+  // obstacles was walked for every point of every attempt of every chain -- ~90 000 visits per
+  // build, on the one frame a lap is built. What the index may not do is change an answer, so that
+  // is what is asserted: over the real points, and over a dense sweep that deliberately runs past
+  // both ends of the lap, because a chain's tail can and the wrap is where a bucket rule breaks.
+  let compared = 0
+  let disagreed = 0
+  let blocked = 0
+
+  for (let seed = 1; seed <= 20; seed++) {
+    const obstacles = placeRunObstacles(seed, TRACK)
+    const index = indexObstacles(obstacles, TRACK)
+
+    for (let z = -3000; z < TRACK + 3000; z += 211) {
+      for (const offsetX of [-0.86, -0.5, -0.15, 0, 0.2, 0.55, 0.86]) {
+        const point = { z, offsetX }
+        const rule = clearOfObstacles(point, obstacles, TRACK)
+
+        if (clearOfIndexedObstacles(point, index) !== rule) disagreed++
+        if (!rule) blocked++
+        compared++
+      }
+    }
+  }
+
+  assert.equal(disagreed, 0, 'the index and the rule disagree')
+  // A check that never sees a blocked point is a check that only ever confirms `true`.
+  assert.ok(blocked > compared * 0.02, `only ${blocked} of ${compared} points were inside an obstacle`)
+  console.log(`    ${compared} points, ${blocked} of them blocked, 0 disagreements`)
+})
+
+check('and there is exactly one place that says what standing inside an obstacle means', () => {
+  // The sweep above is the equivalence proof -- the index's only use inside the placer is that
+  // boolean, so a boolean identical everywhere is a layout identical by construction. What the
+  // sweep cannot protect is the *next* edit: an index that restated the rule instead of deferring
+  // to it would be two rules to keep in step, and the one that drifts is the one no check reads.
+  const src = readFileSync('src/run/formations.ts', 'utf8').split(String.fromCharCode(13)).join('')
+  const body = src.slice(src.indexOf('export function clearOfIndexedObstacles'))
+  const fn = body.slice(0, body.indexOf(String.fromCharCode(10) + '}'))
+
+  assert.ok(fn.includes('clearOfObstacles('), 'the index does not defer to the rule')
+  assert.ok(!fn.includes('halfWidths'), 'the index restates the rule rather than asking it')
+  assert.ok(!fn.includes('wrapZ('), 'the index restates the longitudinal test rather than asking it')
 })
 
 console.log(`${passed} checks passed`)
