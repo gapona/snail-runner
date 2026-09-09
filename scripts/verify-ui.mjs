@@ -10,6 +10,7 @@
 // "Responsive Layout" and are properties of Phaser's `Container`, not of this arithmetic.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { DirtyValues } from '../src/ui/dirtyValues.ts'
 import { cornerSteps, roundedRectPoints } from '../src/ui/roundedRect.ts'
 import { isJumpTap, isTap as isTapBy, JUMP_TAP_MS, JUMP_TAP_SLOP_PX, TAP_SLOP_PX as LIST_TAP_SLOP_PX } from '../src/ui/scrollList.ts'
 import {
@@ -2038,6 +2039,74 @@ check('the camera guard walks the pools as well as the display list', () => {
   const control = 'const both = this.children.list.filter('
 
   assert.ok(!body.includes(control), 'the display-list-only guard is the arrangement this replaced')
+})
+
+// ---------------------------------------------------------------------------------------------
+// The HUD's dirty check -- see src/ui/dirtyValues.ts.
+// ---------------------------------------------------------------------------------------------
+
+check('a dirty check reports a change once and then stops, and allocates nothing', () => {
+  const d = new DirtyValues()
+  const set = (a, b, c) => {
+    d.begin()
+    d.add(a)
+    d.addFlag(b)
+    d.addQuantised(c)
+
+    return d.changed()
+  }
+
+  assert.equal(set(1, true, 0.5), true, 'the first set is always a change')
+  assert.equal(set(1, true, 0.5), false, 'the same set twice is not')
+  assert.equal(set(2, true, 0.5), true, 'a changed number is')
+  assert.equal(set(2, true, 0.5), false, 'and then it is not')
+  assert.equal(set(2, false, 0.5), true, 'a changed flag is')
+  assert.equal(set(2, false, 0.5), false, 'and then it is not')
+
+  // The quantisation is what `toFixed(3)` used to buy: fine enough that a pulse runs at full
+  // rate, coarse enough that a resting readout costs one pass of compares.
+  assert.equal(set(2, false, 0.5001), false, 'a change under the quantum is not a change')
+  assert.equal(set(2, false, 0.5010), true, 'a change of one quantum is')
+
+  d.reset()
+  assert.equal(set(2, false, 0.501), true, 'reset makes the next set a change whatever it holds')
+})
+
+check('a dirty check handles a set that gets shorter, which a string signature did for free', () => {
+  // **⚠ The one case the string version could not get wrong.** Comparing in place against a stored
+  // array means a shorter set leaves stale trailing values, and without truncating them every
+  // later frame reports a change for ever — a readout that redraws on every frame, i.e. exactly
+  // the cost this exists to remove, arrived at from the other side.
+  const d = new DirtyValues()
+  const set = (values) => {
+    d.begin()
+    for (const v of values) d.add(v)
+
+    return d.changed()
+  }
+
+  assert.equal(set([1, 2, 3, 4]), true, 'first set')
+  assert.equal(set([1, 2, 3, 4]), false, 'unchanged')
+  assert.equal(set([1, 2]), true, 'a shorter set is a change')
+  assert.equal(set([1, 2]), false, 'and the same short set afterwards is not')
+  assert.equal(set([1, 2, 3]), true, 'a longer set is a change')
+  assert.equal(set([1, 2, 3]), false, 'and then it is not')
+  assert.equal(set([]), true, 'an empty set is a change')
+  assert.equal(set([]), false, 'and an empty set again is not')
+})
+
+check('the HUD guards its three readouts with it rather than with a string', () => {
+  // A source-grep for `Preloader`'s reason: `Hud.ts` imports `phaser` as a value. What it guards is
+  // a measurement rather than a style -- composing a signature out of `toFixed` and `join` cost
+  // **0.087ms a frame** against a `paintRow` of 0.012, i.e. seven times what it was guarding.
+  const src = readFileSync('src/run/Hud.ts', 'utf8')
+  // Comments stripped, or the check reads the write-up of the thing it forbids and fails on it —
+  // which it did on its first run.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '')
+
+  assert.ok(src.includes("from '../ui/dirtyValues'"), 'Hud does not use the dirty check')
+  assert.ok(!/signature\s*=/.test(code), 'a string signature is the arrangement this replaced')
+  assert.ok(!/toFixed\(3\)/.test(code), '`toFixed` in a per-frame guard is the sharpest edge of it')
 })
 
 console.log(`${passed} checks passed`)

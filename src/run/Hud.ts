@@ -40,6 +40,7 @@ import {
 } from '../ui/lifeRow'
 import { roundedRectPoints, type RectPoint } from '../ui/roundedRect'
 import { BakedGraphics } from '../ui/bakedGraphics'
+import { DirtyValues } from '../ui/dirtyValues'
 import { toCssColor } from '../ui/theme'
 import { formatCount } from '../ui/format'
 import { HUD_DEPTH } from './hudDepth'
@@ -171,7 +172,9 @@ export class Hud {
   private barScale = 1
   /** What `fitRow` last fitted against, so it can skip a frame that would set the same two faces. */
   private fittedBar: TopBarLayout | null = null
-  private fittedRow = ''
+  private fittedMetres = ''
+  private fittedCoins = ''
+  private fittedScale = 0
   /**
    * What each of the three `Graphics` readouts was last *drawn* from.
    *
@@ -183,14 +186,18 @@ export class Hud {
    * alone took the renderer's own pass below every control in the A/B, which made it the largest
    * single item in the frame.
    *
-   * Each signature is built from exactly the values its draw reads, so two frames that agree on it
-   * would have produced the same commands. It is deliberately *not* a timer: the animated terms are
-   * in it, quantised finer than the pixels they move, so a pulse still runs at full rate and a
-   * resting readout costs one string comparison.
+   * Each set is exactly the values its draw reads, so two frames that agree on it would have
+   * produced the same commands. It is deliberately *not* a timer: the animated terms are in it,
+   * quantised finer than the pixels they move, so a pulse still runs at full rate and a resting
+   * readout costs one pass of number compares.
+   *
+   * **⚠ These were strings, and the guard cost seven times what it guarded** — `drawRow` at 0.087ms
+   * a frame against a `paintRow` of 0.012, spent composing an array, a `join` and a dozen
+   * `toFixed(3)` calls to answer "no". See `DirtyValues`.
    */
-  private drawnGauge = ''
-  private drawnRow = ''
-  private drawnMilestone = ''
+  private readonly drawnGauge = new DirtyValues()
+  private readonly drawnRow = new DirtyValues()
+  private readonly drawnMilestone = new DirtyValues()
   private shownProgress = 0
   private plaqueScale = 1
 
@@ -394,11 +401,18 @@ export class Hud {
     // whose rounded width agrees draw the identical bar. The run advances this readout
     // continuously, and without the rounding that would be a rebuild every frame for a bar that
     // moves one pixel every few of them.
-    const signature = [x, y, w, h, progress > 0 ? 1 : 0, Math.round(Math.max(h, w * progress)), flash.toFixed(3)].join(',')
+    const sig = this.drawnMilestone
 
-    if (signature === this.drawnMilestone) return
+    sig.begin()
+    sig.add(x)
+    sig.add(y)
+    sig.add(w)
+    sig.add(h)
+    sig.addFlag(progress > 0)
+    sig.add(Math.round(Math.max(h, w * progress)))
+    sig.addQuantised(flash)
 
-    this.drawnMilestone = signature
+    if (!sig.changed()) return
 
     this.milestone.clear()
 
@@ -534,18 +548,28 @@ export class Hud {
     // `now`-dependent quantities in the draw, and they are the whole of what makes the row an
     // animation rather than a picture — so a run in which nothing has been lost or collected
     // recently is a run in which this readout is not touched at all.
-    let signature = [scale, this.rowBox.x, this.rowBox.y, this.rowBox.w, this.rowBox.h, this.slide.by, slid.toFixed(3)].join(',')
+    const sig = this.drawnRow
+
+    sig.begin()
+    sig.add(scale)
+    sig.add(this.rowBox.x)
+    sig.add(this.rowBox.y)
+    sig.add(this.rowBox.w)
+    sig.add(this.rowBox.h)
+    sig.add(this.slide.by)
+    sig.addQuantised(slid)
 
     for (const element of this.elements) {
       const entry = element.bornAt >= 0 ? progressIn(element.bornAt, now, LIFE_ENTRY_MS) : 1
       const death = element.diedAt >= 0 ? progressIn(element.diedAt, now, LIFE_SPEND_MS) : -1
 
-      signature += '|' + element.kind + (element.filled ? 1 : 0) + ':' + entry.toFixed(3) + ':' + death.toFixed(3)
+      sig.addFlag(element.kind === 'shield')
+      sig.addFlag(element.filled)
+      sig.addQuantised(entry)
+      sig.addQuantised(death)
     }
 
-    if (signature === this.drawnRow) return
-
-    this.drawnRow = signature
+    if (!sig.changed()) return
 
     if (this.rowBox.w <= 0) {
       this.row.hide()
@@ -729,11 +753,21 @@ export class Hud {
     // outside it, because that is a property of the object rather than of its geometry and is what
     // lets the tank yield to the mascot without a rebuild. `pulse` is quantised to a thousandth —
     // finer than a pixel of the halo it drives, and coarse enough that a resting tank is one string.
-    const signature = `${x},${y},${w},${h},${scale},${body},${lit},${full ? 1 : 0},${pulse.toFixed(3)},${fills.join(',')}`
+    const sig = this.drawnGauge
 
-    if (signature === this.drawnGauge) return
+    sig.begin()
+    sig.add(x)
+    sig.add(y)
+    sig.add(w)
+    sig.add(h)
+    sig.add(scale)
+    sig.add(body)
+    sig.add(lit)
+    sig.addFlag(full)
+    sig.addQuantised(pulse)
+    for (const amount of fills) sig.addQuantised(amount)
 
-    this.drawnGauge = signature
+    if (!sig.changed()) return
 
     // **Sized from the constants that put ink outside the box**, because the texture clips and a
     // margin nobody derived is a halo that goes missing on a narrow frame. See `gaugeBleed`.
@@ -846,13 +880,20 @@ export class Hud {
 
     const scale = this.barScale
     // The whole of what the answer depends on. `bar` is replaced wholesale by `layout`, so its
-    // identity is enough to catch a resize; the two texts are what change during a run.
-    const signature = `${this.distance.text}|${this.coins.text}|${scale}`
+    // identity is enough to catch a resize; the two texts are what change during a run. Compared
+    // field by field rather than composed into one string, for `DirtyValues`' reason: this runs
+    // every frame and answers "no" on almost all of them.
+    const metres = this.distance.text
+    const coins = this.coins.text
 
-    if (this.fittedBar === bar && this.fittedRow === signature) return
+    if (this.fittedBar === bar && this.fittedMetres === metres && this.fittedCoins === coins && this.fittedScale === scale) {
+      return
+    }
 
     this.fittedBar = bar
-    this.fittedRow = signature
+    this.fittedMetres = metres
+    this.fittedCoins = coins
+    this.fittedScale = scale
 
     const setFaces = (size: number): void => {
       this.distance.setFontSize(size)

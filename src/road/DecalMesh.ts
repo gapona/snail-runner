@@ -3,6 +3,7 @@ import { DRAW_DISTANCE, ROAD_MESH_DEPTH } from './constants'
 import { createDecalAtlas, decalCellU, decalCellV } from './decalArt'
 import { DECAL_DRAW_SEGMENTS, DECAL_POOL_SIZE, decalAt, decalFade, decalRowFor } from './decals'
 import type { Segment } from './track'
+import { OrderedQuads } from './meshIndices'
 
 /** Floats per vertex in a `Mesh2D` vertex buffer: `x, y, u, v`. */
 const VERTEX_STRIDE = 4
@@ -12,6 +13,14 @@ const QUAD_VERTEX_STRIDE = VERTEX_STRIDE * 4
 
 /** Entries per triangle in a `Mesh2D` index buffer: `a, b, c, page`. */
 const INDEX_STRIDE = 4
+
+/**
+ * Hands the mesh a typed-array index list. See `RoadMesh`'s copy for why the cast is safe: Phaser
+ * types `indicesOrdered` as `number[]` and the renderer only reads `ordered[i]` and `ordered.length`.
+ */
+function setOrderedIndices(mesh: Phaser.GameObjects.Mesh2D, indices: Uint32Array): void {
+  ;(mesh as unknown as { indicesOrdered: ArrayLike<number> }).indicesOrdered = indices
+}
 
 /**
  * The ground's own marks: stains, cracks, skids and scatter lying in the plane of the ribbon.
@@ -44,6 +53,17 @@ export class DecalMesh {
 
   private readonly vertices: number[]
 
+  /**
+   * The ordered index list and its per-count truncations — see `meshIndices.ts`.
+   *
+   * **This mesh is the sharpest case that helper exists for.** `DECAL_DENSITY` is 0 — a dark patch
+   * on the ground means one thing in this game now, and these marks are off — so `render` draws
+   * nothing at all, and every one of the pool's 96 quads was still walked and transformed by the
+   * submitter every frame. Measured at **0.043ms a frame for an empty mesh**. Truncating to `used`
+   * makes that zero, and makes it right again by itself the day marks come back.
+   */
+  private readonly ordered = new OrderedQuads(DECAL_POOL_SIZE)
+
   constructor(scene: Phaser.Scene) {
     this.vertices = new Array<number>(DECAL_POOL_SIZE * QUAD_VERTEX_STRIDE).fill(0)
 
@@ -70,7 +90,10 @@ export class DecalMesh {
     // long-lived bug once already: the default hands V straight to GL, which samples bottom-up, so
     // every cell would be read from the wrong row of the atlas.
     this.gameObject = scene.add.mesh2d(0, 0, createDecalAtlas(scene), this.vertices, indices, true)
-    this.gameObject.buildOrderedIndices(2, true)
+    // Built by hand rather than by `buildOrderedIndices`, for the reason `meshIndices.ts` gives:
+    // truncating the list is only correct if quad `i` provably occupies entries `i * 8 ..`.
+    this.gameObject.setUseOrderedIndices(true)
+    setOrderedIndices(this.gameObject, this.ordered.all)
     this.gameObject.renderAsTriangles = false
     this.gameObject.setBlendMode(Phaser.BlendModes.MULTIPLY)
     // Above the ground it is painted on, below the nearest billboard (depth 0) that may stand on
@@ -157,13 +180,12 @@ export class DecalMesh {
       }
     }
 
-    // Unused slots are degenerated rather than skipped: the index buffer is a fixed length, so a
-    // slot that is not written keeps last frame's geometry. Same rule as a culled road segment.
-    for (let quad = used; quad < DECAL_POOL_SIZE; quad++) {
-      const o = quad * QUAD_VERTEX_STRIDE
-
-      for (let i = 0; i < QUAD_VERTEX_STRIDE; i++) vertices[o + i] = 0
-    }
+    // **⚠ The unused slots used to be degenerated, and that is no longer what stops them drawing.**
+    // The index buffer was a fixed length, so a slot left unwritten kept last frame's geometry —
+    // true while every quad was submitted, and it made an empty mesh cost as much as a full one.
+    // Now the list is cut to what was written, so the tail is unread rather than collapsed, and
+    // `used === 0` submits nothing at all.
+    setOrderedIndices(this.gameObject, this.ordered.first(used))
 
     this.usedLastFrame = used
     this.wantedLastFrame = wanted

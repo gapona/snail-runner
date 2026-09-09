@@ -22,21 +22,28 @@ import { quadWriteAction } from './meshGuard'
 import { createRoadPalette } from './palette'
 import { createScreenPoint, projectInto, type ScreenPoint } from './project'
 import { spanIsFull } from './spans'
+import { OrderedQuads } from './meshIndices'
 import { createRungQuad, rungQuadInto, type RungQuad } from './surface'
 import { findSegment, segmentPercent, surfaceHeight, trackLengthOf, type Segment } from './track'
 
 const PALETTE_TEXTURE_KEY = 'road-palette'
 
 /**
- * Quads per segment: the ground on each side, the asphalt trapezoid, a rumble stripe on each
- * side, and the centre dash.
+ * Quads per span: the ground, the asphalt trapezoid, a rumble stripe on each side, and the rung.
  *
- * The dash is a full slot even on segments that do not draw one. **It has to be** — the index
- * buffer is built once at a fixed length, so a segment that simply wrote fewer quads would not
- * shift anything, it would leave the previous frame's geometry sitting in the unwritten slot.
- * Same rule as a culled segment: degenerate it, never skip it.
+ * The rung is a full slot even on spans that do not draw one. **It has to be** — a span's slots are
+ * a contiguous run, so a span that simply wrote fewer quads would not shift anything, it would
+ * leave the previous frame's geometry sitting in the unwritten slot. (Slots past the *last* span
+ * are the other case: they are not submitted at all, so nothing reads them.)
+ *
+ * **⚠ It was 6, with the ground drawn as two quads flanking the road.** They carry the same colour
+ * and the same fog row and the road and its stripes cover exactly the gap between them, so one quad
+ * spanning the whole ground extent draws the identical picture — the middle of it is painted over
+ * by the asphalt, which was already true of the overlap those two were given to avoid a seam.
+ * Verified as a byte-for-byte pixel diff of the road at three camera positions. A sixth of the
+ * mesh, for nothing.
  */
-const QUADS_PER_SEGMENT = 6
+const QUADS_PER_SEGMENT = 5
 
 /**
  * Total quads the mesh can hold — fixed for its whole lifetime. See the class docstring.
@@ -111,14 +118,6 @@ const QUAD_VERTEX_STRIDE = VERTEX_STRIDE * 4
 /** Entries per triangle in a Mesh2D index buffer: `a, b, c, page`. */
 const INDEX_STRIDE = 4
 
-/**
- * Index-buffer entries one quad occupies in the ordered list: two triangles of `a, b, c, page`.
- *
- * The submitter walks `indicesOrdered` in strides of this, so **the used quads have to be a
- * prefix of the list** — which is why spans are written far-first into slots `0..spans-1` and
- * the list is then truncated to them. See `viewFor`.
- */
-const INDICES_PER_QUAD = INDEX_STRIDE * 2
 
 /**
  * Hands the mesh an index list that is a typed array rather than a `number[]`.
@@ -210,25 +209,8 @@ export class RoadMesh {
    */
   private readonly spans: RoadSpan[] = Array.from({ length: DRAW_DISTANCE }, createSpan)
 
-  /**
-   * The ordered index list, in slot order, built once.
-   *
-   * Built here rather than by `buildOrderedIndices` because **the truncation depends on the
-   * order**: quad `i` has to occupy entries `i * INDICES_PER_QUAD ..`, or shortening the list
-   * would drop arbitrary quads rather than the unused tail. Phaser's own builder happens to
-   * produce exactly this order for a topology whose quads share no vertices, and the check in
-   * the constructor asserts it — but a property of somebody else's optimiser is not a thing to
-   * build a render loop on.
-   */
-  private readonly ordered: Uint32Array
-
-  /**
-   * A truncated view of `ordered` per span count, so a frame allocates none.
-   *
-   * `subarray` is cheap but not free, and the count changes on almost every frame; there are at
-   * most `DRAW_DISTANCE + 1` distinct answers, so each is made once and kept.
-   */
-  private readonly views: (Uint32Array | undefined)[] = new Array<Uint32Array | undefined>(DRAW_DISTANCE + 1)
+  /** The ordered index list and its per-count truncations — see `meshIndices.ts`. */
+  private readonly ordered = new OrderedQuads(QUAD_COUNT)
 
   constructor(scene: Phaser.Scene, track: Segment[]) {
     this.track = track
@@ -281,25 +263,8 @@ export class RoadMesh {
     // the per-frame truncation in `render` drops the unused tail rather than an arbitrary
     // scattering of quads. `useOrderedIndices` still has to be set, or the mesh silently falls
     // back to submitting one degenerate quad per triangle.
-    this.ordered = new Uint32Array(QUAD_COUNT * INDICES_PER_QUAD)
-
-    for (let quad = 0; quad < QUAD_COUNT; quad++) {
-      const v = quad * 4
-      const i = quad * INDICES_PER_QUAD
-
-      this.ordered[i] = v
-      this.ordered[i + 1] = v + 1
-      this.ordered[i + 2] = v + 2
-      this.ordered[i + 3] = 0
-
-      this.ordered[i + 4] = v + 1
-      this.ordered[i + 5] = v + 2
-      this.ordered[i + 6] = v + 3
-      this.ordered[i + 7] = 0
-    }
-
     this.gameObject.setUseOrderedIndices(true)
-    setOrderedIndices(this.gameObject, this.ordered)
+    setOrderedIndices(this.gameObject, this.ordered.all)
     this.gameObject.renderAsTriangles = false
     // Below every billboard: scenery draws at `-n` for its distance index, so the nearest
     // possible one is depth 0 and the ground has to sit under all of them.
@@ -460,7 +425,7 @@ export class RoadMesh {
     // read, so last frame's numbers sitting in it cost nothing and cannot be seen.
     for (let i = 0; i < spans; i++) this.writeSpan(i, this.spans[spans - 1 - i])
 
-    setOrderedIndices(this.gameObject, this.viewFor(spans))
+    setOrderedIndices(this.gameObject, this.ordered.first(spans * QUADS_PER_SEGMENT))
 
     // What the curvature integration ended up at: the horizon's lateral offset, for the sky.
     this.horizonDriftX = x
@@ -491,25 +456,6 @@ export class RoadMesh {
   }
 
   /**
-   * The ordered index list truncated to `spans` worth of quads, cached per count.
-   *
-   * The submitter walks `indicesOrdered.length`, so this is the whole of what stops it
-   * transforming and batching quads nothing can see: at 375x667 it takes the median from 1800
-   * quads a frame to about 430.
-   */
-  private viewFor(spans: number): Uint32Array {
-    const cached = this.views[spans]
-
-    if (cached) return cached
-
-    const view = this.ordered.subarray(0, spans * QUADS_PER_SEGMENT * INDICES_PER_QUAD)
-
-    this.views[spans] = view
-
-    return view
-  }
-
-  /**
    * Writes one span's quads: the two ground bands, the asphalt trapezoid, the two rumble
    * stripes flanking it, and the surface rung.
    */
@@ -533,39 +479,18 @@ export class RoadMesh {
     const ground1 = s1.w * GROUND_EXTENT
     const ground2 = s2.w * GROUND_EXTENT
 
-    // Ground first, so everything else is drawn over it. Within one segment the quads share a
-    // slot range and are submitted in order, and the road/rumble overlap the ground's inner edge
-    // by design — an exact abutment leaves a seam of background showing through wherever the two
-    // trapezoids disagree by less than a pixel.
-    this.writeQuad(
-      near,
-      s2.y,
-      s2.x - ground2,
-      s2.x - s2.w - rumble2,
-      s1.y,
-      s1.x - ground1,
-      s1.x - s1.w - rumble1,
-      groundU,
-      fogV,
-    )
-    this.writeQuad(
-      near + 1,
-      s2.y,
-      s2.x + s2.w + rumble2,
-      s2.x + ground2,
-      s1.y,
-      s1.x + s1.w + rumble1,
-      s1.x + ground1,
-      groundU,
-      fogV,
-    )
+    // **Ground first and in one piece, so everything else is drawn over it.** The road and its
+    // stripes cover the middle of this exactly — which is what makes one quad the same picture as
+    // the two that flanked them, and it removes the seam those two needed an overlap to avoid
+    // rather than merely hiding it.
+    this.writeQuad(near, s2.y, s2.x - ground2, s2.x + ground2, s1.y, s1.x - ground1, s1.x + ground1, groundU, fogV)
 
     // Asphalt.
-    this.writeQuad(near + 2, s2.y, s2.x - s2.w, s2.x + s2.w, s1.y, s1.x - s1.w, s1.x + s1.w, roadU, fogV)
+    this.writeQuad(near + 1, s2.y, s2.x - s2.w, s2.x + s2.w, s1.y, s1.x - s1.w, s1.x + s1.w, roadU, fogV)
 
     // Left rumble, outboard of the road edge.
     this.writeQuad(
-      near + 3,
+      near + 2,
       s2.y,
       s2.x - s2.w - rumble2,
       s2.x - s2.w,
@@ -578,7 +503,7 @@ export class RoadMesh {
 
     // Right rumble.
     this.writeQuad(
-      near + 4,
+      near + 3,
       s2.y,
       s2.x + s2.w,
       s2.x + s2.w + rumble2,
@@ -600,7 +525,7 @@ export class RoadMesh {
       rungQuadInto(this.rung, s1, span.rungFar)
 
       this.writeQuad(
-        near + 5,
+        near + 4,
         this.rung.farY,
         this.rung.farLeftX,
         this.rung.farRightX,
@@ -611,7 +536,7 @@ export class RoadMesh {
         fogV,
       )
     } else {
-      this.degenerateQuad(near + 5)
+      this.degenerateQuad(near + 4)
     }
   }
 

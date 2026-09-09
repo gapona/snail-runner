@@ -239,8 +239,9 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
   bleed, because a texture clips what leaves it silently — **and that every pool shows and hides
   through `pooled.ts`, the slots it creates included**, since a pool that keeps its slack on the
   display list is a silent no-op nothing about the frame would show. See "The Interface Kit", "A
-  Selector And A Panel, Where There Were Two Lines Of Text", "A Run You Can Put Down" and "Four
-  More Ways".
+  Selector And A Panel, Where There Were Two Lines Of Text", "A Run You Can Put Down", "Four More
+  Ways" and "The Guard Cost Seven Times What It Guarded" — the last of which is where
+  `ui/dirtyValues.ts`, the per-frame dirty check the HUD guards its readouts with, is asserted.
 - `py -3.11 scripts/build-sprites.py [--only snail,obstacles,pickups,decor]` — turns the picked
   renders in `dev-assets/sprites/` into the files under `public/assets/`, reading which variant
   won from `dev-assets/picks.json`. Run by hand when the picks change; the output is committed, so
@@ -14051,6 +14052,103 @@ to get right, so `verify:ui` holds its shape and carries the display-list-only f
   frozen wreck and understated everything; topping the lives up from a wrapped `sys.sceneUpdate` is
   what keeps a bench honest.
 
+## The Guard Cost Seven Times What It Guarded
+
+A third pass over the same frame, asked for after the two above. Three things, worth about
+**0.10ms** between them — and the first of them is a shape worth more than its milliseconds.
+
+**⚠ A caveat about the numbers this round, stated first.** The machine was noisy throughout: the
+same code and the same protocol measured 0.8ms early in the session and 1.9ms late, with a p99 of
+5.3ms and 47 frames of 4000 over 5ms, which is a loaded desktop and not a game. **Every figure below
+is either an interleaved A/B or an arithmetic consequence of one**, because a cross-session absolute
+is worthless in that state. The end-to-end number from the previous round — 1.556ms to 0.886ms —
+could not be honestly re-established and is not restated.
+
+### 1. The dirty check was more expensive than drawing
+
+`src/ui/dirtyValues.ts` (pure, `npm run verify:ui`), and the HUD's three readouts.
+
+The previous round guarded each readout's rebuild with a *signature*: a string composed of
+everything its draw reads, compared against the last one. It works, and it is what made baking the
+two `Graphics` possible at all. What nobody measured is what composing it cost:
+
+| | per frame |
+|---|---|
+| `drawRow`, including the guard | **0.087ms** |
+| `paintRow`, the drawing the guard exists to skip | **0.012ms** |
+
+An array, a `join`, a dozen `toFixed(3)` calls and a string concatenation per element — every
+frame, to answer "no" on 88 frames of every 100. **The guard cost seven times what it guarded.**
+
+- **`toFixed` is the sharpest edge of it.** It formats a number into a fresh string, and it was
+  being used purely to *quantise* — which is `Math.round(value * 1000)` with nothing allocated.
+- The replacement compares numbers in place against the previous set: nothing allocated after the
+  first frame, and **exact rather than hashed**, because a hash collision here is a readout that
+  silently stops updating.
+- **⚠ The one thing a string signature got right for free is a set that gets SHORTER.** Comparing
+  in place leaves stale trailing values, and without truncating them every later frame reports a
+  change for ever — which is a readout redrawing on every frame, i.e. exactly the cost this exists
+  to remove, arrived at from the other side. It is reachable in ordinary play: the life row loses an
+  element every time a shield is spent. `verify:ui` walks a set through longer, shorter and empty.
+- Measured two ways that agree: the wrapper says `drawRow` **0.087 → 0.020ms** and `hud.update`
+  **0.134 → 0.077**, and an interleaved A/B that rebuilds the old string every frame and throws it
+  away puts the string at **0.072ms**. `fitRow` lost its own signature to three field compares.
+
+**The general form, and it is why this is a section rather than a diff: a dirty check that
+allocates is a dirty check that can cost more than redrawing.**
+
+### 2. Two ground quads were one ground quad
+
+`QUADS_PER_SEGMENT` 6 → 5.
+
+The road wrote the ground as two trapezoids flanking the asphalt, with an overlap into the road's
+own edge so an exact abutment could not leave a seam. They carry **the same colour and the same fog
+row**, and the road and its stripes cover exactly the gap between them — so one quad spanning the
+whole ground extent draws the identical picture, and the middle of it is painted over by the
+asphalt, which the overlap already relied on.
+
+**Accepted as a byte-for-byte pixel diff**, road alone with the camera pinned, at three camera
+positions: **0 differing pixels, worst channel delta 0**, against a noise floor also measured at 0.
+A sixth of the mesh, for nothing. At a measured **0.248us per submitted quad** and ~105 spans on
+screen, that is about **0.026ms**.
+
+### 3. An empty mesh submitted 96 quads
+
+`src/road/meshIndices.ts`, and `DecalMesh` joining `RoadMesh` on it.
+
+`DECAL_DENSITY` is 0 — a dark patch on the ground means one thing in this game now — so the decal
+mesh draws **nothing at all**, and every one of its pool's 96 quads was walked and transformed by
+the submitter every frame anyway, because unused slots were degenerated rather than dropped from
+the index list. Truncating makes that zero and makes it right again by itself the day marks return.
+
+Measured at **−0.005ms**, i.e. below this harness's noise floor: an earlier `setVisible` A/B put the
+whole object at 0.043ms and that reading did not survive being taken properly. It ships because it
+is correct and self-maintaining, not because it was worth 3% of a frame.
+
+- **The index machinery is one module now rather than two copies.** `OrderedQuads` builds the list
+  by hand — quad `i` at entries `i * 8 ..`, which is what the truncation rests on and what Phaser's
+  own builder only *happens* to produce — and caches one `subarray` view per quad count so a frame
+  allocates none. `verify:road` asserts the layout against it.
+- **⚠ `DecalMesh`'s degenerate-the-tail loop is gone, and the comment explaining it was a lie by
+  then.** "A slot that is not written keeps last frame's geometry" is true only of a slot that is
+  still submitted; once the list is cut to what was written, the tail is unread.
+
+### What is left, measured and not taken
+
+- **Per-slot caching of the decor setters**, ~0.02–0.04ms. `place` runs nine Phaser setters per
+  prop and three of them (flip, tilt, tint) are constants of the prop rather than of the frame. The
+  catch is that slots are filled near-to-far, so when the nearest prop passes **every** slot's
+  occupant shifts by one — measured, that is about every 2.4 frames, so a per-slot cache would hit
+  something like 58% of the time.
+- **Collapsing the two cameras**, ~0.03ms. `RunScene` deliberately never zooms or pans
+  `cameras.main`, so the split buys only the world/UI separation that depth ordering already
+  provides — but it is a documented contract with an `ignore()` list on both sides, and 0.03ms is
+  not what that is worth.
+- **Dropping the rumble stripes and the rung on sub-pixel spans**, ~0.04ms. Two more of the five
+  quads a merged span writes, at a distance where both are under a pixel *wide* as well as tall.
+  Unlike the ground quad this is a real change to the picture — the stripe is what marks the road's
+  edge and `verify:road` holds its contrast — so it needs its own pixel diff and its own argument.
+
 ## Six Things From A Phone, And One Of Them Was The Page
 
 Six reports off screenshots of the real build on a phone, in a Telegram in-app webview. Three of
@@ -14394,6 +14492,11 @@ App bugs:
 - **A disabled kit button still accepted the press** and did nothing — `setEnabled` only changed the
   drawing. → same section
 - **The quest track drew eight segments for a target of two.** → same section
+- **The HUD's dirty check cost seven times what it guarded** — `drawRow` at 0.087ms a frame
+  against a `paintRow` of 0.012, spent composing a string out of `toFixed` and `join` to answer
+  "no". A dirty check that allocates can cost more than redrawing. → "The Guard Cost Seven Times"
+- **The ground was two quads where one draws the identical picture** (byte-for-byte at three camera
+  positions), and the decal mesh submitted 96 quads to draw nothing while marks are off. → same
 - **476 of the scene's 645 objects were hidden pool slots**, and `CameraManager.render` filters
   every one of them twice a frame whatever `visible` says — 0.118ms to skip objects that draw
   nothing. A slot off duty is off the display list now; the camera guard widened with it, or it
