@@ -1,0 +1,1672 @@
+{
+ "frames": {
+  "critter-bee-0": {
+   "frame": {
+    "h": 384,
+    "w": 199,
+    "x": 1746,
+    "y": 784
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 199
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 199,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "critter-bee-wing": {
+   "frame": {
+    "h": 176,
+    "w": 340,
+    "x": 0,
+    "y": 2671
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 176,
+    "w": 340
+   },
+   "spriteSourceSize": {
+    "h": 176,
+    "w": 340,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "critter-frog-0": {
+   "frame": {
+    "h": 200,
+    "w": 384,
+    "x": 1176,
+    "y": 2461
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 200,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 200,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "critter-frog-air": {
+   "frame": {
+    "h": 249,
+    "w": 330,
+    "x": 1568,
+    "y": 2220
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 249,
+    "w": 330
+   },
+   "spriteSourceSize": {
+    "h": 249,
+    "w": 330,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "critter-hornet-0": {
+   "frame": {
+    "h": 384,
+    "w": 236,
+    "x": 831,
+    "y": 784
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 236
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 236,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "critter-hornet-wing": {
+   "frame": {
+    "h": 162,
+    "w": 435,
+    "x": 348,
+    "y": 2675
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 162,
+    "w": 435
+   },
+   "spriteSourceSize": {
+    "h": 162,
+    "w": 435,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "critter-mosquito-0": {
+   "frame": {
+    "h": 384,
+    "w": 287,
+    "x": 0,
+    "y": 784
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 287
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 287,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "critter-mosquito-wing": {
+   "frame": {
+    "h": 99,
+    "w": 410,
+    "x": 680,
+    "y": 3128
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 99,
+    "w": 410
+   },
+   "spriteSourceSize": {
+    "h": 99,
+    "w": 410,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-ash_mound": {
+   "frame": {
+    "h": 157,
+    "w": 384,
+    "x": 1568,
+    "y": 2675
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 157,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 157,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-ash_scrub": {
+   "frame": {
+    "h": 286,
+    "w": 384,
+    "x": 1568,
+    "y": 1926
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 286,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 286,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-ash_slab": {
+   "frame": {
+    "h": 231,
+    "w": 384,
+    "x": 1176,
+    "y": 2222
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 231,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 231,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-ash_spar": {
+   "frame": {
+    "h": 384,
+    "w": 158,
+    "x": 540,
+    "y": 1176
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 158
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 158,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-ash_stump": {
+   "frame": {
+    "h": 292,
+    "w": 384,
+    "x": 784,
+    "y": 1885
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 292,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 292,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-ash_vent": {
+   "frame": {
+    "h": 87,
+    "w": 384,
+    "x": 1490,
+    "y": 3133
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 87,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 87,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-coa_kelp": {
+   "frame": {
+    "h": 384,
+    "w": 309,
+    "x": 1655,
+    "y": 392
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 309
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 309,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-coa_palm": {
+   "frame": {
+    "h": 384,
+    "w": 270,
+    "x": 295,
+    "y": 784
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 270
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 270,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-coa_reef": {
+   "frame": {
+    "h": 288,
+    "w": 384,
+    "x": 1176,
+    "y": 1926
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 288,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 288,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-coa_stack": {
+   "frame": {
+    "h": 384,
+    "w": 362,
+    "x": 377,
+    "y": 0
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 362
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 362,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-cry_bloom": {
+   "frame": {
+    "h": 384,
+    "w": 338,
+    "x": 1459,
+    "y": 0
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 338
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 338,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-cry_cluster": {
+   "frame": {
+    "h": 384,
+    "w": 347,
+    "x": 1104,
+    "y": 0
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 347
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 347,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-cry_geode": {
+   "frame": {
+    "h": 205,
+    "w": 384,
+    "x": 392,
+    "y": 2461
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 205,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 205,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-cry_pillar": {
+   "frame": {
+    "h": 384,
+    "w": 314,
+    "x": 1011,
+    "y": 392
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 314
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 314,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-cry_slab": {
+   "frame": {
+    "h": 264,
+    "w": 384,
+    "x": 392,
+    "y": 1930
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 264,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 264,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-dune_bone": {
+   "frame": {
+    "h": 190,
+    "w": 384,
+    "x": 0,
+    "y": 2473
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 190,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 190,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-dune_cactus": {
+   "frame": {
+    "h": 384,
+    "w": 177,
+    "x": 187,
+    "y": 1176
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 177
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 177,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-dune_grass": {
+   "frame": {
+    "h": 214,
+    "w": 384,
+    "x": 784,
+    "y": 2453
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 214,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 214,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-dune_rock": {
+   "frame": {
+    "h": 150,
+    "w": 384,
+    "x": 1568,
+    "y": 2840
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 150,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 150,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-dune_shrub": {
+   "frame": {
+    "h": 251,
+    "w": 384,
+    "x": 392,
+    "y": 2202
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 251,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 251,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-dune_spire": {
+   "frame": {
+    "h": 384,
+    "w": 314,
+    "x": 1333,
+    "y": 392
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 314
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 314,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-for_birch": {
+   "frame": {
+    "h": 384,
+    "w": 160,
+    "x": 372,
+    "y": 1176
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 160
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 160,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-for_boulder": {
+   "frame": {
+    "h": 122,
+    "w": 384,
+    "x": 1132,
+    "y": 3000
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 122,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 122,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-for_bramble": {
+   "frame": {
+    "h": 260,
+    "w": 384,
+    "x": 784,
+    "y": 2185
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 260,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 260,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-for_fern": {
+   "frame": {
+    "h": 144,
+    "w": 384,
+    "x": 348,
+    "y": 2845
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 144,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 144,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-for_mushroom": {
+   "frame": {
+    "h": 354,
+    "w": 384,
+    "x": 1293,
+    "y": 1564
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 354,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 354,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-for_pine": {
+   "frame": {
+    "h": 384,
+    "w": 118,
+    "x": 1167,
+    "y": 1176
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 118
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 118,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-fun_cluster": {
+   "frame": {
+    "h": 354,
+    "w": 384,
+    "x": 0,
+    "y": 1568
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 354,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 354,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-fun_dome": {
+   "frame": {
+    "h": 284,
+    "w": 384,
+    "x": 0,
+    "y": 1930
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 284,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 284,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-fun_pair": {
+   "frame": {
+    "h": 354,
+    "w": 384,
+    "x": 392,
+    "y": 1568
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 354,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 354,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-fun_tall": {
+   "frame": {
+    "h": 384,
+    "w": 215,
+    "x": 1305,
+    "y": 784
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 215
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 215,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-fun_wide": {
+   "frame": {
+    "h": 380,
+    "w": 384,
+    "x": 1293,
+    "y": 1176
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 380,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 380,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-rid_arch": {
+   "frame": {
+    "h": 384,
+    "w": 331,
+    "x": 0,
+    "y": 392
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 331
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 331,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-rid_cairn": {
+   "frame": {
+    "h": 190,
+    "w": 384,
+    "x": 1568,
+    "y": 2477
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 190,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 190,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-rid_lichen": {
+   "frame": {
+    "h": 186,
+    "w": 384,
+    "x": 1176,
+    "y": 2669
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 186,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 186,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-rid_monolith": {
+   "frame": {
+    "h": 384,
+    "w": 158,
+    "x": 706,
+    "y": 1176
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 158
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 158,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-rid_scree": {
+   "frame": {
+    "h": 92,
+    "w": 384,
+    "x": 1098,
+    "y": 3130
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 92,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 92,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-rid_snag": {
+   "frame": {
+    "h": 384,
+    "w": 210,
+    "x": 1528,
+    "y": 784
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 210
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 210,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-rui_arch": {
+   "frame": {
+    "h": 384,
+    "w": 349,
+    "x": 747,
+    "y": 0
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 349
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 349,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-rui_column": {
+   "frame": {
+    "h": 384,
+    "w": 152,
+    "x": 872,
+    "y": 1176
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 152
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 152,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-rui_obelisk": {
+   "frame": {
+    "h": 384,
+    "w": 179,
+    "x": 0,
+    "y": 1176
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 179
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 179,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-rui_rubble": {
+   "frame": {
+    "h": 92,
+    "w": 384,
+    "x": 0,
+    "y": 3133
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 92,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 92,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-rui_statue": {
+   "frame": {
+    "h": 384,
+    "w": 250,
+    "x": 573,
+    "y": 784
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 250
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 250,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-rui_wall": {
+   "frame": {
+    "h": 309,
+    "w": 384,
+    "x": 784,
+    "y": 1568
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 309,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 309,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-wet_cattail": {
+   "frame": {
+    "h": 384,
+    "w": 369,
+    "x": 0,
+    "y": 0
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 369
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 369,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-wet_lily": {
+   "frame": {
+    "h": 139,
+    "w": 384,
+    "x": 740,
+    "y": 2845
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 139,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 139,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-wet_reeds": {
+   "frame": {
+    "h": 384,
+    "w": 127,
+    "x": 1032,
+    "y": 1176
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 127
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 127,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-wet_stump": {
+   "frame": {
+    "h": 243,
+    "w": 384,
+    "x": 0,
+    "y": 2222
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 243,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 243,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "decor-wet_willow": {
+   "frame": {
+    "h": 384,
+    "w": 222,
+    "x": 1075,
+    "y": 784
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 222
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 222,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "obstacle-blocking-0": {
+   "frame": {
+    "h": 384,
+    "w": 330,
+    "x": 339,
+    "y": 392
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 330
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 330,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "obstacle-blocking-1": {
+   "frame": {
+    "h": 384,
+    "w": 326,
+    "x": 677,
+    "y": 392
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 384,
+    "w": 326
+   },
+   "spriteSourceSize": {
+    "h": 384,
+    "w": 326,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "obstacle-low-0": {
+   "frame": {
+    "h": 129,
+    "w": 384,
+    "x": 1132,
+    "y": 2863
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 129,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 129,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "obstacle-low-1": {
+   "frame": {
+    "h": 128,
+    "w": 384,
+    "x": 740,
+    "y": 2992
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 128,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 128,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "obstacle-low-2": {
+   "frame": {
+    "h": 127,
+    "w": 384,
+    "x": 1524,
+    "y": 2998
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 127,
+    "w": 384
+   },
+   "spriteSourceSize": {
+    "h": 127,
+    "w": 384,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "pickup-coin": {
+   "frame": {
+    "h": 128,
+    "w": 128,
+    "x": 0,
+    "y": 2855
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 128,
+    "w": 128
+   },
+   "spriteSourceSize": {
+    "h": 128,
+    "w": 128,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "pickup-fruit-banana": {
+   "frame": {
+    "h": 128,
+    "w": 128,
+    "x": 136,
+    "y": 2855
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 128,
+    "w": 128
+   },
+   "spriteSourceSize": {
+    "h": 128,
+    "w": 128,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "pickup-fruit-grapes": {
+   "frame": {
+    "h": 128,
+    "w": 128,
+    "x": 0,
+    "y": 2991
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 128,
+    "w": 128
+   },
+   "spriteSourceSize": {
+    "h": 128,
+    "w": 128,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "pickup-fruit-melon": {
+   "frame": {
+    "h": 128,
+    "w": 128,
+    "x": 136,
+    "y": 2991
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 128,
+    "w": 128
+   },
+   "spriteSourceSize": {
+    "h": 128,
+    "w": 128,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "pickup-fruit-pear": {
+   "frame": {
+    "h": 128,
+    "w": 128,
+    "x": 272,
+    "y": 2997
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 128,
+    "w": 128
+   },
+   "spriteSourceSize": {
+    "h": 128,
+    "w": 128,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "pickup-heal": {
+   "frame": {
+    "h": 128,
+    "w": 128,
+    "x": 408,
+    "y": 2997
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 128,
+    "w": 128
+   },
+   "spriteSourceSize": {
+    "h": 128,
+    "w": 128,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  },
+  "pickup-shield": {
+   "frame": {
+    "h": 128,
+    "w": 128,
+    "x": 544,
+    "y": 2997
+   },
+   "rotated": false,
+   "sourceSize": {
+    "h": 128,
+    "w": 128
+   },
+   "spriteSourceSize": {
+    "h": 128,
+    "w": 128,
+    "x": 0,
+    "y": 0
+   },
+   "trimmed": false
+  }
+ },
+ "meta": {
+  "app": "scripts/build-atlas.py",
+  "image": "world.png",
+  "padding": 8,
+  "scale": "1",
+  "size": {
+   "h": 4096,
+   "w": 2048
+  },
+  "sources": {
+   "critter-bee-0": {
+    "file": "critter/critter-bee-0.png",
+    "sha1": "94f0c0802ff99d86634c72eddb21e63584562ba3"
+   },
+   "critter-bee-wing": {
+    "file": "critter/critter-bee-wing.png",
+    "sha1": "780ae70ca284a71535932f385214bdc8fa60a98b"
+   },
+   "critter-frog-0": {
+    "file": "critter/critter-frog-0.png",
+    "sha1": "a17b04b4edeca497782e321eac21ac20fdd39114"
+   },
+   "critter-frog-air": {
+    "file": "critter/critter-frog-air.png",
+    "sha1": "adcc304eede794d6de796e35236bf10115192dec"
+   },
+   "critter-hornet-0": {
+    "file": "critter/critter-hornet-0.png",
+    "sha1": "d7738bbae2d974ccea9aec9440857eb31fc3c260"
+   },
+   "critter-hornet-wing": {
+    "file": "critter/critter-hornet-wing.png",
+    "sha1": "1bc49f229ed57ab1857ad74aab1ad32392a5380a"
+   },
+   "critter-mosquito-0": {
+    "file": "critter/critter-mosquito-0.png",
+    "sha1": "f82fadad084a8c40411d85b2790d88a7fdf9060b"
+   },
+   "critter-mosquito-wing": {
+    "file": "critter/critter-mosquito-wing.png",
+    "sha1": "eea746506124f3830fae04dffe575161fb358ebb"
+   },
+   "decor-ash_mound": {
+    "file": "decor/ash_mound.png",
+    "sha1": "ee982d571fa3f0ef397d596893255d610b3a138f"
+   },
+   "decor-ash_scrub": {
+    "file": "decor/ash_scrub.png",
+    "sha1": "6c12444d09111b72a113f7dcd3fac5c0545d7a27"
+   },
+   "decor-ash_slab": {
+    "file": "decor/ash_slab.png",
+    "sha1": "072bd8aba1c488ae280408fe10987a5c692c5499"
+   },
+   "decor-ash_spar": {
+    "file": "decor/ash_spar.png",
+    "sha1": "e8e1b3b93b026490f0275d82132af588640225d1"
+   },
+   "decor-ash_stump": {
+    "file": "decor/ash_stump.png",
+    "sha1": "2c0db1e9bb2e6e541808d6fa5b0057ba259512a3"
+   },
+   "decor-ash_vent": {
+    "file": "decor/ash_vent.png",
+    "sha1": "04762a4d5a9d16127099450c063c229c6b8425b9"
+   },
+   "decor-coa_kelp": {
+    "file": "decor/coa_kelp.png",
+    "sha1": "1672119685ea202e7dad5ae9099c11a8e11b7825"
+   },
+   "decor-coa_palm": {
+    "file": "decor/coa_palm.png",
+    "sha1": "95e5a4185faa45243664c68ae844de849dc32173"
+   },
+   "decor-coa_reef": {
+    "file": "decor/coa_reef.png",
+    "sha1": "3bad69d22da72d218281e1224ea243c4e782a34c"
+   },
+   "decor-coa_stack": {
+    "file": "decor/coa_stack.png",
+    "sha1": "df33b0c82441bef6f80bbdced6888e4147655add"
+   },
+   "decor-cry_bloom": {
+    "file": "decor/cry_bloom.png",
+    "sha1": "7e204d7ee770c30957d6a6b4f1072c717660b1c8"
+   },
+   "decor-cry_cluster": {
+    "file": "decor/cry_cluster.png",
+    "sha1": "9006a7429ecacac1a5ee88d4357fac5d0a0ba461"
+   },
+   "decor-cry_geode": {
+    "file": "decor/cry_geode.png",
+    "sha1": "a04bffe745ca2bf76c18a7b42afe03e9fd09a77a"
+   },
+   "decor-cry_pillar": {
+    "file": "decor/cry_pillar.png",
+    "sha1": "dd90eb5ee415b61bb53e3899a174120640c22d3e"
+   },
+   "decor-cry_slab": {
+    "file": "decor/cry_slab.png",
+    "sha1": "9e9017f0f34e6b3b299cb08280158344320f2f90"
+   },
+   "decor-dune_bone": {
+    "file": "decor/dune_bone.png",
+    "sha1": "45c850db3ab3efd25a4edc26499e9e3680abd1c2"
+   },
+   "decor-dune_cactus": {
+    "file": "decor/dune_cactus.png",
+    "sha1": "3cd3ffffedc7847533a6b67bcacf6a0b2499dc18"
+   },
+   "decor-dune_grass": {
+    "file": "decor/dune_grass.png",
+    "sha1": "94e3cd55fb56d9f6b8d32cbbc3e7a57e05563924"
+   },
+   "decor-dune_rock": {
+    "file": "decor/dune_rock.png",
+    "sha1": "c14281f0ce27fa01b65e978f475cac5af88d18e5"
+   },
+   "decor-dune_shrub": {
+    "file": "decor/dune_shrub.png",
+    "sha1": "b82da46b7f8dd557e809bbb87252f69ab11a8a66"
+   },
+   "decor-dune_spire": {
+    "file": "decor/dune_spire.png",
+    "sha1": "85eb97d302c0d64a8b81eca6df6fcc1316859730"
+   },
+   "decor-for_birch": {
+    "file": "decor/for_birch.png",
+    "sha1": "34540a2923372dce757cabbc77d0e569c735a8b5"
+   },
+   "decor-for_boulder": {
+    "file": "decor/for_boulder.png",
+    "sha1": "9a47143163996d16453df75cc0ac4b27c1376211"
+   },
+   "decor-for_bramble": {
+    "file": "decor/for_bramble.png",
+    "sha1": "0ddd913716e358e43776fd6aced34602f40fdf3d"
+   },
+   "decor-for_fern": {
+    "file": "decor/for_fern.png",
+    "sha1": "5be0d5cc42f88828a1af6ee82274e2ab71aadb3b"
+   },
+   "decor-for_mushroom": {
+    "file": "decor/for_mushroom.png",
+    "sha1": "00da2dd0ee20266738630e8298897b1b56a83a1d"
+   },
+   "decor-for_pine": {
+    "file": "decor/for_pine.png",
+    "sha1": "c5e76770667032cdcd6aa49c52a7abb909b9d93a"
+   },
+   "decor-fun_cluster": {
+    "file": "decor/fun_cluster.png",
+    "sha1": "00da2dd0ee20266738630e8298897b1b56a83a1d"
+   },
+   "decor-fun_dome": {
+    "file": "decor/fun_dome.png",
+    "sha1": "d83e1897ba2daaa912fb5aa622dab1ba4a74389e"
+   },
+   "decor-fun_pair": {
+    "file": "decor/fun_pair.png",
+    "sha1": "ca047f8db8c51eae113e9752eaa3bc6680180326"
+   },
+   "decor-fun_tall": {
+    "file": "decor/fun_tall.png",
+    "sha1": "61a49ea1e6789b518bd4f20b20a85bdfe9229918"
+   },
+   "decor-fun_wide": {
+    "file": "decor/fun_wide.png",
+    "sha1": "347647ac22d181efb1b2e18e2400348f4a5afcd2"
+   },
+   "decor-rid_arch": {
+    "file": "decor/rid_arch.png",
+    "sha1": "ef7d73654a13c8faa8a406bf0557995f54902cb6"
+   },
+   "decor-rid_cairn": {
+    "file": "decor/rid_cairn.png",
+    "sha1": "3fd485e7bacfb8600da5f37cf544106bd65746da"
+   },
+   "decor-rid_lichen": {
+    "file": "decor/rid_lichen.png",
+    "sha1": "b3c0914958cbc2640cffdfc7c5dc8cda4c968da2"
+   },
+   "decor-rid_monolith": {
+    "file": "decor/rid_monolith.png",
+    "sha1": "7b9a579340fc73277e03b9d87e9b063469fc33c5"
+   },
+   "decor-rid_scree": {
+    "file": "decor/rid_scree.png",
+    "sha1": "82ab00593b6014f66ef165e97754e24ddb8a8475"
+   },
+   "decor-rid_snag": {
+    "file": "decor/rid_snag.png",
+    "sha1": "272e28de8761abb61613e89dd3b7ec08ff2ef65e"
+   },
+   "decor-rui_arch": {
+    "file": "decor/rui_arch.png",
+    "sha1": "438a0cfe331af71dffe6601f4f59e1254c25b180"
+   },
+   "decor-rui_column": {
+    "file": "decor/rui_column.png",
+    "sha1": "e6d6109175eb41283715018d1d30e8f8c4dcd974"
+   },
+   "decor-rui_obelisk": {
+    "file": "decor/rui_obelisk.png",
+    "sha1": "3033209250bb187bf8a2656eeb95b245dc1e2fe4"
+   },
+   "decor-rui_rubble": {
+    "file": "decor/rui_rubble.png",
+    "sha1": "24acb4616d51f0fc8f6f1c7a7fa710de2882181b"
+   },
+   "decor-rui_statue": {
+    "file": "decor/rui_statue.png",
+    "sha1": "5d507451516c25c981a021dcb17884f1453b22a8"
+   },
+   "decor-rui_wall": {
+    "file": "decor/rui_wall.png",
+    "sha1": "3b3f0c5c419f1d5d4afaee015bc629ef03b1c1c2"
+   },
+   "decor-wet_cattail": {
+    "file": "decor/wet_cattail.png",
+    "sha1": "efa756e887af159ee6e384e1a3492b56531a8e9b"
+   },
+   "decor-wet_lily": {
+    "file": "decor/wet_lily.png",
+    "sha1": "225f07f6802a08ac679a4ad471c963637a1a86a4"
+   },
+   "decor-wet_reeds": {
+    "file": "decor/wet_reeds.png",
+    "sha1": "ef2929e0530c264be8bcb4a2a6af8eba4d1c7599"
+   },
+   "decor-wet_stump": {
+    "file": "decor/wet_stump.png",
+    "sha1": "c3ef47cc235f490a33590bd442205c56cfa7ebd3"
+   },
+   "decor-wet_willow": {
+    "file": "decor/wet_willow.png",
+    "sha1": "ab9301d99facf0e8984e7938827bd4a179322d7c"
+   },
+   "obstacle-blocking-0": {
+    "file": "obstacle/obstacle-blocking-0.png",
+    "sha1": "2ce2ae5aa9f8cb5ceff8ab58e21009d9ae0eef00"
+   },
+   "obstacle-blocking-1": {
+    "file": "obstacle/obstacle-blocking-1.png",
+    "sha1": "1d30785487162d1ee76f8dada204bb29a53a0663"
+   },
+   "obstacle-low-0": {
+    "file": "obstacle/obstacle-low-0.png",
+    "sha1": "0ac6854c84f7b84d8341e6d8ab054aab00e1874c"
+   },
+   "obstacle-low-1": {
+    "file": "obstacle/obstacle-low-1.png",
+    "sha1": "f9e4ae12fb622780970f9a224fe35747f7360952"
+   },
+   "obstacle-low-2": {
+    "file": "obstacle/obstacle-low-2.png",
+    "sha1": "a54b1278f3d57c0e6de5b369bb8f61dd77a7db97"
+   },
+   "pickup-coin": {
+    "file": "pickup/pickup-coin.png",
+    "sha1": "087c359bc005f6f1a57756cfe9bdbaa393dd5e6c"
+   },
+   "pickup-fruit-banana": {
+    "file": "pickup/pickup-fruit-banana.png",
+    "sha1": "fd27b7fc570edde93aac31e5f6e4b04bbed7ea0c"
+   },
+   "pickup-fruit-grapes": {
+    "file": "pickup/pickup-fruit-grapes.png",
+    "sha1": "a24a219bce379f53fd0510af9e9a81347a505579"
+   },
+   "pickup-fruit-melon": {
+    "file": "pickup/pickup-fruit-melon.png",
+    "sha1": "dfac550dc1e1d66c78aa522477bea2270c49eeca"
+   },
+   "pickup-fruit-pear": {
+    "file": "pickup/pickup-fruit-pear.png",
+    "sha1": "8213f2fb7c151c3095db5137216a61d474639249"
+   },
+   "pickup-heal": {
+    "file": "pickup/pickup-heal.png",
+    "sha1": "5bdbac1758b12efb7d881d3d60d4f0e62930f122"
+   },
+   "pickup-shield": {
+    "file": "pickup/pickup-shield.png",
+    "sha1": "6322b17ae0d6b86cd849cd4ad463c29e49dc895c"
+   }
+  }
+ }
+}

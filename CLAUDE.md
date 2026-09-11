@@ -276,6 +276,15 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
   longer promises otherwise. Green today; it still collects every failure before exiting rather than
   stopping at the first, which is the shape a repaint needs. See "One Palette Check For Every Theme,
   Biome And Skin" and "The Mascot Has No Contour".
+- `npm run verify:atlas` — the world sheet against its sources and the code: every PNG under
+  `public/assets/{decor,obstacle,critter,pickup}` is a frame at its own size with its packed SHA-1,
+  every key the four art modules declare is a frame and nothing else is, frames keep their padding,
+  the sheet is power-of-two, and `vite.config.ts` drops exactly the packer's folders from `dist/`.
+  **Wired into `npm run build`**, because a stale sheet is last month's art with nothing on screen
+  to say so. See "One Sheet For The World".
+- `py -3.11 scripts/build-atlas.py` — packs those four folders into `public/assets/atlas/world.png`
+  + `world.json` (skyline packer, 8px padding, smallest power-of-two sheet that fits). Run by hand
+  after `build-sprites.py`; the output is committed.
 - `npm run verify:mattes` — not a logic suite: it reads every RGBA sprite in `public/assets/` and
   checks the two things a matte can be wrong about independently of what is drawn (alpha under the
   floor, colour flooded under the transparency). Runs inside `npm run build` — see "The Matte That
@@ -14686,6 +14695,162 @@ What that leaves, stated rather than hidden:
   recorded as ruled out rather than as a lead. It is also what currently hides the 1px seams between
   adjacent road quads, so turning it off is a change to the picture and not a free win.
 
+## A Blend Mode Is A Batch Boundary
+
+A fifth pass, asked for after the four above and after the model was shown to cost 0.002ms a
+frame. It starts by closing the one structural lever the previous round left open, and then finds
+the frame paying for something no earlier round had a name for.
+
+**Measured in the running game at 375x667, hand-stepped, with a wrapper on `renderer.render` per
+camera, on `gl.drawElements`, and on `DrawingContext.getClone`.** The timer is quantised to 0.1ms
+here (`crossOriginIsolated` is false), so every figure is a mean over 600–1500 frames.
+
+### The second camera costs 0.038ms, and the lever is closed
+
+"The Frame That Drops Once A Lap" left `renderer.render` at "0.375ms per camera x 2" as the only
+structural thing untried, and warned that the number came from a different measurement. Measured
+per camera: **main 0.464ms for 163 children, `uiCamera` 0.038ms for 8.** The split costs a
+`DrawingContext` clone and one batch flush a frame, and collapsing it would buy nothing worth a
+documented contract with an `ignore()` list on both sides. Closed, with the number.
+
+### ⚠ Every shadow was a draw call, because MULTIPLY between NORMAL neighbours breaks the batch
+
+`ListCompositor.run` walks the display list in depth order and, **on every change of blend mode
+between consecutive objects, clones a `DrawingContext` and calls `use()`**, which flushes the batch
+— a fresh allocation (a state object holding four nested objects and four arrays) and a draw call
+per transition. The shadows shipped `MULTIPLY`, and a shadow sorts by *distance*, i.e. between the
+sprites it sits under. So the batch broke on the way into every shadow and on the way out of it:
+
+| | as shipped | now |
+|---|---|---|
+| blend transitions on the main camera | **up to 25** a frame | 2 (the glow's `ADD`, in and out) |
+| `DrawingContext` clones a frame | **18.8** | 3.1 |
+| `drawElements` a frame | **40.6** | 12.8 |
+| `renderer.render`, main camera | 0.464ms / 163 children | 0.348ms / 159 |
+
+- **For a black texture `NORMAL` is the same arithmetic as `MULTIPLY`, to the byte.**
+  Premultiplied black at alpha `a` is `(0, 0, 0, a)`: a normal blend leaves the ground at
+  `dst * (1 - a) + 0`, a multiply at `0 * dst + dst * (1 - a)`. Accepted as a pixel diff on a
+  frozen frame through `gl.readPixels`: **0 of 250 125 pixels differ**, noise floor also 0. The
+  fix is one word in `shadowArt.ts`, and `verify:ui` holds it by reading the file — including that
+  the texture is still *black*, which is the only thing the identity rests on.
+- **And an empty mesh was paying the same toll.** `DecalMesh` keeps its multiply — it darkens
+  whatever it lies on — and with `DECAL_DENSITY` at 0 it drew nothing while sitting on the list
+  with a blend of its own: one clone and two flushes a frame for zero quads. It hides itself when it
+  has nothing to draw and shows on the first frame that writes a quad.
+- **Why this is a mobile fix measured on a desktop.** A draw call is validated by the GL driver and
+  a fresh allocation is collected by V8, and both are several times dearer on a phone than here;
+  what the desktop numbers show is the *count* going from 40 to 13 and from 19 to 3, and the count
+  is what the phone pays for. On the desktop the frame p50 sits inside the timer's own quantum
+  either way.
+- **What could not be measured, stated rather than glossed.** `performance.memory.usedJSHeapSize`
+  is too coarse to read an allocation rate off frame deltas — the same code measured 6.8 and 26
+  KB/frame in consecutive windows — so the GC half of this is argued from the constructor
+  (`DrawingContext.copy` allocates nine objects) and from the count, not from a measured rate.
+
+### What is left, and it is the same list with one entry crossed off
+
+- **The remaining ~13 draw calls are texture flushes.** The batch handler holds 16 textures, the
+  frame carries about forty distinct ones (decor props from several biomes, six critter kinds and
+  their wings, four fruit, HUD text canvases, five sky layers), and depth order interleaves them.
+  The fix is an atlas, which is a build-pipeline change: every `textures.exists(key)`,
+  `load.image(key)` and `setTexture(key)` in the game would become a frame lookup. Not this round.
+- **Mipmaps are not available to this art** — Phaser 4 generates them for power-of-two textures only,
+  and every sprite here is trimmed to its own alpha box. An atlas would fix that too.
+- **`antialias` is on (`SAMPLES = 4`) and is the one GPU-side lever untouched.** On a phone MSAA on
+  the default framebuffer is the standard thing to switch off first, and it is a picture change:
+  the road's converging edges lose their smoothing. Left on, because the harness cannot measure a
+  phone's GPU and a picture change without a measurement is the rule this project keeps breaking
+  and paying for.
+- **Per-object renderer overhead** is about 2.5µs a sprite here and 33 of the ~160 objects a frame
+  are decor under 4px wide. Culling them is a picture change at the horizon and was not taken; the
+  road mesh's own half-pixel floor is the only resolution rule on the table, and under it only one
+  object a frame qualifies.
+
+## One Sheet For The World
+
+`scripts/build-atlas.py`, `scripts/verify-atlas.mjs` (`npm run verify:atlas`, wired into
+`npm run build`), `src/art/atlas.ts`, and one line in `config.ts`. The lever the previous section
+named and did not take.
+
+### What it buys, measured, and what it does not
+
+The batch handler holds 16 textures and the run drew from about forty distinct ones interleaved by
+depth. Every world sprite — 50 decor props, 5 obstacles, 8 critter drawings, 7 pickups; 69 files,
+5.56 Mpx — now ships packed into one **2048x4096 power-of-two sheet** (66% filled, 2.51MB against
+2.47MB of sources), and each frame is named by exactly the texture key the game always used.
+
+| | before | after |
+|---|---|---|
+| PNG requests at boot | 91 | **22** |
+| distinct textures in a run frame | ~40 | 22 |
+| `drawElements` a frame | 12.8 | 11.1 |
+| `bindTexture` a frame | — | 18.7 |
+| sheet min filter | `LINEAR` (NPOT, no mips) | **`LINEAR_MIPMAP_LINEAR`** |
+| `renderer.render`, main camera | 0.348ms / 159 | 0.376ms / 164 |
+
+**The honest reading: the CPU number did not move, and three other things did.** The renderer's
+per-object cost is per object, not per texture, so a sheet cannot touch it. What the sheet buys is
+(1) **69 fewer requests on the loading bar** — on a phone over mobile data that is most of the wait,
+and the request count is what a webview's connection limit serialises; (2) **mipmaps**, which
+Phaser 4 generates for power-of-two textures only (`WebGLTextureWrapper` gates `generateMipmap` on
+`IsSizePowerOfTwo`), so every trimmed NPOT sprite drawn at 4px on the horizon had been sampled from
+its full 384px texture — a cache miss per texel on a phone's GPU, and the shimmer at the horizon;
+(3) fewer texture binds in the world pass. The draw-call count fell by less than expected because
+the frame still carries **22 distinct textures**: the sky's nine layers, the five obstacle *rim*
+canvases, the shadow, the snail's skin canvas, the ramp, the palette, and four mote emitters.
+
+- **The obstacles are drawn from rim canvases, not from the sheet.** `createObstacleRims` copies
+  each frame out of the sheet and paints its contour into a canvas texture of its own (that pass is
+  pure TypeScript in `inkRim.ts` and would have to be re-implemented in Python to bake it), so the
+  five rims are five textures. Packing *those* into a runtime sheet is the next step and is worth
+  about three draw calls.
+- **GPU memory goes up, stated rather than hidden**: a 2048x4096 RGBA sheet is 32MB plus 10.7MB of
+  mips, against about 22MB for the sources as separate textures. No phone this game targets is
+  short of that, and one texture is cheaper to bind than sixty-nine.
+
+### The seam is one module, and precedence is standalone first
+
+`src/art/atlas.ts` answers `hasArt`, `artRef`/`setArt` and `artPixels` for a key, whichever of the
+two arrangements it is in. **A key that exists as its own texture wins over the same name in the
+sheet** — that is what keeps every `createXTextures` guard honest: a fallback is drawn only when
+`hasArt` finds nothing, and once drawn it is what is used. The pools call `setArt` in the one line
+they used to call `setTexture`, and their "skip when the key has not changed" caches stay valid
+because the key is still the identity.
+
+- **`src/road/` is touched twice** — `RoadSprites.setTexture` and `decor.ts`'s two guards — under
+  the same exemption the perf rounds already claimed for `RoadMesh` and `RoadSprites`: none of the
+  three reasons the fork gives for leaving that directory alone is about where a key's pixels live.
+- **⚠ `createDecorTextures`' own guard had to move to `hasArt`, and the failure it prevents is
+  silent.** Guarded on `textures.exists(key)` it would have drawn a procedural placeholder over every
+  key the sheet already carried, and because a standalone texture *wins*, the placeholders would
+  then have been what the game drew — with the sheet loaded, and nothing on screen saying so.
+- **Readers of pixels get the frame's cut, not the sheet.** `getSourceImage()` on an atlas frame is
+  the whole 2048x4096 image; `artPixels` hands back the image *and* `cutX/cutY/cutWidth/cutHeight`,
+  and the obstacle rim pass draws with `drawImage`'s nine-argument form.
+- **The sources stay in `public/assets/` and the build drops them from `dist/`.** Five checks and
+  `build-sprites.py` read and write those folders; moving them would be a wider change than the
+  atlas. `vite.config.ts`'s `dropAtlasSources` removes exactly the packer's folders after the
+  bundle, so `dist/` carries the sheet once. Measured: **7.06MB** against the 8MB ceiling.
+
+### The check holds the sheet to the sources and to the code
+
+`verify:atlas` fails the build when a source PNG's SHA-1 no longer matches what the sheet was
+packed from — a stale sheet is invisible on every frame, the picture is simply last month's art —
+and holds the frame set equal to **both** the folder contents and the keys the four art modules
+declare. It also asserts the padding between every pair (8px, which keeps mip level 3 clean and
+means a deeper level averages in transparent black, i.e. nothing premultiplied), and that the vite
+plugin drops the same folders the packer reads.
+
+**⚠ Its first run found `decor-cry_shard` in the folder and declared nowhere.** The prop was
+rejected two rounds ago and the fix was to remove it from the biome's list; its pick and its PNG
+stayed behind, so the old per-key loader simply never asked for it and the file shipped in every
+bundle unreferenced. The packer packs the folder, so the check saw it. Deleted, with its pick.
+
+**Not verified: how the mipmapped far field reads on a real phone.** The frame was looked at on the
+harness at 375x667 and nothing is wrong with it, but the horizon there is a few dozen pixels of a
+downscaled screenshot, which is not a judgement about shimmer.
+
 ## Known Issues Fixed
 
 Bugs and gotchas hit and fixed while building the platform/save/audio layers — recorded so they don't get
@@ -14694,6 +14859,20 @@ index.
 
 App bugs:
 
+- **The world's 69 sprites were 69 textures and 69 requests**, none of them power-of-two and
+  therefore none of them mipmapped, interleaved by depth through a 16-texture batch. Packed into one
+  2048x4096 sheet: 91 -> 22 PNG requests at boot, `LINEAR_MIPMAP_LINEAR` on the sheet, and the draw
+  calls that remain are the sky, the obstacle rim canvases and the motes. → "One Sheet For The World"
+- **`decor-cry_shard.png` shipped in every bundle and was loaded by nothing** — rejected two rounds
+  ago, removed from its biome's list, and left on disk with its pick. Found by the atlas check on
+  its first run. → same section
+- **Every shadow was a draw call and an allocation**: shadows shipped `MULTIPLY` and sort by
+  distance between `NORMAL` sprites, and `ListCompositor` clones a `DrawingContext` and flushes the
+  batch at every blend change — up to 25 transitions, 18.8 clones and 40.6 draw calls a frame. For
+  a black texture `NORMAL` is byte-identical (0 of 250 125 pixels differ) and batches. The empty
+  decal mesh paid the same toll for drawing nothing. → "A Blend Mode Is A Batch Boundary"
+- **The second camera was recorded as the last structural lever and costs 0.038ms** — the
+  "0.375ms per camera x 2" figure was a wrapper's average over two unequal calls. → same section
 - **The whole run model costs 0.002ms a frame and the lap build costs 2.9ms on one of them**, so the
   only tail the game has is a guaranteed dropped frame every 50–80 seconds on a phone. Two scans made
   it three times worse than it needed to be: `clearOfObstacles` walked the whole lap for every point of

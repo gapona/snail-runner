@@ -22,6 +22,7 @@ import { sceneryDepth } from '../run/worldDepth'
 import { getRoadTheme } from './themes'
 import type { RoadSprite, Segment } from './track'
 import { hidePooled, showPooled } from '../run/pooled'
+import { setArt } from '../art/atlas'
 
 /** What one pool slot is currently showing, so a frame can skip work it does not need. */
 interface SlotState {
@@ -321,7 +322,7 @@ export class RoadSprites {
         image.setCrop()
         slot.cropped = false
       }
-      image.setTexture(key)
+      setArt(image, key)
       slot.key = key
     }
 

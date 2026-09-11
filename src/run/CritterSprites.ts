@@ -41,6 +41,7 @@ import { groundPointInto, type GroundPoint } from './groundProjection'
 import { distanceIndexOf, WORLD_LAYER, worldDepth } from './worldDepth'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowClipFade, shadowScale } from './shadows'
 import { createShadow } from './shadowArt'
+import { hasArt, setArt } from '../art/atlas'
 import { hidePooled, showPooled } from './pooled'
 
 /**
@@ -197,7 +198,7 @@ export class CritterSprites {
   private airPose(kind: CritterKind): CritterAirPose | null {
     const pose = CRITTER_AIR_POSES[kind]
 
-    if (!pose || !this.textures.exists(critterAirKey(kind))) return null
+    if (!pose || !hasArt(this.textures, critterAirKey(kind))) return null
 
     return pose
   }
@@ -423,7 +424,7 @@ export class CritterSprites {
         image.setCrop()
         slot.cropped = false
       }
-      image.setTexture(key)
+      setArt(image, key)
       slot.key = key
     }
 
@@ -491,7 +492,7 @@ export class CritterSprites {
     const spec = CRITTER_WINGS[kind]
     const key = critterWingKey(kind)
 
-    if (!spec || !this.textures.exists(key)) {
+    if (!spec || !hasArt(this.textures, key)) {
       for (const wing of slot.wings) hidePooled(wing)
       return
     }
@@ -515,7 +516,7 @@ export class CritterSprites {
       const right = i === 0
 
       showPooled(wing)
-      wing.setTexture(key)
+      setArt(wing, key)
       wing.setOrigin(right ? px : 1 - px, py)
       wing.setFlipX(!right)
       wing.setDisplaySize(w, h)

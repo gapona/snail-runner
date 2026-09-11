@@ -24,6 +24,7 @@
 import type * as Phaser from 'phaser'
 import { BEE_COLORS, CRITTER_COLORS, INK } from './artPalette'
 import { CRITTER_KINDS, CRITTER_KIND_IDS, type CritterKind } from './critters'
+import { hasArt } from '../art/atlas'
 
 /** The two poses of the tripod gait. */
 export const CRITTER_FRAMES = 2
@@ -195,7 +196,7 @@ export function createCritterTextures(scene: Phaser.Scene): void {
     for (let frame = 0; frame < CRITTER_BODY_DRAWINGS[kind]; frame++) {
       const key = critterFrameKey(kind, frame)
 
-      if (scene.textures.exists(key)) continue
+      if (hasArt(scene.textures, key)) continue
 
       const g = scene.make.graphics({ x: 0, y: 0 }, false)
       const w: Scale = (f) => width * f

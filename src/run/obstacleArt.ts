@@ -27,6 +27,7 @@
 import type * as Phaser from 'phaser'
 import { getRoadTheme } from '../road/themes'
 import { paintInkRim, rimWidthPx } from './inkRim'
+import { artPixels, hasArt } from '../art/atlas'
 import { OBSTACLE_BANDS, type ObstacleKind } from './constants'
 import { INK, OBSTACLE_MATERIALS } from './artPalette'
 
@@ -213,7 +214,7 @@ export function createObstacleTextures(scene: Phaser.Scene): void {
     for (let variant = 0; variant < OBSTACLE_VARIANTS[kind]; variant++) {
       const key = obstacleTextureKey(kind, variant)
 
-      if (scene.textures.exists(key)) continue
+      if (hasArt(scene.textures, key)) continue
 
       const { width, height } = OBSTACLE_CANVAS[kind]
       const g = scene.make.graphics({ x: 0, y: 0 }, false)
@@ -257,21 +258,24 @@ function createObstacleRims(scene: Phaser.Scene): void {
       const source = obstacleTextureKey(kind, variant)
       const key = obstacleDrawKey(kind, variant)
 
-      if (scene.textures.exists(key) || !scene.textures.exists(source)) continue
+      if (scene.textures.exists(key)) continue
 
-      const image = scene.textures.get(source).getSourceImage()
+      // The source is a frame of the world sheet when the art loaded and a standalone canvas when
+      // the fallback drew it; `artPixels` answers both with the same rectangle.
+      const art = artPixels(scene.textures, source)
 
-      if (!(image instanceof HTMLImageElement) && !(image instanceof HTMLCanvasElement)) continue
+      if (!art) continue
 
-      const canvas = scene.textures.createCanvas(key, image.width, image.height)
+      const { width, height } = art
+      const canvas = scene.textures.createCanvas(key, width, height)
 
       if (!canvas) continue
 
-      canvas.draw(0, 0, image)
+      canvas.context.drawImage(art.image, art.x, art.y, width, height, 0, 0, width, height)
 
-      const data = canvas.getData(0, 0, image.width, image.height)
+      const data = canvas.getData(0, 0, width, height)
 
-      paintInkRim(data.data, image.width, image.height, rimWidthPx(image.width, image.height, OBSTACLE_RIM), OBSTACLE_RIM)
+      paintInkRim(data.data, width, height, rimWidthPx(width, height, OBSTACLE_RIM), OBSTACLE_RIM)
       canvas.putData(data, 0, 0)
       canvas.refresh()
       generated.add(key)

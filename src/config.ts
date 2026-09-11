@@ -14,6 +14,15 @@ import { RunPause } from './scenes/RunPause'
 export const GameConfig: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   backgroundColor: '#028af8',
+  render: {
+    // **Mipmaps, which only the world sheet can take.** Phaser 4 generates them for power-of-two
+    // textures alone (`WebGLTextureWrapper` gates `generateMipmap` on `IsSizePowerOfTwo`), and
+    // every trimmed sprite is NPOT — so until `scripts/build-atlas.py` packed them into a 2048x4096
+    // sheet, a 384px prop drawn 4px wide at the horizon was sampled straight from its full-size
+    // texture: shimmer on screen, and a texture-cache miss per texel on a phone. Every NPOT texture
+    // in the game (sky plates, the palette, the HUD canvases) is unaffected by this line.
+    mipmapFilter: 'LINEAR_MIPMAP_LINEAR',
+  },
   scale: {
     parent: 'app',
     mode: Phaser.Scale.RESIZE,

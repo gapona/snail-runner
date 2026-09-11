@@ -1,3 +1,5 @@
+import { rmSync } from 'node:fs'
+import path from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
 
 /**
@@ -42,13 +44,34 @@ function inlineModuleLoader(): Plugin {
   }
 }
 
+/**
+ * The folders `scripts/build-atlas.py` packs into `public/assets/atlas/world.png`. They stay in
+ * `public/` because every art check reads them there and `build-sprites.py` writes them there, and
+ * `public/` is copied into `dist/` verbatim — so without this the bundle would carry the sheet *and*
+ * its sources, 2.5MB twice. Nothing in the shipped game loads them: `Preloader` asks for the sheet
+ * and `src/art/atlas.ts` answers every key from it. Kept in step with the packer by `verify:atlas`.
+ */
+export const ATLAS_SOURCE_FOLDERS = ['decor', 'obstacle', 'critter', 'pickup'] as const
+
+function dropAtlasSources(): Plugin {
+  return {
+    name: 'drop-atlas-sources',
+    apply: 'build',
+    closeBundle() {
+      for (const folder of ATLAS_SOURCE_FOLDERS) {
+        rmSync(path.join('dist', 'assets', folder), { recursive: true, force: true })
+      }
+    },
+  }
+}
+
 export default defineConfig({
   // Playables does not host games at the domain root, so root-absolute asset paths
   // (Vite's default, e.g. `/assets/foo.js`) 404 there even though they work locally.
   // './' emits relative paths (`./assets/foo.js`) that resolve correctly regardless of
   // where the game is actually served from.
   base: './',
-  plugins: [inlineModuleLoader()],
+  plugins: [inlineModuleLoader(), dropAtlasSources()],
   server: {
     port: 8080,
     open: true,

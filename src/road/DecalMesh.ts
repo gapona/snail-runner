@@ -186,6 +186,13 @@ export class DecalMesh {
     // Now the list is cut to what was written, so the tail is unread rather than collapsed, and
     // `used === 0` submits nothing at all.
     setOrderedIndices(this.gameObject, this.ordered.first(used))
+    // **And an empty mesh is taken off the render list, not merely emptied.** A mesh with no quads
+    // still sits on the display list with its `MULTIPLY` blend, and `ListCompositor` clones a
+    // `DrawingContext` and flushes the batch on every blend change between neighbours -- so an
+    // object that draws nothing cost a clone, two flushes and a draw call a frame for as long as
+    // `DECAL_DENSITY` has been 0. Hidden, it costs the `willRender` test and nothing else; the day
+    // marks come back it shows itself on the first frame that writes a quad.
+    this.gameObject.setVisible(used > 0)
 
     this.usedLastFrame = used
     this.wantedLastFrame = wanted

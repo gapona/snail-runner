@@ -1,5 +1,6 @@
 import * as Phaser from 'phaser'
 import { getRoadTheme } from './themes'
+import { hasArt } from '../art/atlas'
 import { DECOR_TEXTURES, fallbackShapeFor, type DecorTexture, type Polygon } from './decorShapes'
 
 export { DECOR_TEXTURES, DECOR_KEYS, type DecorTexture } from './decorShapes'
@@ -20,7 +21,7 @@ const generatedKeys = new Set<string>()
 
 /** Whether this slot is showing loaded art rather than a shape drawn from `DECOR_SHAPES`. */
 export function isDecorArt(scene: Phaser.Scene, key: string): boolean {
-  return scene.textures.exists(key) && !generatedKeys.has(key)
+  return hasArt(scene.textures, key) && !generatedKeys.has(key)
 }
 
 /** Every decor key currently backed by a texture this module drew. */
@@ -43,8 +44,10 @@ export function createDecorTextures(scene: Phaser.Scene): readonly DecorTexture[
   for (const { key, width, height } of DECOR_TEXTURES) {
     // Already present means either "we drew it and nothing has removed it" or "the loader
     // brought real art in under this key" — nothing to do in either case. The second is how a
-    // shipped sprite takes over a slot without a single call site changing.
-    if (scene.textures.exists(key)) continue
+    // shipped sprite takes over a slot without a single call site changing, and since the art
+    // moved into the world sheet the question is asked through `hasArt`: a fallback drawn over a
+    // key the sheet already carries would *win*, because a standalone texture takes precedence.
+    if (hasArt(scene.textures, key)) continue
 
     const canvasTexture = scene.textures.createCanvas(key, width, height)
 

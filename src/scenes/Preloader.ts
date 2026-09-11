@@ -3,13 +3,10 @@ import { SFX_FILES, renderSfxUris } from '../audio/sfx'
 import { ensureSkyTextures, skyPlateKey, SKYLINE_TEXTURE, skyTextureKey } from '../road/Backdrop'
 import { BIOMES, groundPairForTheme } from '../road/biomes'
 import { getRoadTheme } from '../road/themes'
-import { DECOR_TEXTURES } from '../road/decorShapes'
 import { themeIds } from '../road/themes'
 import { t } from '../i18n/strings'
-import { OBSTACLE_ART_KEYS } from '../run/obstacleArt'
 import { UI_MASTER_KEYS } from '../ui/uiSprites'
-import { CRITTER_TEXTURE_KEYS } from '../run/critterArt'
-import { PICKUP_TEXTURES } from '../run/pickupArt'
+import { ATLAS_IMAGE_PATH, ATLAS_JSON_PATH, ATLAS_KEY } from '../art/atlas'
 import { SNAIL_FRAMES, SNAIL_TEXTURE, SNAIL_TEXTURE_SIZE, snailFrameKey } from '../run/snailArt'
 import { INK } from '../run/artPalette'
 import { bindLayout } from '../ui/layout'
@@ -174,22 +171,16 @@ export class Preloader extends Phaser.Scene {
     // for a fraction of boot. That hook stays the right place if a theme grows a real sprite set.
     for (const theme of themeIds()) this.load.image(skyPlateKey(theme), `assets/sky/${theme}.png`)
 
-    // Scenery, obstacles and pickups, under **exactly the keys the generators would have used**:
-    // each of those modules draws a placeholder only when its key does not exist, so arriving first
-    // is all a real sprite has to do. The keys are asked for through the modules that declare them
-    // rather than spelled out — `OBSTACLE_VARIANTS` has changed twice, and a literal list here
-    // would keep loading five of six files with nothing to say which one went missing.
-    for (const { key } of DECOR_TEXTURES) {
-      this.load.image(key, `assets/decor/${key.replace('decor-', '')}.png`)
-    }
-    for (const key of OBSTACLE_ART_KEYS) this.load.image(key, `assets/obstacle/${key}.png`)
-    for (const key of CRITTER_TEXTURE_KEYS) this.load.image(key, `assets/critter/${key}.png`)
+    // Scenery, obstacles, critters and pickups: **one sheet, one request, one texture unit**, with
+    // every frame named by exactly the key the generators would have used. Each of those modules
+    // draws a placeholder only when `hasArt` finds nothing under its key, so arriving first is all
+    // the sheet has to do — see `src/art/atlas.ts` for the seam and `scripts/build-atlas.py` for
+    // what is in it. `verify:atlas` holds the frame table to the keys the modules declare, which
+    // is what used to be the job of loading through those modules' own key lists.
+    this.load.atlas(ATLAS_KEY, ATLAS_IMAGE_PATH, ATLAS_JSON_PATH)
     // The interface's own masters. Greyscale value maps -- `ui/uiSprites.ts` colours them at
     // runtime, which is what lets the primary button take the active theme's accent.
     for (const key of UI_MASTER_KEYS) this.load.image(key, `assets/ui/${key}.png`)
-    for (const key of Object.values(PICKUP_TEXTURES).flat()) {
-      this.load.image(key, `assets/pickup/${key}.png`)
-    }
 
     this.load.setPath('assets')
     this.load.audio('sfx', 'audio/blip.wav')

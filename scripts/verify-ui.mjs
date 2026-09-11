@@ -1987,6 +1987,34 @@ check('the life row bleed covers a slot in flight, and one pitch alone does not'
 })
 
 // ---------------------------------------------------------------------------------------------
+// A blend mode is a batch boundary -- see src/run/shadowArt.ts.
+// ---------------------------------------------------------------------------------------------
+
+check('shadows are drawn with the NORMAL blend, and an empty decal mesh is hidden', () => {
+  // Source-greps, because both files import `phaser` as a value. What they guard is invisible on
+  // every frame: `ListCompositor` clones a `DrawingContext` and flushes the batch at every blend
+  // change between consecutive display-list objects, and shadows sort by distance *between* the
+  // sprites they sit under -- measured at up to 25 transitions and 40 draw calls a frame for ~170
+  // objects, and byte-identical on `NORMAL` because the texture is black (see the docstring).
+  const shadow = readFileSync('src/run/shadowArt.ts', 'utf8')
+  const shadowCode = shadow.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+
+  assert.ok(shadowCode.includes('BlendModes.NORMAL'), 'shadowArt.ts: the shadow image must be NORMAL-blended')
+  assert.ok(!shadowCode.includes('BlendModes.MULTIPLY'), 'shadowArt.ts: MULTIPLY on a black texture buys nothing and costs a batch flush per shadow')
+  assert.match(
+    shadow,
+    /fillStyle = '#000000'/,
+    'shadowArt.ts: the identity between NORMAL and MULTIPLY holds only for a BLACK texture',
+  )
+
+  // The decal mesh keeps its multiply -- it darkens whatever it lies on -- so what it may not do
+  // is stay on the render list while it has nothing to draw.
+  const decal = readFileSync('src/road/DecalMesh.ts', 'utf8')
+
+  assert.ok(decal.includes('this.gameObject.setVisible(used > 0)'), 'DecalMesh.ts: an empty mesh must hide itself')
+})
+
+// ---------------------------------------------------------------------------------------------
 // The pools keep their slack off the display list -- see src/run/pooled.ts.
 // ---------------------------------------------------------------------------------------------
 

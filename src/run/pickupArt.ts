@@ -33,6 +33,7 @@
 import type * as Phaser from 'phaser'
 import { INK, PICKUP_COLORS } from './artPalette'
 import type { PickupKind } from './pickups'
+import { hasArt } from '../art/atlas'
 
 /**
  * The four fruit renders, in the order `pickupTexture` walks them.
@@ -84,7 +85,7 @@ type Scale = (f: number) => number
 export function createPickupTextures(scene: Phaser.Scene): void {
   for (const kind of Object.keys(PICKUP_TEXTURES) as PickupKind[]) {
     for (const key of PICKUP_TEXTURES[kind]) {
-      if (scene.textures.exists(key)) continue
+      if (hasArt(scene.textures, key)) continue
 
       drawPickup(scene, kind, key)
     }

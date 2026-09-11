@@ -29,6 +29,7 @@ import {
 import { groundPointInto, type GroundPoint } from './groundProjection'
 import { createShadow } from './shadowArt'
 import { hidePooled, showPooled } from './pooled'
+import { setArt } from '../art/atlas'
 
 /**
  * Every pickup on screen, from a fixed pool.
@@ -306,7 +307,7 @@ export class PickupSprites {
         image.setCrop()
         slot.cropped = false
       }
-      image.setTexture(key)
+      setArt(image, key)
       slot.key = key
     }
 

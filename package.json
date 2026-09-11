@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node scripts/verify-mattes.mjs && node --import ./scripts/register-ts-loader.mjs scripts/verify-palettes.mjs && node scripts/check-bundle.mjs",
+    "build": "tsc && vite build && node scripts/verify-mattes.mjs && node --import ./scripts/register-ts-loader.mjs scripts/verify-atlas.mjs && node --import ./scripts/register-ts-loader.mjs scripts/verify-palettes.mjs && node scripts/check-bundle.mjs",
     "bundle": "npm run build && node scripts/make-bundle.mjs",
     "preview": "vite preview",
     "verify:scroll": "node --import ./scripts/register-ts-loader.mjs scripts/verify-scroll-momentum.mjs",
@@ -25,6 +25,7 @@
     "verify:scoring": "node --import ./scripts/register-ts-loader.mjs scripts/verify-scoring.mjs",
     "verify:ui": "node --import ./scripts/register-ts-loader.mjs scripts/verify-ui.mjs",
     "verify:mattes": "node scripts/verify-mattes.mjs",
+    "verify:atlas": "node --import ./scripts/register-ts-loader.mjs scripts/verify-atlas.mjs",
     "art:ui": "py -3.11 scripts/normalize-ui.py --sheet",
     "art:critter": "py -3.11 scripts/normalize-critter.py",
     "verify:sightline": "node --import ./scripts/register-ts-loader.mjs scripts/verify-sightline.mjs",
