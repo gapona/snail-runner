@@ -28,7 +28,7 @@
  */
 import type * as Phaser from 'phaser'
 import { FrameStats, LONG_FRAME_MS, DROPPED_FRAME_MS, type FrameStatsSnapshot } from './frameStats'
-import { msaaDisabled, toggledMsaaSearch } from './perfFlags'
+import { MIPS_FLAG, MSAA_FLAG, mipsDisabled, msaaDisabled, toggledFlagSearch } from './perfFlags'
 
 /** The element id, and the literal `check-bundle.mjs` forbids in a production build. */
 export const OVERLAY_ID = 'snail-perf-overlay'
@@ -59,8 +59,10 @@ export const REPORT_PATH = '__perf'
  * rather than the one thing the flag is asking about, which is the framebuffer's multisampling.
  */
 export function applyPerfRenderFlags(config: Phaser.Types.Core.GameConfig, search: string): void {
-  if (!msaaDisabled(search)) return
-  config.render = { ...config.render, antialiasGL: false }
+  if (msaaDisabled(search)) config.render = { ...config.render, antialiasGL: false }
+  // An empty `mipmapFilter` is Phaser's own "no mipmaps": `WebGLTextureWrapper.resize` falls back
+  // to `LINEAR`, and `generateMipmap` returns before touching GL.
+  if (mipsDisabled(search)) config.render = { ...config.render, mipmapFilter: '' }
 }
 
 interface Memory {
@@ -94,7 +96,8 @@ function describeDevice(game: Phaser.Game): DeviceInfo {
   const debugInfo = gl.getExtension('WEBGL_debug_renderer_info')
   const gpu = debugInfo ? String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)) : String(gl.getParameter(gl.RENDERER))
   const version = gl instanceof WebGL2RenderingContext ? 'WebGL2' : 'WebGL1'
-  return { frame, renderer: version, samples: samples > 0 ? `MSAA ${samples}x` : 'MSAA off', gpu }
+  const mips = (game.renderer as { mipmapFilter?: unknown }).mipmapFilter ? 'mips on' : 'mips off'
+  return { frame, renderer: version, samples: `${samples > 0 ? `MSAA ${samples}x` : 'MSAA off'}  ${mips}`, gpu }
 }
 
 function ms(value: number): string {
@@ -245,6 +248,7 @@ export function mountPerfOverlay(game: Phaser.Game): void {
         device,
         userAgent: navigator.userAgent,
         msaaFlag: msaaDisabled(location.search) ? 'off' : 'default',
+        mipsFlag: mipsDisabled(location.search) ? 'off' : 'default',
         refreshEveryFrames: REFRESH_EVERY_FRAMES,
         scenes: activeSceneLine(game),
         runLive: inRun,
@@ -276,7 +280,12 @@ export function mountPerfOverlay(game: Phaser.Game): void {
   )
   bar.appendChild(
     button(msaaDisabled(location.search) ? 'MSAA: off → on' : 'MSAA: on → off', () => {
-      location.search = toggledMsaaSearch(location.search)
+      location.search = toggledFlagSearch(location.search, MSAA_FLAG)
+    }),
+  )
+  bar.appendChild(
+    button(mipsDisabled(location.search) ? 'mips: off → on' : 'mips: on → off', () => {
+      location.search = toggledFlagSearch(location.search, MIPS_FLAG)
     }),
   )
   bar.appendChild(

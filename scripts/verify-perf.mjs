@@ -22,7 +22,7 @@ import {
   percentile,
   summarise,
 } from '../src/perf/frameStats.ts'
-import { MSAA_FLAG, PERF_FLAG, msaaDisabled, perfRequested, toggledMsaaSearch } from '../src/perf/perfFlags.ts'
+import { MIPS_FLAG, MSAA_FLAG, PERF_FLAG, mipsDisabled, msaaDisabled, perfRequested, toggledFlagSearch, toggledMsaaSearch } from '../src/perf/perfFlags.ts'
 
 let passed = 0
 function check(name, fn) {
@@ -244,6 +244,19 @@ check('?perf=1 mounts and nothing else does; ?msaa=0 disables and the toggle fli
   assert.equal(msaaDisabled(on), false)
   assert.equal(perfRequested(on), true)
   assert.equal(toggledMsaaSearch('?msaa=0'), '', 'the only flag removed leaves an empty search, not a bare ?')
+
+  // The mipmap flag is the same shape on its own key, and the two flags do not disturb each other:
+  // a page that has switched MSAA off and then switches mipmaps off is asking for both.
+  assert.equal(MIPS_FLAG, 'mips')
+  assert.equal(mipsDisabled('?perf=1&mips=0'), true)
+  assert.equal(mipsDisabled('?perf=1'), false)
+  const both = toggledFlagSearch('?perf=1&msaa=0', MIPS_FLAG)
+  assert.equal(mipsDisabled(both), true)
+  assert.equal(msaaDisabled(both), true)
+  assert.equal(perfRequested(both), true)
+  const mipsBack = toggledFlagSearch(both, MIPS_FLAG)
+  assert.equal(mipsDisabled(mipsBack), false)
+  assert.equal(msaaDisabled(mipsBack), true, 'flipping mips back on flipped MSAA too')
 })
 
 check('the overlay is referenced from main.ts only inside the DEV-or-perf branch, and the build guard forbids its id', () => {
