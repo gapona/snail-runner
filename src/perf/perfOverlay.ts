@@ -28,7 +28,7 @@
  */
 import type * as Phaser from 'phaser'
 import { FrameStats, LONG_FRAME_MS, DROPPED_FRAME_MS, type FrameStatsSnapshot } from './frameStats'
-import { MIPS_FLAG, MSAA_FLAG, mipsDisabled, msaaDisabled, toggledFlagSearch } from './perfFlags'
+import { MIPS_FLAG, MSAA_FLAG, mipsRequested, msaaDisabled, toggledFlagSearch, toggledOptInSearch } from './perfFlags'
 
 /** The element id, and the literal `check-bundle.mjs` forbids in a production build. */
 export const OVERLAY_ID = 'snail-perf-overlay'
@@ -60,9 +60,9 @@ export const REPORT_PATH = '__perf'
  */
 export function applyPerfRenderFlags(config: Phaser.Types.Core.GameConfig, search: string): void {
   if (msaaDisabled(search)) config.render = { ...config.render, antialiasGL: false }
-  // An empty `mipmapFilter` is Phaser's own "no mipmaps": `WebGLTextureWrapper.resize` falls back
-  // to `LINEAR`, and `generateMipmap` returns before touching GL.
-  if (mipsDisabled(search)) config.render = { ...config.render, mipmapFilter: '' }
+  // The shipped config has no mipmap filter (see `config.ts` for the phone that broke on one);
+  // this puts the one the atlas round used back, to ask the next device the same question.
+  if (mipsRequested(search)) config.render = { ...config.render, mipmapFilter: 'LINEAR_MIPMAP_LINEAR' }
 }
 
 interface Memory {
@@ -248,7 +248,7 @@ export function mountPerfOverlay(game: Phaser.Game): void {
         device,
         userAgent: navigator.userAgent,
         msaaFlag: msaaDisabled(location.search) ? 'off' : 'default',
-        mipsFlag: mipsDisabled(location.search) ? 'off' : 'default',
+        mipsFlag: mipsRequested(location.search) ? 'on' : 'default',
         refreshEveryFrames: REFRESH_EVERY_FRAMES,
         scenes: activeSceneLine(game),
         runLive: inRun,
@@ -284,8 +284,8 @@ export function mountPerfOverlay(game: Phaser.Game): void {
     }),
   )
   bar.appendChild(
-    button(mipsDisabled(location.search) ? 'mips: off → on' : 'mips: on → off', () => {
-      location.search = toggledFlagSearch(location.search, MIPS_FLAG)
+    button(mipsRequested(location.search) ? 'mips: on → off' : 'mips: off → on', () => {
+      location.search = toggledOptInSearch(location.search, MIPS_FLAG)
     }),
   )
   bar.appendChild(

@@ -22,7 +22,7 @@ import {
   percentile,
   summarise,
 } from '../src/perf/frameStats.ts'
-import { MIPS_FLAG, MSAA_FLAG, PERF_FLAG, mipsDisabled, msaaDisabled, perfRequested, toggledFlagSearch, toggledMsaaSearch } from '../src/perf/perfFlags.ts'
+import { MIPS_FLAG, MSAA_FLAG, PERF_FLAG, mipsRequested, msaaDisabled, perfRequested, toggledOptInSearch, toggledMsaaSearch } from '../src/perf/perfFlags.ts'
 
 let passed = 0
 function check(name, fn) {
@@ -245,18 +245,30 @@ check('?perf=1 mounts and nothing else does; ?msaa=0 disables and the toggle fli
   assert.equal(perfRequested(on), true)
   assert.equal(toggledMsaaSearch('?msaa=0'), '', 'the only flag removed leaves an empty search, not a bare ?')
 
-  // The mipmap flag is the same shape on its own key, and the two flags do not disturb each other:
-  // a page that has switched MSAA off and then switches mipmaps off is asking for both.
+  // The mipmap flag is OPT-IN — the game ships without mipmaps — and the two flags do not disturb
+  // each other: a page that has switched MSAA off and then switches mipmaps on is asking for both.
   assert.equal(MIPS_FLAG, 'mips')
-  assert.equal(mipsDisabled('?perf=1&mips=0'), true)
-  assert.equal(mipsDisabled('?perf=1'), false)
-  const both = toggledFlagSearch('?perf=1&msaa=0', MIPS_FLAG)
-  assert.equal(mipsDisabled(both), true)
+  assert.equal(mipsRequested('?perf=1&mips=1'), true)
+  assert.equal(mipsRequested('?perf=1'), false, 'mipmaps are off unless asked for')
+  assert.equal(mipsRequested('?perf=1&mips=0'), false)
+  const both = toggledOptInSearch('?perf=1&msaa=0', MIPS_FLAG)
+  assert.equal(mipsRequested(both), true)
   assert.equal(msaaDisabled(both), true)
   assert.equal(perfRequested(both), true)
-  const mipsBack = toggledFlagSearch(both, MIPS_FLAG)
-  assert.equal(mipsDisabled(mipsBack), false)
-  assert.equal(msaaDisabled(mipsBack), true, 'flipping mips back on flipped MSAA too')
+  const mipsBack = toggledOptInSearch(both, MIPS_FLAG)
+  assert.equal(mipsRequested(mipsBack), false)
+  assert.equal(msaaDisabled(mipsBack), true, 'flipping mips back off flipped MSAA too')
+})
+
+check('the shipped config has no mipmap filter, because a phone GPU drew distant coins as black squares', () => {
+  // A Mali-G57 under Chrome's WebGL1 sampled the lower mip levels as an opaque black square with a
+  // green line through it, while level 0 was right. The chain's content is not the cause — the sheet
+  // box-filtered offline keeps the coin gold down to 1x1 — so `generateMipmap` is wrong on that GPU
+  // and the only sampling correct everywhere is level 0. Held by reading the file, because
+  // `config.ts` imports `phaser` as a value.
+  const config = readFileSync(new URL('../src/config.ts', import.meta.url), 'utf8')
+  assert.match(config, /mipmapFilter: ''/, "config.ts: the mipmap filter came back; distant coins draw as black squares on Mali")
+  assert.doesNotMatch(config, /mipmapFilter: '[A-Z_]+MIPMAP/, 'config.ts: a mipmap min filter is set')
 })
 
 check('the overlay is referenced from main.ts only inside the DEV-or-perf branch, and the build guard forbids its id', () => {

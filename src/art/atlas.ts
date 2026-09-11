@@ -21,6 +21,10 @@ import type * as Phaser from 'phaser'
  * calls. And a power-of-two sheet is the only thing this renderer generates mipmaps for — every
  * trimmed NPOT sprite was sampled from its full-size texture at a few pixels wide, which is both
  * the shimmer at the horizon and a cache miss per texel on a phone.
+ *
+ * **⚠ The mipmaps are switched off again** (`config.ts`): a Mali phone drew distant coins as black
+ * squares from the lower levels. The sheet stays power-of-two and padded, so the day a chain that
+ * is correct on every device returns, nothing here has to move.
  */
 export const ATLAS_KEY = 'world'
 

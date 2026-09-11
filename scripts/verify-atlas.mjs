@@ -103,15 +103,16 @@ check('every key the game declares is a frame, so no fallback is drawn over ship
   console.log(`      ${declared.length} declared keys, all present`)
 })
 
-check('the build drops exactly the packed source folders from dist, and the sheet gets mipmaps', () => {
+check('the build drops exactly the packed source folders from dist', () => {
   const vite = readFileSync(path.join(ROOT, 'vite.config.ts'), 'utf8')
   const m = vite.match(/ATLAS_SOURCE_FOLDERS = \[([^\]]+)\]/)
   assert.ok(m, 'vite.config.ts: ATLAS_SOURCE_FOLDERS not found')
   const folders = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]).sort()
   assert.deepEqual(folders, Object.keys(FOLDERS).sort(), 'vite drops a different set of folders than the packer reads')
   assert.ok(vite.includes('dropAtlasSources()'), 'vite.config.ts: the drop plugin is not registered')
-  const config = readFileSync(path.join(ROOT, 'src', 'config.ts'), 'utf8')
-  assert.match(config, /mipmapFilter: 'LINEAR_MIPMAP_LINEAR'/, 'config.ts: the sheet is POT so that it can carry mipmaps; turn them on')
+  // The sheet is still power-of-two so that it CAN carry mipmaps, and the game ships without them:
+  // a Mali phone drew distant coins as black squares from the lower levels. `verify:perf` holds
+  // that line in `config.ts`; the padding above is kept for the day a device-safe chain returns.
 })
 
 console.log(`${passed} checks passed`)
