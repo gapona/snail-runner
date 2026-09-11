@@ -136,7 +136,7 @@ function renderCompact(stats: FrameStatsSnapshot): string {
   return `wall ${stats.wall.p50.toFixed(1)}/${stats.wall.p90.toFixed(1)}/${stats.wall.p99.toFixed(1)}  cpu ${stats.cpu.p50.toFixed(1)}/${stats.cpu.p90.toFixed(1)}/${stats.cpu.p99.toFixed(1)}  long ${share.toFixed(1)}%${ovl}`
 }
 
-function renderText(device: DeviceInfo, stats: FrameStatsSnapshot, sceneLine: string, previous: string | null): string {
+function renderText(device: DeviceInfo, label: string, stats: FrameStatsSnapshot, sceneLine: string, other: string | null): string {
   const share = stats.frames > 0 ? ((100 * stats.long) / stats.frames).toFixed(1) : '0.0'
   const phase = stats.longPhase
   const overlayLine = phase
@@ -145,14 +145,14 @@ function renderText(device: DeviceInfo, stats: FrameStatsSnapshot, sceneLine: st
   return [
     `${device.frame}  ${device.renderer}  ${device.samples}`,
     device.gpu,
-    `        p50    p90    p99    max   (n ${stats.wall.n})`,
+    `${label.padEnd(8).slice(0, 8)}p50    p90    p99    max   (n ${stats.wall.n})`,
     `wall  ${ms(stats.wall.p50)}  ${ms(stats.wall.p90)}  ${ms(stats.wall.p99)}  ${ms(stats.wall.max)}`,
     `cpu   ${ms(stats.cpu.p50)}  ${ms(stats.cpu.p90)}  ${ms(stats.cpu.p99)}  ${ms(stats.cpu.max)}`,
     `long >${LONG_FRAME_MS}ms ${stats.long}/${stats.frames} (${share}%)   >${DROPPED_FRAME_MS}ms ${stats.dropped}   skipped ${stats.skipped}`,
     overlayLine,
     `heap ${mb(stats.heapBytes)}  peak ${mb(stats.heapPeakBytes)}  gc ${stats.gcs ?? 'n/a'}  biggest drop ${mb(stats.gcLargestDropBytes)}`,
     sceneLine,
-    previous ?? '',
+    other ?? '',
   ]
     .filter((line) => line !== '')
     .join('\n')
@@ -191,7 +191,16 @@ function copyThroughTextarea(area: HTMLTextAreaElement): boolean {
 export function mountPerfOverlay(game: Phaser.Game): void {
   if (document.getElementById(OVERLAY_ID)) return
 
-  const stats = new FrameStats(undefined, REFRESH_EVERY_FRAMES)
+  // **Two windows, and neither resets by itself.** `session` runs from mount to `reset`. `run`
+  // starts over when `RunScene` becomes the only active scene and freezes when it stops being —
+  // the pause dialog, the result panel and the menu all take it out of the active set — so "what
+  // did the last run measure" is a whole snapshot that survives every screen after it. The first
+  // version reset one window on every scene change and kept the ended one as a line; both
+  // readings the phone sent back had `n 1` and `n 11`, taken a second after a change, with the
+  // run's own numbers already overwritten by the panel's.
+  const session = new FrameStats(undefined, REFRESH_EVERY_FRAMES)
+  const run = new FrameStats(undefined, REFRESH_EVERY_FRAMES)
+  let inRun = false
 
   const root = document.createElement('div')
   root.id = OVERLAY_ID
@@ -226,12 +235,8 @@ export function mountPerfOverlay(game: Phaser.Game): void {
   // `new Phaser.Game(...)`, when the scale manager has no size yet and the WebGL context does not
   // exist. Both are there by the time a frame has rendered.
   let device: DeviceInfo | null = null
-  let lastSnapshot: FrameStatsSnapshot = stats.snapshot()
-  // The window is reset whenever the set of active scenes changes, so a run's numbers are the
-  // run's and not the menu's plus the result panel's — and the window that just ended is kept as
-  // one line, which is how "what did the run measure" survives the result panel replacing it.
-  let sceneKey = ''
-  let previous: string | null = null
+  let lastSnapshot: FrameStatsSnapshot = session.snapshot()
+  let lastRun: FrameStatsSnapshot = run.snapshot()
 
   const report = (): string =>
     JSON.stringify(
@@ -242,8 +247,9 @@ export function mountPerfOverlay(game: Phaser.Game): void {
         msaaFlag: msaaDisabled(location.search) ? 'off' : 'default',
         refreshEveryFrames: REFRESH_EVERY_FRAMES,
         scenes: activeSceneLine(game),
-        previousWindow: previous,
-        stats: lastSnapshot,
+        runLive: inRun,
+        run: lastRun,
+        session: lastSnapshot,
       },
       null,
       2,
@@ -262,8 +268,9 @@ export function mountPerfOverlay(game: Phaser.Game): void {
   bar.style.cssText = 'display: none; flex-wrap: wrap; margin-top: 6px;'
   bar.appendChild(
     button('reset', () => {
-      stats.reset()
-      previous = null
+      session.reset()
+      run.reset()
+      inRun = false
       area.style.display = 'none'
     }),
   )
@@ -308,7 +315,11 @@ export function mountPerfOverlay(game: Phaser.Game): void {
 
   const draw = (): void => {
     if (device === null) return
-    pre.textContent = expanded ? renderText(device, lastSnapshot, activeSceneLine(game), previous) : renderCompact(lastSnapshot)
+    const haveRun = lastRun.frames > 0
+    const label = haveRun ? (inRun ? 'run' : 'last run') : 'session'
+    const shown = haveRun ? lastRun : lastSnapshot
+    const other = haveRun ? summaryLine('session', lastSnapshot) : null
+    pre.textContent = expanded ? renderText(device, label, shown, activeSceneLine(game), other) : `${label}: ${renderCompact(shown)}`
   }
   toggle.addEventListener('click', () => {
     expanded = !expanded
@@ -329,24 +340,24 @@ export function mountPerfOverlay(game: Phaser.Game): void {
   })
   game.events.on('postrender', () => {
     const now = performance.now()
+    const runNow = activeSceneKeys(game).join('+') === 'RunScene'
+    if (runNow && !inRun) run.reset()
+    inRun = runNow
     if (lastFrameStart >= 0 && frameStart >= 0) {
-      stats.push(frameStart - lastFrameStart, now - frameStart, readHeap(), sinceRefresh)
+      const wall = frameStart - lastFrameStart
+      const cpu = now - frameStart
+      const heap = readHeap()
+      session.push(wall, cpu, heap, sinceRefresh)
+      if (inRun) run.push(wall, cpu, heap, sinceRefresh)
     }
     lastFrameStart = frameStart
-
-    const key = activeSceneKeys(game).join('+')
-    if (key !== sceneKey) {
-      const ended = stats.snapshot()
-      if (sceneKey !== '' && ended.frames > 0) previous = summaryLine(`prev ${sceneKey}`, ended)
-      sceneKey = key
-      stats.reset()
-    }
 
     sinceRefresh += 1
     if (sinceRefresh < REFRESH_EVERY_FRAMES) return
     sinceRefresh = 0
     device ??= describeDevice(game)
-    lastSnapshot = stats.snapshot()
+    lastSnapshot = session.snapshot()
+    lastRun = run.snapshot()
     draw()
   })
 }
