@@ -125,6 +125,17 @@ function summaryLine(label: string, stats: FrameStatsSnapshot): string {
   return `${label}: wall ${stats.wall.p50.toFixed(1)}/${stats.wall.p90.toFixed(1)}/${stats.wall.p99.toFixed(1)}  cpu ${stats.cpu.p50.toFixed(1)}/${stats.cpu.p90.toFixed(1)}/${stats.cpu.p99.toFixed(1)}  long ${share.toFixed(1)}% of ${stats.frames}`
 }
 
+/**
+ * The collapsed view: one line, because the panel was reported as hiding the game. What survives
+ * is the pair of clocks and the two shares the next decision is taken on; everything else is a
+ * tap away.
+ */
+function renderCompact(stats: FrameStatsSnapshot): string {
+  const share = stats.frames > 0 ? (100 * stats.long) / stats.frames : 0
+  const ovl = stats.longPhase ? ` ovl ${pct(stats.longPhase.share)}` : ''
+  return `wall ${stats.wall.p50.toFixed(1)}/${stats.wall.p90.toFixed(1)}/${stats.wall.p99.toFixed(1)}  cpu ${stats.cpu.p50.toFixed(1)}/${stats.cpu.p90.toFixed(1)}/${stats.cpu.p99.toFixed(1)}  long ${share.toFixed(1)}%${ovl}`
+}
+
 function renderText(device: DeviceInfo, stats: FrameStatsSnapshot, sceneLine: string, previous: string | null): string {
   const share = stats.frames > 0 ? ((100 * stats.long) / stats.frames).toFixed(1) : '0.0'
   const phase = stats.longPhase
@@ -166,7 +177,7 @@ function button(label: string, onClick: (el: HTMLButtonElement) => void): HTMLBu
  * has the text in front of it.
  */
 function copyThroughTextarea(area: HTMLTextAreaElement): boolean {
-  area.hidden = false
+  area.style.display = 'block'
   area.focus()
   area.select()
   area.setSelectionRange(0, area.value.length)
@@ -187,13 +198,29 @@ export function mountPerfOverlay(game: Phaser.Game): void {
   // Fixed over the page rather than inside `#app`, and transparent to the pointer everywhere
   // except its controls: the game steers from wherever the finger is, and a panel that swallowed a
   // drag across it would be an instrument that changes what it measures.
+  // **Collapsed by default, because the full panel was reported as hiding the game.** Collapsed it
+  // is one 11px line and a `▸`; expanded it is the whole readout and the controls. Either way it
+  // sits at 34% down the frame — over the far road, which is the band with the least in it that a
+  // fixed screen-space strip can occupy on a portrait phone.
   root.style.cssText =
     'position: fixed; left: 0; top: 34%; z-index: 10; pointer-events: none;' +
-    ' background: rgba(0, 0, 0, 0.62); color: #dfe; padding: 6px 8px; max-width: 100vw; box-sizing: border-box;'
+    ' background: rgba(0, 0, 0, 0.5); color: #dfe; padding: 3px 6px; max-width: 100vw; box-sizing: border-box;'
+
+  const row = document.createElement('div')
+  row.style.cssText = 'display: flex; align-items: flex-start; gap: 6px;'
+  root.appendChild(row)
 
   const pre = document.createElement('pre')
-  pre.style.cssText = 'margin: 0 0 6px; font: 11px/1.35 monospace; white-space: pre; overflow-x: auto;'
-  root.appendChild(pre)
+  pre.style.cssText = 'margin: 0; font: 11px/1.35 monospace; white-space: pre; overflow-x: auto; flex: 1 1 auto;'
+  const toggle = document.createElement('button')
+  toggle.textContent = '▸'
+  toggle.style.cssText =
+    'font: 14px/1 monospace; padding: 2px 8px; margin: 0; background: #223; color: #cde; border: 1px solid #58a;' +
+    ' border-radius: 4px; pointer-events: auto; touch-action: manipulation; flex: 0 0 auto;'
+  row.appendChild(toggle)
+  row.appendChild(pre)
+
+  let expanded = false
 
   // Read on the first refresh, not at mount: `mountPerfOverlay` runs on the line after
   // `new Phaser.Game(...)`, when the scale manager has no size yet and the WebGL context does not
@@ -224,18 +251,20 @@ export function mountPerfOverlay(game: Phaser.Game): void {
 
   const area = document.createElement('textarea')
   area.readOnly = true
-  area.hidden = true
+  // `display` is toggled inline rather than through `hidden`: an inline `display: block` here
+  // would override the UA stylesheet's `[hidden] { display: none }`, which is exactly how the bar
+  // and this textarea first shipped visible on a panel that said they were hidden.
   area.style.cssText =
-    'display: block; width: min(92vw, 520px); height: 120px; font: 10px monospace; pointer-events: auto;' +
+    'display: none; width: min(92vw, 520px); height: 120px; font: 10px monospace; pointer-events: auto;' +
     ' background: #111; color: #cde; border: 1px solid #58a; margin-top: 6px;'
 
   const bar = document.createElement('div')
-  bar.style.cssText = 'display: flex; flex-wrap: wrap;'
+  bar.style.cssText = 'display: none; flex-wrap: wrap; margin-top: 6px;'
   bar.appendChild(
     button('reset', () => {
       stats.reset()
       previous = null
-      area.hidden = true
+      area.style.display = 'none'
     }),
   )
   bar.appendChild(
@@ -277,6 +306,18 @@ export function mountPerfOverlay(game: Phaser.Game): void {
   root.appendChild(area)
   document.body.appendChild(root)
 
+  const draw = (): void => {
+    if (device === null) return
+    pre.textContent = expanded ? renderText(device, lastSnapshot, activeSceneLine(game), previous) : renderCompact(lastSnapshot)
+  }
+  toggle.addEventListener('click', () => {
+    expanded = !expanded
+    toggle.textContent = expanded ? '▾' : '▸'
+    bar.style.display = expanded ? 'flex' : 'none'
+    if (!expanded) area.style.display = 'none'
+    draw()
+  })
+
   let frameStart = -1
   let lastFrameStart = -1
   // Frames since the text was last written. `0` is the frame whose wall interval contains the
@@ -306,6 +347,6 @@ export function mountPerfOverlay(game: Phaser.Game): void {
     sinceRefresh = 0
     device ??= describeDevice(game)
     lastSnapshot = stats.snapshot()
-    pre.textContent = renderText(device, lastSnapshot, activeSceneLine(game), previous)
+    draw()
   })
 }
