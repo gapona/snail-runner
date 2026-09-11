@@ -41,7 +41,7 @@ import { groundPointInto, type GroundPoint } from './groundProjection'
 import { distanceIndexOf, WORLD_LAYER, worldDepth } from './worldDepth'
 import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowClipFade, shadowScale } from './shadows'
 import { createShadow } from './shadowArt'
-import { hasArt, setArt } from '../art/atlas'
+import { addArtImage, hasArt, setArt } from '../art/atlas'
 import { hidePooled, showPooled } from './pooled'
 
 /**
@@ -135,11 +135,11 @@ export class CritterSprites {
     this.slots = Array.from({ length: poolSize }, () => ({
       // Bottom centre, like every other billboard: a critter is positioned by the point where its
       // own band begins — the road for a beetle, and 431 units of daylight up for a bee.
-      image: scene.add.image(0, 0, initialKey).setOrigin(0.5, 1).setVisible(false),
+      image: addArtImage(scene, initialKey).setOrigin(0.5, 1).setVisible(false),
       // Two wings per slot, allocated up front like everything else in this pool: an image created
       // later would miss the scene's camera `ignore()` lists, which are built at scene create, and
       // would be drawn twice. Hidden until a flyer needs them.
-      wings: [0, 1].map(() => scene.add.image(0, 0, initialKey).setVisible(false)) as [
+      wings: [0, 1].map(() => addArtImage(scene, initialKey).setVisible(false)) as [
         Phaser.GameObjects.Image,
         Phaser.GameObjects.Image,
       ],
@@ -148,7 +148,8 @@ export class CritterSprites {
       // is the only thing in the frame moving under its own power, so its shadow's size changes on
       // every frame of every crossing rather than only while something is airborne.
       shadow: createShadow(scene),
-      key: initialKey,
+      // Empty, never `initialKey`: see `addArtImage` for the black squares a primed cache drew.
+      key: '',
       cropped: false,
     }))
 

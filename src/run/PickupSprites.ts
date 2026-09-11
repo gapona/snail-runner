@@ -29,7 +29,7 @@ import {
 import { groundPointInto, type GroundPoint } from './groundProjection'
 import { createShadow } from './shadowArt'
 import { hidePooled, showPooled } from './pooled'
-import { setArt } from '../art/atlas'
+import { addArtImage, setArt } from '../art/atlas'
 
 /**
  * Every pickup on screen, from a fixed pool.
@@ -100,14 +100,15 @@ export class PickupSprites {
 
     this.slots = Array.from({ length: poolSize }, () => ({
       // Depth is set per object per frame, from distance — see `worldDepth.ts`.
-      image: scene.add.image(0, 0, initialKey).setOrigin(0.5, 1).setVisible(false),
+      image: addArtImage(scene, initialKey).setOrigin(0.5, 1).setVisible(false),
       // Multiply rather than a grey fill: see `SHADOW_DARKEN`. The colour is pure black at a
       // fraction of alpha, so what reaches the screen is the ground's own colour taken down.
       // An `Image` on the shared ellipse texture — see `shadowArt.ts`. This pool draws the most
       // shadows of the three, and was paying a 64-point tessellation plus an `Earcut` for each of
       // them on every frame.
       shadow: createShadow(scene),
-      key: initialKey,
+      // Empty, never `initialKey`: see `addArtImage` for the black squares a primed cache drew.
+      key: '',
       cropped: false,
     }))
 

@@ -14994,6 +14994,42 @@ picture change, now defensible with a phone number on each side. The measured-an
 the CPU side (the obstacle rim sheet, culling decor under 2px) is worth a tenth of a desktop
 millisecond against a `cpu` that already fits, and is not what the phone is waiting on.
 
+## ⚠ Distant Coins Were Black Squares, And It Was Never The Mipmaps
+
+`addArtImage` in `src/art/atlas.ts`, and one line in each of three pools. Reported from a Mali
+phone: **a coin far down the road drew as an opaque black square with a green line through it, and
+came right as it approached.**
+
+**A black square with a green line through it is Phaser's own `__MISSING` texture**, and the frame
+said so the moment it was reproduced on a desktop at the phone's 384x744 and queried: 53 of the
+pickup pool's 128 objects and 42 of the critter pool's 56 were on `__MISSING`.
+
+- **The atlas round turned three pools' constructors into placeholders.** `PickupSprites`,
+  `CritterSprites` and `RoadSprites` made every slot with `scene.add.image(0, 0, initialKey)` and
+  primed their "skip when the key has not changed" cache with the same `initialKey`. Before the
+  atlas that key was a texture; since, it is a *frame name*, so the image came back on `__MISSING`
+  — and the first placement of a slot on that very key (a coin, a beetle, the first decor prop)
+  found the cache already matching and never called `setArt`.
+- **Why only far away**: slots fill near to far, so the near ones cycle through every kind and are
+  corrected the first time they hold anything else. The far slots are the ones that had only ever
+  held a coin.
+- **Invisible on a desktop for the same reason**: a coin 4px wide at the horizon, and nothing any
+  `verify:` script could read — the pools import `phaser` as a value.
+- **Fixed on both halves**: `addArtImage` makes the slot on the art wherever it lives, and the cache
+  starts at `''`, so the first placement always calls `setArt` whatever the image was made on.
+  `verify:atlas` finds every module that calls `setArt` by search and rejects a bare
+  `scene.add.image(` or a `key: initialKey` in it, with the shipped shape as its control.
+- **⚠ It was first diagnosed as a broken mipmap chain**, shipped as a mipmaps-off commit and
+  reverted the same day. The evidence for that reading was a symptom (near fine, far wrong) that a
+  missing texture produces just as well, and the one measurement taken — the sheet box-filtered
+  offline, gold to 1x1 — was evidence *against* it that got read as evidence about the driver.
+  Mipmaps are back on. **The standing rule, paid again: reproduce it and look at the frame before
+  building a theory of a GPU nobody here can see.** The start-of-run lag that the mipmap theory also
+  claimed is unexplained; `?perf=1&mips=0` is still the flag that tests it.
+
+Verified in the running game at 384x744: over 440m of a run, **0 visible objects on
+`__MISSING`**, and 14 coins under 6px wide drawn as gold dots.
+
 ## Known Issues Fixed
 
 Bugs and gotchas hit and fixed while building the platform/save/audio layers — recorded so they don't get
@@ -15002,6 +15038,10 @@ index.
 
 App bugs:
 
+- **Distant coins (and critters, and the first decor prop) drew Phaser's `__MISSING` texture** —
+  three pools made their slots on a key that became a frame name with the atlas, and primed their
+  key cache with it. First misdiagnosed as broken mipmaps. → "Distant Coins Were Black Squares,
+  And It Was Never The Mipmaps"
 - **The world's 69 sprites were 69 textures and 69 requests**, none of them power-of-two and
   therefore none of them mipmapped, interleaved by depth through a 16-texture batch. Packed into one
   2048x4096 sheet: 91 -> 22 PNG requests at boot, `LINEAR_MIPMAP_LINEAR` on the sheet, and the draw

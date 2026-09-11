@@ -61,6 +61,27 @@ export function setArt(image: Phaser.GameObjects.Image, key: string): void {
   if (ref) image.setTexture(ref[0], ref[1])
 }
 
+/**
+ * An image made from a key wherever the key's pixels live — the constructor-time twin of `setArt`.
+ *
+ * **⚠ A pool may not make its slots with `scene.add.image(0, 0, key)`**, and three of them did.
+ * Since the atlas, a world key is a *frame name* and not a texture, so that call hands back an
+ * image on Phaser's `__MISSING` texture — a black square with a green line through it. The pools
+ * then primed their "skip when the key has not changed" cache with that same key, so the first
+ * placement of a slot on that key skipped `setArt` and drew the placeholder for as long as the slot
+ * held it. Slots fill near to far, so the ones that had never held anything else were the far ones:
+ * distant coins drew as black squares and came right close up. Reported from a phone, and diagnosed
+ * first as a broken mipmap chain.
+ *
+ * Paired with a cache that starts empty (`key: ''`), so the first placement always calls `setArt`
+ * whatever this image was made on. `verify:atlas` holds both halves by reading the pool files.
+ */
+export function addArtImage(scene: Phaser.Scene, key: string): Phaser.GameObjects.Image {
+  const ref = artRef(scene.textures, key)
+
+  return ref ? scene.add.image(0, 0, ref[0], ref[1]) : scene.add.image(0, 0, '__DEFAULT')
+}
+
 /** A frame's pixels: the element to draw from and the rectangle of it that is this key. */
 export interface ArtPixels {
   image: HTMLImageElement | HTMLCanvasElement

@@ -114,4 +114,32 @@ check('the build drops exactly the packed source folders from dist, and the shee
   assert.match(config, /mipmapFilter: 'LINEAR_MIPMAP_LINEAR'/, 'config.ts: the sheet is POT so that it can carry mipmaps; turn them on')
 })
 
+check('no pool makes its slots on a bare key or primes its key cache with one', () => {
+  // Since the atlas a world key is a frame name, so `scene.add.image(0, 0, key)` is an image on
+  // Phaser's `__MISSING` texture, and a cache primed with that same key skips the `setArt` that
+  // would have fixed it. Three pools did both, and distant coins drew as black squares with a green
+  // line through them. Held by reading the files, because the pools import `phaser` as a value.
+  const offences = (source) => {
+    const found = []
+    if (/add\s*\.image\(/.test(source)) found.push('scene.add.image(...) on a key -- use addArtImage')
+    if (/\bkey:\s*initialKey\b/.test(source)) found.push("key cache primed with initialKey -- start it at ''")
+    return found
+  }
+  // Every module that points a pool at a key through `setArt` is under the rule, found by search
+  // rather than listed, so a fourth pool cannot be added outside it.
+  const walk = (dir) =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk(path.join(dir, e.name)) : e.name.endsWith('.ts') ? [path.join(dir, e.name)] : [],
+    )
+  const pools = walk(path.join(ROOT, 'src')).filter((file) => /\bsetArt\(/.test(readFileSync(file, 'utf8')) && !file.endsWith(path.join('art', 'atlas.ts')))
+  assert.ok(pools.length >= 3, `found only ${pools.length} setArt pools -- the search has stopped finding them`)
+  for (const file of pools) {
+    assert.deepEqual(offences(readFileSync(file, 'utf8')), [], path.relative(ROOT, file))
+  }
+  // The control is the shape that shipped, so the matcher is shown to bite.
+  const shipped = "image: scene.add.image(0, 0, initialKey).setOrigin(0.5, 1),\n      key: initialKey,"
+  assert.equal(offences(shipped).length, 2, 'the check no longer rejects the pool that drew black squares')
+  console.log(`      ${pools.length} pools: ${pools.map((f) => path.basename(f, '.ts')).join(', ')}`)
+})
+
 console.log(`${passed} checks passed`)

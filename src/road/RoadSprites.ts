@@ -22,7 +22,7 @@ import { sceneryDepth } from '../run/worldDepth'
 import { getRoadTheme } from './themes'
 import type { RoadSprite, Segment } from './track'
 import { hidePooled, showPooled } from '../run/pooled'
-import { setArt } from '../art/atlas'
+import { addArtImage, setArt } from '../art/atlas'
 
 /** What one pool slot is currently showing, so a frame can skip work it does not need. */
 interface SlotState {
@@ -117,13 +117,13 @@ export class RoadSprites {
     const initialKey = textures[0].key
 
     this.slots = Array.from({ length: poolSize }, () => ({
-      image: scene.add
-        .image(0, 0, initialKey)
+      image: addArtImage(scene, initialKey)
         // Origin at the bottom centre: a billboard is positioned by the point where it meets
         // the ground, which is what the projection gives us.
         .setOrigin(0.5, 1)
         .setVisible(false),
-      key: initialKey,
+      // Empty, never `initialKey`: see `art/atlas.ts`'s `addArtImage` for what a primed cache drew.
+      key: '',
       cropped: false,
     }))
 
