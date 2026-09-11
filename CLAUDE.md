@@ -14797,7 +14797,7 @@ depth. Every world sprite — 50 decor props, 5 obstacles, 8 critter drawings, 7
 | distinct textures in a run frame | ~40 | 22 |
 | `drawElements` a frame | 12.8 | 11.1 |
 | `bindTexture` a frame | — | 18.7 |
-| sheet min filter | `LINEAR` (NPOT, no mips) | **`LINEAR_MIPMAP_LINEAR`** — ⚠ switched off again, see "Distant Coins Were Black Squares" |
+| sheet min filter | `LINEAR` (NPOT, no mips) | **`LINEAR_MIPMAP_LINEAR`** |
 | `renderer.render`, main camera | 0.348ms / 159 | 0.376ms / 164 |
 
 **The honest reading: the CPU number did not move, and three other things did.** The renderer's
@@ -14994,32 +14994,6 @@ picture change, now defensible with a phone number on each side. The measured-an
 the CPU side (the obstacle rim sheet, culling decor under 2px) is worth a tenth of a desktop
 millisecond against a `cpu` that already fits, and is not what the phone is waiting on.
 
-## Distant Coins Were Black Squares, And The Mipmaps Were Why
-
-`config.ts`'s `mipmapFilter`, now `''`. Reported from a Mali-G57 phone: **a coin far down the road
-drew as an opaque black square with a green line through it, and came right as it approached.**
-
-- **Near right and far wrong is a statement about mip levels.** Level 0 is what a close sprite
-  samples; the lower levels are what a small one does. Only the world sheet (2048x4096, power-of-two)
-  and the 128x128 shadow canvas carry a chain at all — every other texture here is NPOT.
-- **⚠ It is not the chain's content.** The shipped sheet box-filtered offline — premultiplied, which
-  is what `generateMipmap` computes — keeps the coin frame gold at every level down to 1x1
-  (rgb/alpha 190,136,38 at level 0, 164,120,62 at level 7), with its neighbours bleeding in only past
-  level 5 and never towards black. What the phone drew is therefore not in the chain the sheet would
-  produce: `generateMipmap` itself is wrong on that GPU under Chrome's WebGL1. Phaser's own order is
-  right (level 0 uploaded, then regenerated), so there is no engine hole to fix.
-- **So the only sampling correct on every device is level 0**, and the filter is empty — Phaser's own
-  "no mipmaps". What it removes as well: the one start-of-run GPU cost a phone pays and a desktop does
-  not (`generateMipmap` over 8 Mpx, the other half of the same report), and ~10.7MB of GPU memory.
-  What it costs is the minification shimmer at the horizon the atlas round bought off, i.e. the look
-  that shipped before it.
-- **The atlas stays, power-of-two and padded**, so a device-safe chain — levels built at pack time
-  and uploaded one by one, say — can come back without the sheet moving. `?perf=1&mips=1` turns the
-  filter back on for a test (the flag was `?mips=0` and is inverted now), and `verify:perf` holds the
-  empty filter by reading `config.ts`.
-- **Not verified on the phone yet**: nothing in this repository can see a Mali driver. The acceptance
-  is a frame from that phone with coins readable at range.
-
 ## Known Issues Fixed
 
 Bugs and gotchas hit and fixed while building the platform/save/audio layers — recorded so they don't get
@@ -15028,9 +15002,6 @@ index.
 
 App bugs:
 
-- **Distant coins drew as opaque black squares on a Mali phone** — `generateMipmap` on the world
-  sheet is wrong on that GPU; the chain's content is not (simulated offline, gold to 1x1). Mipmaps
-  off. → "Distant Coins Were Black Squares"
 - **The world's 69 sprites were 69 textures and 69 requests**, none of them power-of-two and
   therefore none of them mipmapped, interleaved by depth through a 16-texture batch. Packed into one
   2048x4096 sheet: 91 -> 22 PNG requests at boot, `LINEAR_MIPMAP_LINEAR` on the sheet, and the draw

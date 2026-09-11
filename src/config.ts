@@ -15,18 +15,13 @@ export const GameConfig: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   backgroundColor: '#028af8',
   render: {
-    // **⚠ No mipmaps, and that reverses the round that turned them on.** On a Mali-G57 under
-    // Chrome's WebGL1 a distant coin drew as an opaque black square with a green line through it
-    // and came right as it approached — i.e. the lower mip levels were wrong and level 0 was fine.
-    // It is not the chain's *content*: the shipped sheet box-filtered offline keeps the coin frame
-    // gold at every level down to 1x1. So `generateMipmap` itself produces garbage on that GPU, no
-    // engine hole was found (Phaser uploads level 0 and regenerates in the right order), and the
-    // only sampling correct on every device is level 0. Empty is Phaser's own "no mipmaps":
-    // `resize` falls back to `LINEAR` and `generateMipmap` returns before touching GL. It also
-    // removes the one start-of-run GPU cost a phone pays and a desktop does not, and ~10.7MB of
-    // GPU memory. What it costs is minification shimmer at the horizon, which is what shipped
-    // before the atlas. `?perf=1&mips=1` puts them back for a test; `verify:perf` holds this line.
-    mipmapFilter: '',
+    // **Mipmaps, which only the world sheet can take.** Phaser 4 generates them for power-of-two
+    // textures alone (`WebGLTextureWrapper` gates `generateMipmap` on `IsSizePowerOfTwo`), and
+    // every trimmed sprite is NPOT — so until `scripts/build-atlas.py` packed them into a 2048x4096
+    // sheet, a 384px prop drawn 4px wide at the horizon was sampled straight from its full-size
+    // texture: shimmer on screen, and a texture-cache miss per texel on a phone. Every NPOT texture
+    // in the game (sky plates, the palette, the HUD canvases) is unaffected by this line.
+    mipmapFilter: 'LINEAR_MIPMAP_LINEAR',
   },
   scale: {
     parent: 'app',

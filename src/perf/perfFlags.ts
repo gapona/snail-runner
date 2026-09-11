@@ -15,10 +15,11 @@
 export const PERF_FLAG = 'perf'
 export const MSAA_FLAG = 'msaa'
 /**
- * `?mips=1` turns the mipmap min filter back ON. It is opt-in because the game ships without one:
- * distant coins drew as an opaque black square on a Mali phone and came right up close, which is a
- * broken mip chain rather than a broken sprite (see `config.ts`). The flag exists so the next
- * device can be asked the same question without a rebuild.
+ * `?mips=0` builds without a mipmap min filter, i.e. the world sheet sampled from level 0 alone.
+ * The second phone report was coins drawn as an opaque black square for the first seconds of a
+ * run and then fine — which is what WebGL1 draws for a texture whose mipmap chain is not complete,
+ * and `generateMipmap` on a 2048x4096 sheet is also the one start-of-run cost a phone GPU pays
+ * that a desktop does not. One flag tests both halves at once.
  */
 export const MIPS_FLAG = 'mips'
 
@@ -33,20 +34,10 @@ export function msaaDisabled(search: string): boolean {
   return value === '0' || value === 'false'
 }
 
-/** `true` when `?mips=1` asks for the mipmap chain the shipped config leaves off. */
-export function mipsRequested(search: string): boolean {
+/** `true` when `?mips=0` asks for the world sheet without a mipmap chain. */
+export function mipsDisabled(search: string): boolean {
   const value = new URLSearchParams(search).get(MIPS_FLAG)
-  return value === '1' || value === 'true'
-}
-
-/** The search string that flips one opt-in (`=1`) flag and keeps every other. */
-export function toggledOptInSearch(search: string, flag: string): string {
-  const params = new URLSearchParams(search)
-  const value = params.get(flag)
-  if (value === '1' || value === 'true') params.delete(flag)
-  else params.set(flag, '1')
-  const out = params.toString()
-  return out ? `?${out}` : ''
+  return value === '0' || value === 'false'
 }
 
 /**
