@@ -164,6 +164,17 @@ Do not restore behaviour from them, and do not take a "⚠" in one of them as a 
   everything except the draw, is **Node**: `stepRun`, `stepPlayer`, `stepCritters`, every collision and
   the whole lap build are `phaser`-free by the rule every `verify:*` script is under. See “The Frame
   That Drops Once A Lap”.
+- `npm run build:perf` / `npm run preview:perf` — **the shipped build with one instrument in it.**
+  `--mode perf` into `dist-perf/` (no guards, never zipped), served on the LAN at port 8081; open
+  `http://<this machine's IP>:8081/?perf=1` on the phone and the frame-time overlay is on screen,
+  `&msaa=0` for the same build without multisampling. See "The Instrument Goes On The Phone".
+- `npm run verify:perf` — `src/perf/frameStats.ts` and `perfFlags.ts`, the overlay's pure half:
+  nearest-rank percentiles return a frame a player actually had, the warm-up after a mount or a
+  reset is discarded, a backgrounded tab's multi-second delta is not a frame, long and dropped
+  frames are counted against the two vsync thresholds, a heap drop is a collection and a page
+  with no heap reads `n/a`, and `?perf=1`/`?msaa=0` mean what they say. Also asserts by reading
+  the source that `main.ts` reaches the overlay only through the DEV-or-perf gate and that
+  `check-bundle.mjs` forbids its element id.
 - `npm run verify:player` — the player module, motion **and death**: `playerDeath.ts`'s wreck (the
   run does not end on the frame the last life goes, a second fatal hit neither restarts it nor ends
   the run twice, the swell and the fade ease opposite ways, and the flash is over before the panel
@@ -14850,6 +14861,98 @@ bundle unreferenced. The packer packs the folder, so the check saw it. Deleted, 
 **Not verified: how the mipmapped far field reads on a real phone.** The frame was looked at on the
 harness at 375x667 and nothing is wrong with it, but the horizon there is a few dozen pixels of a
 downscaled screenshot, which is not a judgement about shimmer.
+
+## The Instrument Goes On The Phone
+
+`src/perf/frameStats.ts` + `perfFlags.ts` (pure, `npm run verify:perf`), `src/perf/perfOverlay.ts`,
+`npm run build:perf` / `preview:perf`. The seventh perf round, and it measures nothing: it is the
+instrument every one of the six before it was missing.
+
+**Every round so far was measured on a desktop, and every one of them carried the same guess — "a
+phone runs this JS four to six times slower" — that nobody had checked.** The browser harness
+cannot check it: a tab driven by automation is hidden, rAF never fires, a hand-stepped loop measures
+GPU backpressure rather than work, and page-side timers are throttled to about 1Hz. Node can measure
+everything before the draw and nothing of the draw. The one place a phone's frame time is honest is
+on the phone, in the shipped build, with the game running — so the instrument lives in the game and
+puts its numbers on the screen, where a screenshot or a `copy JSON` carries them off.
+
+### What it shows, and the pair of clocks that is the point
+
+```
+375x667 @3.0  WebGL1  MSAA 4x
+Adreno (TM) 619
+        p50    p90    p99    max   (n 600)
+wall   16.7   17.1   33.4   51.2
+cpu     3.1    4.8    9.7   22.0
+long >25ms 7/1203 (0.6%)   >33ms 2   skipped 60
+heap 38.2MB  peak 41.0MB  gc 4  biggest drop 7.4MB
+RunScene:164
+```
+
+- **`wall`** is `PRE_STEP` to the next `PRE_STEP` — the presentation cadence, 16.7 on a 60Hz phone
+  until a frame drops and then 33. **`cpu`** is `PRE_STEP` to `POST_RENDER` — what the game itself
+  spent, which is every number the previous rounds ever measured. **`wall − cpu` is the browser,
+  the GPU and idle.** A wall tail over a flat cpu is a GPU-bound or thermally throttled device and
+  no amount of model work reaches it; a wall tail that tracks cpu is the game's own, which is what
+  six rounds assumed. That split is the first thing the next round should read.
+- **Nearest-rank percentiles, over a rolling 600-frame window.** A percentile is a frame a player
+  actually saw, never an interpolation between two of them — and `verify:perf` records the
+  consequence: on 100 samples one hitch is the `max` and not the p99, two hitches are the p99.
+- **`long` is over 25ms, not 16.7**, because rAF timestamps jitter a millisecond or two around the
+  true cadence and a threshold at the cadence counts half of a smooth run as long. 25 sits between
+  one vsync and two, so a frame past it has certainly missed one; `>33ms` has missed two.
+- **`gc` is a heap drop of more than 1MB in one frame.** `performance.memory` is too coarse to read
+  an *allocation rate* off — the same code measured 6.8 and 26 KB/frame in consecutive windows —
+  but a collection is megabytes in one frame, which no quantisation hides. Chrome only; Safari
+  reads `n/a`, which is a different claim from `0` and is printed as one.
+- **The first 60 frames after a mount or a `reset` are discarded**, for `PERF_WARMUP_FRAMES`'
+  reason — a reading taken across a scene start once came back at 4.7ms median against a true 1.3,
+  and a guard in the instrument cannot be forgotten the way one in a habit can. A delta over 500ms
+  is a stall, not a frame: a backgrounded tab hands back one on the frame it returns, and counting
+  it would put a five-second "frame" at the top of every percentile for the next ten seconds.
+
+### It is DOM, it is absent from `dist/`, and MSAA is a reload
+
+- **A `<pre>` beside the canvas, not a Phaser scene.** An instrument drawn inside the frame it
+  measures is part of the measurement — a `Text` re-rendered four times a second is a canvas upload
+  the game does not otherwise make. The panel is `pointer-events: none` except its three buttons,
+  because the game steers from wherever the finger is and a panel that swallowed a drag across it
+  would be an instrument that changes what it measures.
+- **Gone from a production build by the mechanism `perfReport.ts` and `SteerTuner` established**:
+  `main.ts` references the module only inside `import.meta.env.DEV || import.meta.env.MODE ===
+  'perf'`, Vite folds both, the branch is dead and Rollup drops the module. `check-bundle.mjs` greps
+  `dist/` for the element id `snail-perf-overlay`, so "we gated it" and "it is gone" stay two
+  claims — confirmed: the literal is in `dist-perf/`'s bundle and absent from `dist/`'s.
+- **`build:perf` goes to `dist-perf/`, which no guard reads and `make-bundle.mjs` never zips.** A
+  perf build in `dist/` would be one `npm run bundle` away from a submission with an instrument in
+  it. `dropAtlasSources` had `dist` as a literal and now reads the resolved `outDir`, or the perf
+  build would have carried the atlas sources twice while deleting nothing from itself.
+- **⚠ The MSAA button reloads the page, and cannot do anything else.** `antialias` is a WebGL
+  context-creation attribute and the context is made once; the flag flips `render.antialiasGL`
+  before `new Phaser.Game(...)` and the button reloads with `?msaa=0` toggled and `perf=1` kept.
+  Only `antialiasGL`, never `antialias`: the latter is the texture filter, and switching that would
+  change every sprite's sampling rather than the one thing being asked about. Confirmed in the
+  running game: `SAMPLES` 4 → 0, the context reporting `antialias: false`, the world drawing
+  identically at both.
+- **The device line reads the scale manager and the GL context on the first refresh, not at
+  mount**, because `mountPerfOverlay` runs on the line after `new Phaser.Game(...)`, when neither
+  has a size or a context yet.
+
+### Harness note
+
+Under the automation harness `wall ≈ cpu` at half a millisecond, and that is the harness: a
+synchronous `loop.step` batch has no vsync between frames. The overlay's numbers on a desktop are
+worthless for the same reason the six rounds' were, and the instrument was checked here for its
+*mechanism* only — mounting, counting, the warm-up, the GC detector catching real collections, and
+both MSAA states drawing the world. **Starting `RunScene` before `Preloader` has handed over to
+`MainMenu` reproduces the two-worlds `glTexture` crash**, because the menu then starts on top of the
+run; the loader needs task-queue turns, so step in batches with a `setTimeout` between them and wait
+on `scene.isActive('MainMenu')` before the stop-and-start.
+
+**What comes next is the first number from a phone, and nothing else is worth doing until it
+arrives.** The measured-and-not-taken list — the obstacle rim sheet (~3 draw calls), culling decor
+under 2px, `antialias: false` as the one GPU lever — is a tenth of a millisecond of desktop and an
+unmeasured amount of phone, and the overlay is what says which.
 
 ## Known Issues Fixed
 

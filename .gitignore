@@ -9,6 +9,8 @@ yarn-error.log*
 .pnp.js
 
 /dist
+# `npm run build:perf` -- the shipped build with the ?perf=1 overlay in it, never zipped
+/dist-perf
 /build
 
 .vscode/*

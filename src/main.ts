@@ -8,6 +8,8 @@ import { init as initSaveStore, bindAutosave } from './save/store'
 import { init as initAudio } from './audio/audio'
 import { initLocale } from './i18n/strings'
 import { initDisplayFont, whenDisplayFontReady } from './ui/font'
+import { applyPerfRenderFlags, mountPerfOverlay } from './perf/perfOverlay'
+import { perfRequested } from './perf/perfFlags'
 
 /**
  * How long boot waits for the display face before starting without it.
@@ -80,11 +82,21 @@ setTheme({ colors: { ...UI_THEME_COLORS } })
 // outlive a theme, and a hand-edited one must not unlock anything.
 setRoadTheme(resolveSelectedTheme(getState().selectedTheme, getState().purchases))
 
+// **The on-device frame-time overlay, on `?perf=1`, and only in a build that carries it.** A
+// perf build (`npm run build:perf`, `--mode perf`) is the shipped artifact with one instrument in
+// it; a production build eliminates this whole branch and `check-bundle.mjs` greps `dist/` for the
+// overlay's element id to prove it. The dev server keeps it too, so the harness can drive it. Same
+// static-import-inside-a-dead-branch shape as `SteerTuner`, and for the same reason: gating the
+// call leaves the module in the bundle, gating the only reference tree-shakes it.
+const perfOverlay = (import.meta.env.DEV || import.meta.env.MODE === 'perf') && perfRequested(location.search)
+if (perfOverlay) applyPerfRenderFlags(GameConfig, location.search)
+
 const game = new Phaser.Game(GameConfig)
 bindPlatformEvents(game)
 bindGameplayPause(game)
 bindAutosave(game)
 initAudio(game)
+if (perfOverlay) mountPerfOverlay(game)
 
 declare global {
   interface Window {

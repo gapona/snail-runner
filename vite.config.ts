@@ -54,12 +54,19 @@ function inlineModuleLoader(): Plugin {
 export const ATLAS_SOURCE_FOLDERS = ['decor', 'obstacle', 'critter', 'pickup'] as const
 
 function dropAtlasSources(): Plugin {
+  // The resolved output folder rather than a literal `dist`: `npm run build:perf` builds into
+  // `dist-perf/`, and a plugin that always cleaned `dist/` would leave the perf build carrying its
+  // sources twice while deleting nothing from the folder it was asked to build.
+  let outDir = 'dist'
   return {
     name: 'drop-atlas-sources',
     apply: 'build',
+    configResolved(config) {
+      outDir = config.build.outDir
+    },
     closeBundle() {
       for (const folder of ATLAS_SOURCE_FOLDERS) {
-        rmSync(path.join('dist', 'assets', folder), { recursive: true, force: true })
+        rmSync(path.join(outDir, 'assets', folder), { recursive: true, force: true })
       }
     },
   }

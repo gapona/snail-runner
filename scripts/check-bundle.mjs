@@ -64,7 +64,13 @@ const PLACEHOLDER_MARKERS = ['placeholder', 'wip', 'draft', 'scratch', 'todo', '
  * presence would mean the DEV branch survived elimination and the *throwing* path is live in
  * production, which for `RoadMesh.writeQuad` would end the game over a strip of road.
  */
-const FORBIDDEN_DEV_LITERALS = ['RoadMesh.writeQuad overflow']
+const FORBIDDEN_DEV_LITERALS = [
+  'RoadMesh.writeQuad overflow',
+  // The `?perf=1` overlay's element id. Its module is referenced only inside an
+  // `import.meta.env.DEV || import.meta.env.MODE === 'perf'` branch in main.ts; a perf build goes
+  // to dist-perf/ and never through this guard, so the literal in dist/ means the branch survived.
+  'snail-perf-overlay',
+]
 
 /** Text files worth grepping. Anything else is treated as opaque. */
 const TEXT_EXTENSIONS = ['.js', '.mjs', '.cjs', '.html', '.css', '.json', '.txt', '.svg']
