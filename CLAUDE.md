@@ -14949,10 +14949,50 @@ both MSAA states drawing the world. **Starting `RunScene` before `Preloader` has
 run; the loader needs task-queue turns, so step in batches with a `setTimeout` between them and wait
 on `scene.isActive('MainMenu')` before the stop-and-start.
 
-**What comes next is the first number from a phone, and nothing else is worth doing until it
-arrives.** The measured-and-not-taken list — the obstacle rim sheet (~3 draw calls), culling decor
-under 2px, `antialias: false` as the one GPU lever — is a tenth of a millisecond of desktop and an
-unmeasured amount of phone, and the overlay is what says which.
+### ⚠ The first reading, and what it said about the instrument
+
+Mali-G57 MC2 (a mid-range Android), 384x744 at DPR 2.8, WebGL1, MSAA 4x, a 2.27km run:
+
+```
+        p50    p90    p99    max
+wall   17.1   37.6   44.5  105.2
+cpu     6.1    8.6   10.2  102.1
+long >25ms 516/5323 (9.7%)   >33ms 176
+heap 13.6MB (flat)  gc 0
+```
+
+- **The game's own work is not the tail.** `cpu` p99 is 10.2ms inside a 16.7ms budget, i.e. the
+  seven-times-slower-than-desktop guess was about right (0.8 → 6.1 at p50) and still leaves six
+  milliseconds. The tail is entirely `wall − cpu`: 10% of frames miss a vsync and 3.3% miss two
+  while the JS is done in under nine. That is a GPU, a compositor, or the instrument.
+- **⚠ And the instrument was a suspect, because 9.7% is close to 6.7%.** The overlay wrote a DOM
+  text node every 15 frames — one frame in fifteen — and a DOM write is a layout and a raster on
+  the browser's own thread, between two of the game's frames, exactly where `wall − cpu` lives.
+  Nothing in the numbers could tell that cost from the game's. So the refresh is one in 30 now,
+  and `PhaseHistogram` counts every long frame's phase against the refresh cycle: the overlay
+  prints the share landing in the two frames after a write beside the share a uniform spread
+  gives (`2/30`). A share far above it is the overlay's own and is subtracted before anything else
+  is believed; a share near it says the tail is real.
+- **`heap 13.6MB` for a whole run is Chrome for Android quantising `performance.memory`** to a
+  bucket, so `gc 0` there is blind rather than zero. The desktop reading is real (four collections
+  caught, 21MB drop). Recorded rather than fixed: there is no other heap probe a page can reach.
+- **The result panel was in the window.** `n 600` covers ten seconds, and the reading was taken
+  with `RunOver` up over a paused run. The window resets whenever the set of active scenes changes
+  now, and the window that just ended survives as a `prev RunScene: …` line — so what a run
+  measured is still on screen when the panel replaces it.
+- **`copy JSON` did nothing on the phone**, for two stacked reasons: a LAN `http://` page is not a
+  secure context and has no `navigator.clipboard`, and the fallback wrote the JSON into the panel,
+  which the next refresh overwrote 250ms later. It copies through a selectable textarea with
+  `execCommand` now — deprecated, and the one path that works outside a secure context inside a
+  user gesture. **And the path that actually gets a reading off the phone is `send`**: a POST to
+  `/__perf` on the same origin, which `vite.config.ts`'s `perfReportSink` answers on `preview:perf`
+  and writes to `perf-reports/<timestamp>.json`, gitignored.
+
+**What comes next is the phase share from a second run, and then MSAA.** If the overlay's share is
+near uniform, the tail belongs to the GPU or the compositor and the one lever is `&msaa=0` — a
+picture change, now defensible with a phone number on each side. The measured-and-not-taken list on
+the CPU side (the obstacle rim sheet, culling decor under 2px) is worth a tenth of a desktop
+millisecond against a `cpu` that already fits, and is not what the phone is waiting on.
 
 ## Known Issues Fixed
 

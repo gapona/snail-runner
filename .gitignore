@@ -11,6 +11,8 @@ yarn-error.log*
 /dist
 # `npm run build:perf` -- the shipped build with the ?perf=1 overlay in it, never zipped
 /dist-perf
+# JSON the overlay's `send` button POSTs to `npm run preview:perf` -- readings from a phone
+/perf-reports
 /build
 
 .vscode/*

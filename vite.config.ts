@@ -1,4 +1,4 @@
-import { rmSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
 
@@ -72,13 +72,43 @@ function dropAtlasSources(): Plugin {
   }
 }
 
+/**
+ * Where the `?perf=1` overlay's `send` button lands. A page served over LAN `http://` is not a
+ * secure context, so it has no `navigator.clipboard` and the JSON could not leave the phone; a
+ * POST to the same origin can. Preview only — `vite preview` is what `npm run preview:perf` runs —
+ * and the body goes to `perf-reports/<timestamp>.json`, gitignored. Nothing here reaches a build.
+ */
+function perfReportSink(): Plugin {
+  return {
+    name: 'perf-report-sink',
+    configurePreviewServer(server) {
+      server.middlewares.use('/__perf', (req, res, next) => {
+        if (req.method !== 'POST') return next()
+        let body = ''
+        req.on('data', (chunk: Buffer | string) => {
+          body += chunk
+        })
+        req.on('end', () => {
+          const dir = path.resolve('perf-reports')
+          mkdirSync(dir, { recursive: true })
+          const file = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}.json`)
+          writeFileSync(file, body)
+          console.log(`[perf] report saved: ${path.relative(process.cwd(), file)} (${body.length} bytes)`)
+          res.statusCode = 204
+          res.end()
+        })
+      })
+    },
+  }
+}
+
 export default defineConfig({
   // Playables does not host games at the domain root, so root-absolute asset paths
   // (Vite's default, e.g. `/assets/foo.js`) 404 there even though they work locally.
   // './' emits relative paths (`./assets/foo.js`) that resolve correctly regardless of
   // where the game is actually served from.
   base: './',
-  plugins: [inlineModuleLoader(), dropAtlasSources()],
+  plugins: [inlineModuleLoader(), dropAtlasSources(), perfReportSink()],
   server: {
     port: 8080,
     open: true,

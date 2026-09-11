@@ -16,6 +16,7 @@ import {
   FrameStats,
   GC_DROP_BYTES,
   LONG_FRAME_MS,
+  PhaseHistogram,
   STALL_MS,
   WARMUP_FRAMES,
   percentile,
@@ -173,6 +174,53 @@ check('a heap drop of more than GC_DROP_BYTES in one frame is a collection, and 
   const r = stats.snapshot()
   assert.equal(r.gcs, 0)
   assert.equal(r.heapPeakBytes, 20 * MB)
+})
+
+check('the phase histogram tells a long frame the overlay caused from one the game caused', () => {
+  // The overlay writes a DOM text node every `period` frames, and the frame whose wall interval
+  // holds that write is phase 0. Long frames piling into phases 0-1 are the instrument's own cost;
+  // long frames spread evenly are the game's. The report gives both the observed share and the
+  // uniform one, so the reader subtracts rather than guesses.
+  const period = 30
+  const clustered = new PhaseHistogram(period)
+  for (let i = 0; i < 20; i += 1) clustered.note(0)
+  for (let i = 0; i < 5; i += 1) clustered.note(1)
+  for (let i = 0; i < 5; i += 1) clustered.note(17)
+  let r = clustered.report()
+  assert.equal(r.total, 30)
+  assert.equal(r.expected, 2 / period)
+  assert.ok(Math.abs(r.share - 25 / 30) < 1e-12, 'a cluster in the two frames after a refresh was not reported as one')
+
+  const uniform = new PhaseHistogram(period)
+  for (let i = 0; i < 300; i += 1) uniform.note(i % period)
+  r = uniform.report()
+  assert.ok(Math.abs(r.share - r.expected) < 1e-12, 'a uniform spread does not read as uniform')
+
+  // Out-of-range phases are dropped rather than crashing or landing in a wrong bucket, and an
+  // empty histogram reports a share of 0 rather than NaN.
+  const guarded = new PhaseHistogram(period)
+  guarded.note(-1)
+  guarded.note(period)
+  guarded.note(1.5)
+  assert.equal(guarded.report().total, 0)
+  assert.equal(guarded.report().share, 0)
+
+  // Through FrameStats: only LONG frames are noted, at the phase they were pushed with, and a
+  // stats object built without a period reports null rather than an empty histogram.
+  const stats = warmed()
+  const withPhase = new FrameStats(FRAME_WINDOW, period)
+  for (let i = 0; i < WARMUP_FRAMES; i += 1) withPhase.push(16.7, 1, undefined, i % period)
+  withPhase.push(16.7, 1, undefined, 0) // short at phase 0: not noted
+  withPhase.push(40, 1, undefined, 0)
+  withPhase.push(40, 1, undefined, 1)
+  withPhase.push(40, 1, undefined, 12)
+  const p = withPhase.snapshot().longPhase
+  assert.ok(p)
+  assert.equal(p.total, 3)
+  assert.ok(Math.abs(p.share - 2 / 3) < 1e-12)
+  assert.equal(stats.snapshot().longPhase, null)
+  withPhase.reset()
+  assert.equal(withPhase.snapshot().longPhase.total, 0, 'a reset did not clear the histogram')
 })
 
 check('?perf=1 mounts and nothing else does; ?msaa=0 disables and the toggle flips it while keeping perf=1', () => {

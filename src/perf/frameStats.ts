@@ -89,9 +89,58 @@ export interface FrameStatsSnapshot {
   heapPeakBytes: number | null
   /** The biggest single-frame heap drop seen, or `null`. */
   gcLargestDropBytes: number | null
+  /** Where the long frames land against the overlay's own refresh cycle — see `PhaseHistogram`. */
+  longPhase: { share: number; expected: number; total: number } | null
 }
 
 const EMPTY: Percentiles = { p50: 0, p90: 0, p99: 0, max: 0, n: 0 }
+
+/**
+ * Where in a repeating cycle the long frames land — the check that the instrument is not the
+ * thing it is measuring.
+ *
+ * **The overlay updates a DOM text node every `REFRESH_EVERY_FRAMES` frames, and a DOM update is
+ * a layout and a raster on the browser's own thread, between two of the game's frames.** The first
+ * phone reading came back with 9.7% long frames against a refresh cadence that is 6.7% of frames,
+ * which is close enough to be the same number. A long frame that pays for the overlay lands in the
+ * one or two frames after a refresh; a long frame that is the game's own lands anywhere. So the
+ * phase of every long frame is counted, and the share in the first `k` phases is printed beside
+ * the `k / period` a uniform spread would give. A share far above it is the overlay's own cost and
+ * has to be subtracted before any number here is believed.
+ */
+export class PhaseHistogram {
+  readonly period: number
+  readonly counts: Uint32Array
+  private total = 0
+
+  constructor(period: number) {
+    this.period = period
+    this.counts = new Uint32Array(period)
+  }
+
+  note(phase: number): void {
+    if (!Number.isInteger(phase) || phase < 0 || phase >= this.period) return
+    this.counts[phase] += 1
+    this.total += 1
+  }
+
+  reset(): void {
+    this.counts.fill(0)
+    this.total = 0
+  }
+
+  /** The share of noted events in phases `0..k-1`, against the share a uniform spread gives. */
+  report(k = 2): { share: number; expected: number; total: number } {
+    const width = Math.min(k, this.period)
+    let inHead = 0
+    for (let i = 0; i < width; i += 1) inHead += this.counts[i]
+    return {
+      share: this.total === 0 ? 0 : inHead / this.total,
+      expected: width / this.period,
+      total: this.total,
+    }
+  }
+}
 
 /**
  * Nearest-rank percentile over an already sorted array: the smallest value such that at least
@@ -138,19 +187,26 @@ export class FrameStats {
   private heapPeak = 0
   private gcs = 0
   private gcLargestDrop = 0
+  private readonly longPhases: PhaseHistogram | null
 
-  constructor(window: number = FRAME_WINDOW) {
+  /**
+   * `refreshPeriod` is the overlay's own text-update cadence in frames, or `0` for a caller with
+   * no cycle to measure against; with it, every long frame's phase is counted.
+   */
+  constructor(window: number = FRAME_WINDOW, refreshPeriod = 0) {
     this.window = window
     this.wall = new Float64Array(window)
     this.cpu = new Float64Array(window)
+    this.longPhases = refreshPeriod > 0 ? new PhaseHistogram(refreshPeriod) : null
   }
 
   /**
    * One frame. `wallMs` is the delta since the previous frame's start; `cpuMs` is this frame's
    * own step-to-render duration. `heapBytes` is optional and, where the page cannot read it,
-   * simply never passed.
+   * simply never passed. `phase` is how many frames since the overlay last touched the DOM — `0`
+   * for the frame whose wall interval contains that update.
    */
-  push(wallMs: number, cpuMs: number, heapBytes?: number): void {
+  push(wallMs: number, cpuMs: number, heapBytes?: number, phase?: number): void {
     // The heap is read on every frame the page can read it, warm-up included: a collection during
     // warm-up is still a collection, and the peak is a property of the whole session.
     if (heapBytes !== undefined) this.noteHeap(heapBytes)
@@ -171,7 +227,10 @@ export class FrameStats {
     if (this.filled < this.window) this.filled += 1
 
     this.frames += 1
-    if (wallMs > LONG_FRAME_MS) this.long += 1
+    if (wallMs > LONG_FRAME_MS) {
+      this.long += 1
+      if (phase !== undefined) this.longPhases?.note(phase)
+    }
     if (wallMs > DROPPED_FRAME_MS) this.dropped += 1
   }
 
@@ -200,6 +259,7 @@ export class FrameStats {
     this.heapPeak = this.lastHeap >= 0 ? this.lastHeap : 0
     this.gcs = 0
     this.gcLargestDrop = 0
+    this.longPhases?.reset()
   }
 
   snapshot(): FrameStatsSnapshot {
@@ -216,6 +276,7 @@ export class FrameStats {
       heapBytes: this.heapSeen ? this.lastHeap : null,
       heapPeakBytes: this.heapSeen ? this.heapPeak : null,
       gcLargestDropBytes: this.heapSeen ? this.gcLargestDrop : null,
+      longPhase: this.longPhases ? this.longPhases.report() : null,
     }
   }
 }

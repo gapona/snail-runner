@@ -6,6 +6,14 @@
  * game does not otherwise make. A `<pre>` beside the canvas costs the game nothing, and it is the
  * game's cost this exists to report.
  *
+ * **⚠ And a DOM text update is not free either, which the first phone reading showed.** Every
+ * `REFRESH_EVERY_FRAMES` frames this writes a text node, and the browser lays it out and
+ * re-rasters the layer between two of the game's frames — on the browser's thread, outside `cpu`
+ * and inside `wall`. The refresh cadence is 1 in 30 frames and the first phone reading had 9.7%
+ * long frames, so the overlay's own share has to be *measured*, not assumed away: every long
+ * frame's phase against the refresh cycle is counted and the share landing right after a refresh
+ * is printed beside what a uniform spread would give. See `PhaseHistogram`.
+ *
  * **It is absent from the production bundle by the same mechanism `perfReport.ts` and
  * `SteerTuner` are.** `main.ts` references this module only inside an
  * `import.meta.env.DEV || import.meta.env.MODE === 'perf'` branch; Vite replaces both statically,
@@ -25,8 +33,22 @@ import { msaaDisabled, toggledMsaaSearch } from './perfFlags'
 /** The element id, and the literal `check-bundle.mjs` forbids in a production build. */
 export const OVERLAY_ID = 'snail-perf-overlay'
 
-/** Frames between two redraws of the text — a quarter of a second at 60Hz. */
-const REFRESH_EVERY_FRAMES = 15
+/**
+ * Frames between two redraws of the text — half a second at 60Hz.
+ *
+ * Was 15. Halved after the first phone reading, because the refresh is the one thing this overlay
+ * does that lands inside `wall`; the phase histogram says how much it costs, and a rarer refresh
+ * costs less of it while the numbers stay readable.
+ */
+const REFRESH_EVERY_FRAMES = 30
+
+/**
+ * Where a report is POSTed. `vite.config.ts`'s `perfReportSink` answers it on `npm run
+ * preview:perf` and writes the body to `perf-reports/`; a LAN `http://` page has no
+ * `navigator.clipboard` (not a secure context), so this is the path that actually gets a JSON off
+ * the phone. Relative, because the page is served at `./`.
+ */
+export const REPORT_PATH = '__perf'
 
 /**
  * Sets the WebGL context attributes the flags ask for. Must run before `new Phaser.Game(...)`,
@@ -45,7 +67,12 @@ interface Memory {
   usedJSHeapSize: number
 }
 
-/** `performance.memory` is Chrome-only and not in the lib types; absent on Safari and Firefox. */
+/**
+ * `performance.memory` is Chrome-only and not in the lib types; absent on Safari and Firefox.
+ * **On Chrome for Android it is quantised to a bucket** — the first phone reading sat at 13.6MB
+ * for a whole run — so the GC count there is blind rather than zero. Read anyway; the desktop
+ * reading is real and the snapshot says `n/a` where nothing is readable at all.
+ */
 function readHeap(): number | undefined {
   const memory = (performance as unknown as { memory?: Memory }).memory
   return memory?.usedJSHeapSize
@@ -59,7 +86,7 @@ interface DeviceInfo {
 }
 
 function describeDevice(game: Phaser.Game): DeviceInfo {
-  const frame = `${game.scale.width}x${game.scale.height} @${window.devicePixelRatio.toFixed(1)}`
+  const frame = `${Math.round(game.scale.width)}x${Math.round(game.scale.height)} @${window.devicePixelRatio.toFixed(1)}`
   const gl = (game.renderer as { gl?: WebGLRenderingContext }).gl
   if (!gl) return { frame, renderer: 'Canvas', samples: '-', gpu: '-' }
 
@@ -78,45 +105,87 @@ function mb(bytes: number | null): string {
   return bytes === null ? 'n/a' : `${(bytes / 1048576).toFixed(1)}MB`
 }
 
+function pct(value: number): string {
+  return `${(100 * value).toFixed(0)}%`
+}
+
+function activeSceneKeys(game: Phaser.Game): string[] {
+  return game.scene.getScenes(true).map((scene) => scene.scene.key)
+}
+
 function activeSceneLine(game: Phaser.Game): string {
   const scenes = game.scene.getScenes(true)
   if (scenes.length === 0) return 'scene -'
   return scenes.map((scene) => `${scene.scene.key}:${scene.children.length}`).join(' ')
 }
 
-function renderText(device: DeviceInfo, stats: FrameStatsSnapshot, sceneLine: string): string {
-  const pct = stats.frames > 0 ? ((100 * stats.long) / stats.frames).toFixed(1) : '0.0'
+/** One line summarising a window: what the previous scene's numbers were once the scene has moved on. */
+function summaryLine(label: string, stats: FrameStatsSnapshot): string {
+  const share = stats.frames > 0 ? (100 * stats.long) / stats.frames : 0
+  return `${label}: wall ${stats.wall.p50.toFixed(1)}/${stats.wall.p90.toFixed(1)}/${stats.wall.p99.toFixed(1)}  cpu ${stats.cpu.p50.toFixed(1)}/${stats.cpu.p90.toFixed(1)}/${stats.cpu.p99.toFixed(1)}  long ${share.toFixed(1)}% of ${stats.frames}`
+}
+
+function renderText(device: DeviceInfo, stats: FrameStatsSnapshot, sceneLine: string, previous: string | null): string {
+  const share = stats.frames > 0 ? ((100 * stats.long) / stats.frames).toFixed(1) : '0.0'
+  const phase = stats.longPhase
+  const overlayLine = phase
+    ? `overlay: ${pct(phase.share)} of long frames in the 2 after a refresh (uniform ${pct(phase.expected)}, n ${phase.total})`
+    : ''
   return [
     `${device.frame}  ${device.renderer}  ${device.samples}`,
     device.gpu,
     `        p50    p90    p99    max   (n ${stats.wall.n})`,
     `wall  ${ms(stats.wall.p50)}  ${ms(stats.wall.p90)}  ${ms(stats.wall.p99)}  ${ms(stats.wall.max)}`,
     `cpu   ${ms(stats.cpu.p50)}  ${ms(stats.cpu.p90)}  ${ms(stats.cpu.p99)}  ${ms(stats.cpu.max)}`,
-    `long >${LONG_FRAME_MS}ms ${stats.long}/${stats.frames} (${pct}%)   >${DROPPED_FRAME_MS}ms ${stats.dropped}   skipped ${stats.skipped}`,
+    `long >${LONG_FRAME_MS}ms ${stats.long}/${stats.frames} (${share}%)   >${DROPPED_FRAME_MS}ms ${stats.dropped}   skipped ${stats.skipped}`,
+    overlayLine,
     `heap ${mb(stats.heapBytes)}  peak ${mb(stats.heapPeakBytes)}  gc ${stats.gcs ?? 'n/a'}  biggest drop ${mb(stats.gcLargestDropBytes)}`,
     sceneLine,
-  ].join('\n')
+    previous ?? '',
+  ]
+    .filter((line) => line !== '')
+    .join('\n')
 }
 
-function button(label: string, onClick: () => void): HTMLButtonElement {
+function button(label: string, onClick: (el: HTMLButtonElement) => void): HTMLButtonElement {
   const el = document.createElement('button')
   el.textContent = label
   el.style.cssText =
-    'font: 12px monospace; padding: 6px 10px; margin: 0 6px 0 0; background: #223; color: #cde;' +
+    'font: 12px monospace; padding: 6px 10px; margin: 0 6px 6px 0; background: #223; color: #cde;' +
     ' border: 1px solid #58a; border-radius: 4px; pointer-events: auto; touch-action: manipulation;'
-  el.addEventListener('click', onClick)
+  el.addEventListener('click', () => onClick(el))
   return el
+}
+
+/**
+ * Copies to the clipboard on a LAN page, where `navigator.clipboard` does not exist.
+ *
+ * `execCommand('copy')` is deprecated and is also the only thing that works in a non-secure
+ * context, provided it runs inside the user's own gesture — which a click handler is. The textarea
+ * it copies from stays on screen afterwards, selectable, so a device where even that fails still
+ * has the text in front of it.
+ */
+function copyThroughTextarea(area: HTMLTextAreaElement): boolean {
+  area.hidden = false
+  area.focus()
+  area.select()
+  area.setSelectionRange(0, area.value.length)
+  try {
+    return document.execCommand('copy')
+  } catch {
+    return false
+  }
 }
 
 export function mountPerfOverlay(game: Phaser.Game): void {
   if (document.getElementById(OVERLAY_ID)) return
 
-  const stats = new FrameStats()
+  const stats = new FrameStats(undefined, REFRESH_EVERY_FRAMES)
 
   const root = document.createElement('div')
   root.id = OVERLAY_ID
   // Fixed over the page rather than inside `#app`, and transparent to the pointer everywhere
-  // except its buttons: the game steers from wherever the finger is, and a panel that swallowed a
+  // except its controls: the game steers from wherever the finger is, and a panel that swallowed a
   // drag across it would be an instrument that changes what it measures.
   root.style.cssText =
     'position: fixed; left: 0; top: 34%; z-index: 10; pointer-events: none;' +
@@ -131,44 +200,87 @@ export function mountPerfOverlay(game: Phaser.Game): void {
   // exist. Both are there by the time a frame has rendered.
   let device: DeviceInfo | null = null
   let lastSnapshot: FrameStatsSnapshot = stats.snapshot()
+  // The window is reset whenever the set of active scenes changes, so a run's numbers are the
+  // run's and not the menu's plus the result panel's — and the window that just ended is kept as
+  // one line, which is how "what did the run measure" survives the result panel replacing it.
+  let sceneKey = ''
+  let previous: string | null = null
 
   const report = (): string =>
     JSON.stringify(
       {
+        at: new Date().toISOString(),
         device,
         userAgent: navigator.userAgent,
         msaaFlag: msaaDisabled(location.search) ? 'off' : 'default',
-        stats: lastSnapshot,
+        refreshEveryFrames: REFRESH_EVERY_FRAMES,
         scenes: activeSceneLine(game),
+        previousWindow: previous,
+        stats: lastSnapshot,
       },
       null,
       2,
     )
 
+  const area = document.createElement('textarea')
+  area.readOnly = true
+  area.hidden = true
+  area.style.cssText =
+    'display: block; width: min(92vw, 520px); height: 120px; font: 10px monospace; pointer-events: auto;' +
+    ' background: #111; color: #cde; border: 1px solid #58a; margin-top: 6px;'
+
   const bar = document.createElement('div')
   bar.style.cssText = 'display: flex; flex-wrap: wrap;'
-  bar.appendChild(button('reset', () => stats.reset()))
+  bar.appendChild(
+    button('reset', () => {
+      stats.reset()
+      previous = null
+      area.hidden = true
+    }),
+  )
   bar.appendChild(
     button(msaaDisabled(location.search) ? 'MSAA: off → on' : 'MSAA: on → off', () => {
       location.search = toggledMsaaSearch(location.search)
     }),
   )
   bar.appendChild(
-    button('copy JSON', () => {
+    button('send', (el) => {
+      el.textContent = 'sending…'
+      fetch(REPORT_PATH, { method: 'POST', headers: { 'content-type': 'application/json' }, body: report() })
+        .then((res) => {
+          el.textContent = res.ok ? 'sent ✓' : `send failed (${res.status})`
+        })
+        .catch(() => {
+          el.textContent = 'send failed'
+        })
+    }),
+  )
+  bar.appendChild(
+    button('copy JSON', (el) => {
       const text = report()
-      // The clipboard API is refused outside a secure context, which a LAN http:// preview is not
-      // — the JSON then goes into the panel itself, where a long press selects it.
-      void navigator.clipboard?.writeText(text).catch(() => {
-        pre.textContent = text
-      })
-      if (!navigator.clipboard) pre.textContent = text
+      area.value = text
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(
+          () => {
+            el.textContent = 'copied ✓'
+          },
+          () => {
+            el.textContent = copyThroughTextarea(area) ? 'copied ✓' : 'select below'
+          },
+        )
+        return
+      }
+      el.textContent = copyThroughTextarea(area) ? 'copied ✓' : 'select below'
     }),
   )
   root.appendChild(bar)
+  root.appendChild(area)
   document.body.appendChild(root)
 
   let frameStart = -1
   let lastFrameStart = -1
+  // Frames since the text was last written. `0` is the frame whose wall interval contains the
+  // DOM update — the one that pays for it — which is what the phase histogram is keyed on.
   let sinceRefresh = 0
 
   game.events.on('prestep', () => {
@@ -177,14 +289,23 @@ export function mountPerfOverlay(game: Phaser.Game): void {
   game.events.on('postrender', () => {
     const now = performance.now()
     if (lastFrameStart >= 0 && frameStart >= 0) {
-      stats.push(frameStart - lastFrameStart, now - frameStart, readHeap())
+      stats.push(frameStart - lastFrameStart, now - frameStart, readHeap(), sinceRefresh)
     }
     lastFrameStart = frameStart
 
-    if (++sinceRefresh < REFRESH_EVERY_FRAMES) return
+    const key = activeSceneKeys(game).join('+')
+    if (key !== sceneKey) {
+      const ended = stats.snapshot()
+      if (sceneKey !== '' && ended.frames > 0) previous = summaryLine(`prev ${sceneKey}`, ended)
+      sceneKey = key
+      stats.reset()
+    }
+
+    sinceRefresh += 1
+    if (sinceRefresh < REFRESH_EVERY_FRAMES) return
     sinceRefresh = 0
     device ??= describeDevice(game)
     lastSnapshot = stats.snapshot()
-    pre.textContent = renderText(device, lastSnapshot, activeSceneLine(game))
+    pre.textContent = renderText(device, lastSnapshot, activeSceneLine(game), previous)
   })
 }
