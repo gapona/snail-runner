@@ -148,9 +148,18 @@ const en = {
    * Kept to a handful of words each, because they are read at speed while a road is coming.
    */
   tutorialSteerTitle: 'Steer',
-  tutorialSteerWhy: 'Drag anywhere. Coins are score — your line is what they cost.',
+  /**
+   * **The two control cards come in two versions, because a finger and a mouse steer differently.**
+   * A finger slides from wherever it lands and the snail moves by as much as it does — so it never
+   * has to be put on the snail, and one swipe crosses the road; a mouse is followed wherever it
+   * points. A single sentence covering both named neither well. The `Touch` key is what a phone
+   * reads; `TutorialCard` falls back to the plain one everywhere else.
+   */
+  tutorialSteerWhy: 'Move the mouse, or use ← → / A D. Your line is what coins cost.',
+  tutorialSteerWhyTouch: 'Slide a finger anywhere — the snail follows it. One swipe crosses the road.',
   tutorialJumpTitle: 'Jump',
-  tutorialJumpWhy: 'Tap, flick up, or press space. Height is the other way past things.',
+  tutorialJumpWhy: 'Click or press Space. Height is the other way past things.',
+  tutorialJumpWhyTouch: 'Flick your finger up, or just tap. Height is the other way past things.',
   tutorialLowTitle: 'Low rock',
   tutorialLowWhy: 'Short enough to hop. Or go round it — both work.',
   tutorialWallTitle: 'A wall',
@@ -171,7 +180,8 @@ const en = {
    * about to press whatever is under their thumb, and what they need to know is that the road will
    * start when they do.
    */
-  tutorialContinue: 'Tap to go',
+  tutorialContinue: 'Click or press Space to go',
+  tutorialContinueTouch: 'Tap to go',
   /** Under an `act` card, which is answered by doing the thing rather than by dismissing it. */
   tutorialTryIt: 'Try it',
   tutorialReplay: 'Tutorial',
@@ -342,9 +352,11 @@ const es: Record<StringKey, string> = {
   gameTitle: 'SNAIL RUNNER',
   play: 'Jugar',
   tutorialSteerTitle: 'Conduce',
-  tutorialSteerWhy: 'Arrastra donde sea. Las monedas son puntos: tu trazada es lo que cuestan.',
+  tutorialSteerWhy: 'Mueve el ratón o usa ← → / A D. Tu trazada es lo que cuestan las monedas.',
+  tutorialSteerWhyTouch: 'Desliza un dedo donde sea: el caracol lo sigue. Un gesto cruza la carretera.',
   tutorialJumpTitle: 'Salta',
-  tutorialJumpWhy: 'Toca, desliza hacia arriba o pulsa espacio. La altura es la otra forma de pasar.',
+  tutorialJumpWhy: 'Haz clic o pulsa espacio. La altura es la otra forma de pasar.',
+  tutorialJumpWhyTouch: 'Desliza el dedo hacia arriba, o solo toca. La altura es la otra forma de pasar.',
   tutorialLowTitle: 'Roca baja',
   tutorialLowWhy: 'Basta un salto. O rodéala: las dos valen.',
   tutorialWallTitle: 'Un muro',
@@ -358,7 +370,8 @@ const es: Record<StringKey, string> = {
   tutorialRampTitle: 'Rampa',
   tutorialRampWhy: 'Súbete. Las monedas están puestas a lo largo del vuelo que vas a hacer.',
   tutorialDone: 'Bien. La carretera es tuya.',
-  tutorialContinue: 'Toca para seguir',
+  tutorialContinue: 'Haz clic o pulsa espacio para seguir',
+  tutorialContinueTouch: 'Toca para seguir',
   tutorialTryIt: 'Pruébalo',
   tutorialReplay: 'Tutorial',
   loadFailed: 'No se pudo cargar el juego.\nComprueba tu conexión e inténtalo de nuevo.',

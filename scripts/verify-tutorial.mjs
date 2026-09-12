@@ -8,6 +8,7 @@
 // meant to teach the game into the reason somebody stops playing it, and none of them is visible in
 // a screenshot of the frame they happen on.
 import assert from 'node:assert/strict'
+import { tOptional } from '../src/i18n/strings.ts'
 import { placeRamps, rampIdStride } from '../src/run/ramp.ts'
 import {
   awaitingAcknowledgement,
@@ -447,6 +448,29 @@ check('⚠ every card that names a readout points at one, and no other card does
 
   assert.equal(pointing.length, Object.keys(named).length)
   console.log(`    ${pointing.length} of ${TUTORIAL_STEPS.length} cards name a readout: ${pointing.map((step) => `${step.id} -> ${step.highlight}`).join(', ')}`)
+})
+
+check('the control cards speak to the device: a finger slides and flicks, a mouse points and clicks', () => {
+  // Asked for after the controls changed: explain them. A finger steers relative — from anywhere,
+  // by as much as it moves, one swipe across the road — and flicks up to jump; a mouse is followed
+  // wherever it points. One sentence for both named neither. Each card has a `Touch` line for a
+  // phone and a plain one for everything else, and neither may name the other device's controls.
+  const touchOnly = /finger|swipe|slide|flick|tap/i
+  const desktopOnly = /mouse|click|space|←|→/i
+
+  for (const key of ['tutorialSteerWhy', 'tutorialJumpWhy', 'tutorialContinue']) {
+    const desktop = tOptional(key)
+    const touch = tOptional(`${key}Touch`)
+
+    assert.ok(desktop && touch, `${key} is missing a variant`)
+    assert.notEqual(desktop, touch, `${key}: both devices read the same line`)
+    assert.ok(!desktopOnly.test(touch), `${key}Touch names a mouse or a key: ${touch}`)
+    assert.ok(!touchOnly.test(desktop), `${key} names a finger: ${desktop}`)
+  }
+  // The two things a finger needs told that no other device does: where to put it, and how far.
+  assert.match(tOptional('tutorialSteerWhyTouch'), /anywhere/i)
+  assert.match(tOptional('tutorialSteerWhyTouch'), /one swipe/i)
+  assert.match(tOptional('tutorialJumpWhyTouch'), /flick/i)
 })
 
 console.log(`${passed} checks passed`)

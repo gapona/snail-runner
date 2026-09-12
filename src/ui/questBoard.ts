@@ -190,8 +190,14 @@ function drawChevron(g: Phaser.GameObjects.Graphics, size: number, dir: 'up' | '
  * One track, drawn as the Fever tank is: a socket per segment, a lit body inside it, a rim over
  * both so a full and an empty segment are the same *shape*.
  *
- * A finished quest fills every segment in the coin accent and takes a tick at its right end — one
- * of the three marks a done row carries, beside the coin-coloured label and the collect button.
+ * A finished quest fills every segment in the coin accent — one of the two marks a done row
+ * carries, beside the coin-coloured label, and the `COLLECT` pill that replaces its counter.
+ *
+ * **⚠ It also took a tick at its right end, and the tick is gone.** The tick sat a fixed distance
+ * in from the track's end, so it landed inside the last segment — on a three-segment track that is
+ * the middle of a wide pill, on an eight-segment one it is across a segment narrower than itself —
+ * and two finished rows put two ticks in the same column over two different drawings. Reported
+ * off a frame as badly centred. It was also saying what the `COLLECT` pill beside it already says.
  */
 function drawTrack(
   g: Phaser.GameObjects.Graphics,
@@ -233,18 +239,6 @@ function drawTrack(
     g.strokeRoundedRect(seg.x, seg.y, seg.w, seg.h, radius)
   }
 
-  if (done) {
-    const weight = Math.max(1.6, bar.h * 0.16)
-    const cx = bar.x + bar.w - bar.h * 0.6
-    const cy = bar.y + bar.h / 2
-
-    g.lineStyle(weight, KIT.plate, 1)
-    g.beginPath()
-    g.moveTo(cx - bar.h * 0.26, cy)
-    g.lineTo(cx - bar.h * 0.06, cy + bar.h * 0.2)
-    g.lineTo(cx + bar.h * 0.28, cy - bar.h * 0.24)
-    g.strokePath()
-  }
 }
 
 interface Row {

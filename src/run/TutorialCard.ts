@@ -1,5 +1,6 @@
 import * as Phaser from 'phaser'
-import { t } from '../i18n/strings'
+import { t, tOptional } from '../i18n/strings'
+import { isTouchPrimary } from '../platform/touch'
 import { KIT } from '../ui/kitPalette'
 import { toCssColor } from '../ui/theme'
 import { uiScale } from '../ui/uiScale'
@@ -54,6 +55,18 @@ export class TutorialCard {
    * that belongs to the ring.
    */
   private readonly pointer: Phaser.GameObjects.Graphics
+  /**
+   * The gesture a control card is asking for, shown rather than described — on a phone only.
+   *
+   * **A finger's steering is the one control in the game a sentence explains badly**: "the snail
+   * moves as far as your finger does" is exact and still leaves a player putting their thumb on the
+   * snail, because that is what every other drag on a phone means. A dot sliding across the lower
+   * half of the screen, away from the snail, says "anywhere, and this far" in the second the card
+   * is read. The jump card shows the flick the same way. A mouse needs neither.
+   */
+  private readonly gesture: Phaser.GameObjects.Graphics
+  /** Whether this device steers with a finger — see `platform/touch.ts`. Decided once, at the card. */
+  private readonly touch: boolean
 
   /** The frame this was last laid out for, so `update` can size the plate without re-deriving it. */
   private frame = { width: 0, height: 0, scale: 1 }
@@ -70,7 +83,8 @@ export class TutorialCard {
    */
   private shown: { done: boolean } | null = null
 
-  constructor(scene: Phaser.Scene) {
+  constructor(scene: Phaser.Scene, touch = isTouchPrimary()) {
+    this.touch = touch
     this.plate = scene.add.graphics().setDepth(HUD_DEPTH)
     this.title = scene.add
       .text(0, 0, '', { fontFamily: 'Arial Black, Arial', fontSize: 26, color: toCssColor(KIT.coin) })
@@ -86,10 +100,16 @@ export class TutorialCard {
       .setDepth(HUD_DEPTH + 1)
     // Above the HUD it is drawn around, or the ring would sit under the very thing it points at.
     this.pointer = scene.add.graphics().setDepth(HUD_DEPTH + 2)
+    this.gesture = scene.add.graphics().setDepth(HUD_DEPTH + 2)
   }
 
   get gameObjects(): Phaser.GameObjects.GameObject[] {
-    return [this.plate, this.title, this.why, this.prompt, this.pointer]
+    return [this.plate, this.title, this.why, this.prompt, this.pointer, this.gesture]
+  }
+
+  /** The line for this device: the `Touch` variant on a phone when there is one, the plain one otherwise. */
+  private line(key: string): string {
+    return (this.touch ? tOptional(`${key}Touch`) : undefined) ?? tOptional(key) ?? key
   }
 
   /**
@@ -145,14 +165,15 @@ export class TutorialCard {
     // A tick rather than a new sentence: the card has already said what the thing is for, and
     // replacing that with "well done" takes the explanation away at the moment it was understood.
     this.title.setText(`${done ? '✓ ' : ''}${t(`tutorial${key}Title` as never)}`)
-    this.why.setText(t(`tutorial${key}Why` as never))
+    this.why.setText(this.line(`tutorial${key}Why`))
     // **The prompt is gone the moment the card is answered**, because the road is moving again and
     // a line saying how to start it would be describing something that has already happened.
-    this.prompt.setText(done ? '' : t(step.kind === 'read' ? 'tutorialContinue' : 'tutorialTryIt'))
+    this.prompt.setText(done ? '' : step.kind === 'read' ? this.line('tutorialContinue') : t('tutorialTryIt'))
     this.prompt.setVisible(!done)
     this.shown = { done }
     this.draw(done)
     this.drawPointer(step.highlight && rectFor ? rectFor(step.highlight) : null, now)
+    this.drawGesture(this.touch && !done && (step.id === 'steer' || step.id === 'jump') ? step.id : null, now)
   }
 
   destroy(): void {
@@ -161,6 +182,7 @@ export class TutorialCard {
     this.why.destroy()
     this.prompt.destroy()
     this.pointer.destroy()
+    this.gesture.destroy()
   }
 
   private setVisible(visible: boolean): void {
@@ -169,6 +191,86 @@ export class TutorialCard {
     this.why.setVisible(visible)
     this.prompt.setVisible(visible)
     this.pointer.setVisible(visible)
+    this.gesture.setVisible(visible)
+  }
+
+  /**
+   * A dot doing the gesture the card asks for, in the lower half of the frame.
+   *
+   * **Below the card and above the snail**, in the band a thumb actually rests in, and off the
+   * snail's own column for the steer: the point is that the finger does not go on the snail. Drawn
+   * only while an unanswered control card is up, i.e. while the road is stopped, so a `Graphics`
+   * being rebuilt every frame costs nothing the run was using.
+   */
+  private drawGesture(kind: 'steer' | 'jump' | null, now: number): void {
+    this.gesture.clear()
+
+    if (kind === null) {
+      this.gesture.setVisible(false)
+
+      return
+    }
+
+    const { width, height, scale } = this.frame
+    const dot = 13 * scale
+    const cx = width / 2
+    const cy = height * 0.7
+
+    this.gesture.setVisible(true)
+
+    if (kind === 'steer') {
+      // Left, right and back, slowly: a finger sliding, not a flick. The track is as long as one
+      // swipe should be — see `SWIPE_CROSS_SHARE` — so the demonstration is the real distance.
+      const reach = Math.min(width, height) * 0.3
+      const phase = 0.5 - 0.5 * Math.cos(((now % 2000) / 2000) * Math.PI * 2)
+      const x = cx - reach + phase * reach * 2
+      const arrow = 9 * scale
+
+      this.gesture.lineStyle(Math.max(2, 3 * scale), 0xffffff, 0.45)
+      this.gesture.beginPath()
+      this.gesture.moveTo(cx - reach, cy)
+      this.gesture.lineTo(cx + reach, cy)
+      this.gesture.moveTo(cx - reach + arrow, cy - arrow)
+      this.gesture.lineTo(cx - reach, cy)
+      this.gesture.lineTo(cx - reach + arrow, cy + arrow)
+      this.gesture.moveTo(cx + reach - arrow, cy - arrow)
+      this.gesture.lineTo(cx + reach, cy)
+      this.gesture.lineTo(cx + reach - arrow, cy + arrow)
+      this.gesture.strokePath()
+      this.drawFingertip(x, cy, dot, 1)
+
+      return
+    }
+
+    // The jump: the finger rests, flicks up and lifts off, then a beat of nothing before it repeats
+    // — a flick is short, and a dot that moved up at an even pace would be teaching a drag.
+    const phase = (now % 1500) / 1500
+    const rise = height * 0.09
+    const arrow = 10 * scale
+    const top = cy - rise - dot * 2
+
+    this.gesture.lineStyle(Math.max(2, 3 * scale), 0xffffff, 0.45)
+    this.gesture.beginPath()
+    this.gesture.moveTo(cx - arrow, top + arrow)
+    this.gesture.lineTo(cx, top)
+    this.gesture.lineTo(cx + arrow, top + arrow)
+    this.gesture.strokePath()
+
+    if (phase < 0.35) {
+      this.drawFingertip(cx, cy, dot, 1)
+    } else if (phase < 0.6) {
+      const flick = (phase - 0.35) / 0.25
+
+      this.drawFingertip(cx, cy - rise * (1 - (1 - flick) ** 3), dot, 1 - flick)
+    }
+  }
+
+  /** A fingertip: a pale disc with a dark rim, readable over sky and pale road alike. */
+  private drawFingertip(x: number, y: number, radius: number, alpha: number): void {
+    this.gesture.fillStyle(0xffffff, 0.85 * alpha)
+    this.gesture.fillCircle(x, y, radius)
+    this.gesture.lineStyle(Math.max(2, radius * 0.22), INK, 0.6 * alpha)
+    this.gesture.strokeCircle(x, y, radius)
   }
 
   /**
