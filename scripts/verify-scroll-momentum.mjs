@@ -5,7 +5,7 @@
 // via the register-ts-loader.mjs + ts-extensionless-loader.mjs Node-native-TS setup.
 import assert from 'node:assert/strict'
 import { createScrollMomentumState, pushDragSample, computeReleaseVelocity, stepMomentum } from '../src/ui/scrollMomentum.ts'
-import { clampScroll, contentHeight, isTap, maxScroll, TAP_SLOP_PX, windowHeight } from '../src/ui/scrollList.ts'
+import { clampScroll, contentHeight, isTap, maxScroll, SNAP_FLICK_PX_PER_MS, snapTarget, TAP_SLOP_PX, windowHeight } from '../src/ui/scrollList.ts'
 
 let passed = 0
 function check(name, fn) {
@@ -275,6 +275,49 @@ check('isTap: a slow drag down a list is never mistaken for a tap', () => {
 
   assert.equal(taps, 4, 'only the first few pixels of travel are still a tap')
   assert.equal(isTap(0, y, TAP_SLOP_PX), false)
+})
+
+check('snapTarget: a row-tall window is paged one row per gesture, where a free coast overshoots the whole list', () => {
+  // The front screen's quest window at scale 1 on a short landscape phone: three 30px rows 7px
+  // apart, a window of one row plus the peek. Its whole travel is 54px.
+  const pitch = 37
+  const extent = contentHeight(3, 30, 7)
+  const window = pitch + 0.45 * 30
+  const limit = maxScroll(extent, window)
+
+  // The control: an ordinary thumb flick of 1 px/ms coasting under stepMomentum. It is the report —
+  // a gesture meant to move one row runs the whole list and more.
+  const state = createScrollMomentumState()
+  state.velocity = 1
+  let free = 0
+  for (let t = 16; state.velocity !== 0 && t < 5000; t += 16) free = stepMomentum(state, free, 16, 0, 1e9, t)
+  assert.ok(free > 5 * limit, `a free coast travels ${free.toFixed(0)}px against ${limit.toFixed(0)}px of travel`)
+
+  // Snapped: a flick from rest moves exactly one row, and a second one the next.
+  assert.equal(snapTarget(0, 1, pitch, limit), pitch)
+  assert.equal(snapTarget(pitch, 1, pitch, limit), limit, 'the last stop is the end of the travel')
+  assert.equal(snapTarget(limit, 1, pitch, limit), limit, 'never past the end')
+  assert.equal(snapTarget(limit, -1, pitch, limit), pitch)
+  assert.equal(snapTarget(pitch, -1, pitch, limit), 0)
+  assert.equal(snapTarget(0, -1, pitch, limit), 0, 'never before the start')
+  // A drag that carried the list most of a row and flicked on lands on that row, not two further.
+  assert.equal(snapTarget(pitch * 0.8, 1, pitch, limit), pitch)
+  // A finger let go where it was settles on the nearest stop.
+  assert.equal(snapTarget(pitch * 0.4, 0, pitch, limit), 0)
+  assert.equal(snapTarget(pitch * 0.6, 0, pitch, limit), pitch)
+  // A list that does not scroll has one place to be.
+  assert.equal(snapTarget(0, 1, pitch, 0), 0)
+
+  // Counted from the press: a 40px flick from rest crosses the first stop before the lift, and must
+  // still move one row. The control is the release-anchored rule, which sends it two.
+  assert.equal(snapTarget(40, 1, pitch, limit, 0), pitch)
+  assert.equal(snapTarget(40, 1, pitch, limit), limit, 'control: counted from the release it is two rows')
+  assert.equal(snapTarget(limit - 20, -1, pitch, limit, limit), pitch)
+  assert.equal(snapTarget(limit - 20, -1, pitch, limit), 0, 'control: the same, downwards')
+  // A drag that carried the list the whole way still lands where the finger took it.
+  assert.equal(snapTarget(limit, 1, pitch, limit, 0), limit)
+  // The flick threshold sits above a lifted finger's drift and below a deliberate flick.
+  assert.ok(SNAP_FLICK_PX_PER_MS > 0.05 && SNAP_FLICK_PX_PER_MS < 1)
 })
 
 console.log(`${passed} checks passed`)

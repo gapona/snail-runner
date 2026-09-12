@@ -1,5 +1,12 @@
 import * as Phaser from 'phaser'
-import { clampScroll, maxScroll } from './scrollList'
+import { clampScroll, maxScroll, SNAP_FLICK_PX_PER_MS, snapTarget } from './scrollList'
+
+/**
+ * How quickly a snapping window eases onto its stop: the remaining distance falls by `1 - e^-1`
+ * every this many ms, so it is 95% there in about 165ms. Exponential and frame-rate invariant, for
+ * `stepMomentum`'s reason. A snap that jumped would read as the list skipping.
+ */
+const SNAP_EASE_MS = 55
 import {
   computeReleaseVelocity,
   createScrollMomentumState,
@@ -59,6 +66,12 @@ export interface ScrollPanel {
    * a list that went on catching drags while it was shut would steal the steer from under it.
    */
   setEnabled(on: boolean): void
+  /**
+   * Makes the window come to rest on row boundaries `pitch` apart — one row per flick, one row per
+   * wheel notch — instead of coasting. `0` switches it back to the free coast. For a window only a
+   * row or two tall, where a coast overshoots the whole list; see `snapTarget`.
+   */
+  setSnap(pitch: number): void
   /** Called from the scene's `update`. Steps the flick; a no-op while the finger is down or still. */
   update(time: number, delta: number): void
   destroy(): void
@@ -76,6 +89,13 @@ export function scrollPanel(scene: Phaser.Scene): ScrollPanel {
   let windowTop = 0
   let windowHeight = 0
   let extent = 0
+  let snapPitch = 0
+  let snapTo: number | null = null
+  // Where the list stood when the finger went down — or, mid-ease, the stop it was heading for, so
+  // two quick flicks are two rows. A flick is counted from here; see `snapTarget`.
+  let pressAnchor = 0
+
+  const travel = () => maxScroll(extent, windowHeight)
 
   function setScroll(next: number): void {
     offset = clampScroll(next, extent, windowHeight)
@@ -96,6 +116,8 @@ export function scrollPanel(scene: Phaser.Scene): ScrollPanel {
     if (!inWindow(pointer)) return
 
     dragging = true
+    pressAnchor = snapTo ?? offset
+    snapTo = null
     resetScrollMomentum(momentum)
     pushDragSample(momentum, pointer.y, pointer.downTime)
   }
@@ -118,12 +140,29 @@ export function scrollPanel(scene: Phaser.Scene): ScrollPanel {
     dragging = false
     // Negated for the same reason the drag is: the physics works in the axis it is handed, and the
     // axis here is the scroll offset rather than the finger.
-    momentum.velocity = -computeReleaseVelocity(momentum)
+    const velocity = -computeReleaseVelocity(momentum)
+
+    if (snapPitch > 0) {
+      resetScrollMomentum(momentum)
+      const direction = Math.abs(velocity) >= SNAP_FLICK_PX_PER_MS ? Math.sign(velocity) : 0
+      snapTo = snapTarget(offset, direction, snapPitch, travel(), pressAnchor)
+      return
+    }
+
+    momentum.velocity = velocity
   }
   const onWheel = (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
     if (!enabled) return
 
     resetScrollMomentum(momentum)
+
+    if (snapPitch > 0) {
+      // One notch, one row — measured from where the list is heading, so two quick notches are two
+      // rows rather than the second one re-aiming at the stop the first had already chosen.
+      if (dy !== 0) snapTo = snapTarget(snapTo ?? offset, Math.sign(dy), snapPitch, travel())
+      return
+    }
+
     setScroll(offset + dy)
   }
 
@@ -156,6 +195,7 @@ export function scrollPanel(scene: Phaser.Scene): ScrollPanel {
     },
     scrollTo(next) {
       resetScrollMomentum(momentum)
+      snapTo = null
       setScroll(next)
     },
     setEnabled(on) {
@@ -163,11 +203,33 @@ export function scrollPanel(scene: Phaser.Scene): ScrollPanel {
       region.camera.setVisible(on)
       if (!on) {
         dragging = false
+        snapTo = null
         resetScrollMomentum(momentum)
       }
     },
+    setSnap(pitch) {
+      snapPitch = pitch > 0 ? pitch : 0
+      if (snapPitch === 0) snapTo = null
+    },
     update(time, delta) {
-      if (dragging || momentum.velocity === 0) return
+      if (dragging) return
+
+      if (snapTo !== null) {
+        // Re-clamped every step, so a resize that shortened the travel mid-ease cannot leave the
+        // list heading for a stop that no longer exists.
+        const target = Math.min(snapTo, travel())
+        const next = offset + (target - offset) * (1 - Math.exp(-delta / SNAP_EASE_MS))
+
+        if (Math.abs(target - next) < 0.5) {
+          snapTo = null
+          setScroll(target)
+        } else {
+          setScroll(next)
+        }
+        return
+      }
+
+      if (momentum.velocity === 0) return
 
       setScroll(stepMomentum(momentum, offset, delta, 0, maxScroll(extent, windowHeight), time))
     },

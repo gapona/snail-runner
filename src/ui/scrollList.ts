@@ -39,6 +39,61 @@ export function clampScroll(offset: number, content: number, viewport: number): 
 }
 
 /**
+ * Release speed, in px/ms, from which a snapping list reads a release as a flick in a direction
+ * rather than a finger let go where it was.
+ *
+ * About a quarter of what a deliberate thumb flick measures on a phone, and well above the drift a
+ * finger has when it is simply lifted — a lifted finger is not asking to move a row.
+ */
+export const SNAP_FLICK_PX_PER_MS = 0.25
+
+/**
+ * Where a snapping list comes to rest: a row boundary, or the end of the travel.
+ *
+ * **⚠ A free coast is the wrong physics for a window a row tall, and it was reported as the scroll
+ * being far too sensitive.** `stepMomentum` coasts `v / λ` — about **325px for every px/ms** of
+ * release speed — which is a moderate glide down a shop's catalogue and, on the front screen's quest
+ * window, several times its whole travel: a 50px window over three 37px rows has 54px to go, so
+ * every flick slammed it to the end and every lifted finger drifted past the row it had stopped on.
+ * A list that small is not browsed, it is *paged*: one gesture, one row.
+ *
+ * - `direction` 0 is a finger let go where it was: the nearest stop.
+ * - `direction` +1 / -1 is a flick: the next stop that way from `anchor` — where the list was when
+ *   the finger went down — and **only the next**, so a flick moves one row whatever its speed.
+ *
+ * **⚠ Counted from the press, not from the release.** A flick is a short drag and then a lift, and
+ * the drag half already moves the list. On 37px rows a 40px flick from rest crosses the first stop
+ * before the finger lifts, and "the next stop from the release" is then the one after it — two rows
+ * for one gesture, which is the sensitivity this exists to remove. Counted from the press it is one.
+ * A drag that genuinely carried the list further still lands where the finger took it: the nearest
+ * stop to the release wins whenever it is further along the flick.
+ *
+ * The stops are the multiples of `pitch` short of `limit`, plus `limit` itself: the last row sits at
+ * the window's bottom edge, which is not generally a whole number of rows from the top.
+ */
+export function snapTarget(offset: number, direction: number, pitch: number, limit: number, anchor = offset): number {
+  if (!(limit > 0) || !(pitch > 0)) return 0
+
+  const stops: number[] = []
+
+  for (let stop = 0; stop < limit - 0.5; stop += pitch) stops.push(stop)
+  stops.push(limit)
+
+  // A pixel of slack, so a list sitting exactly on a stop moves to the next one rather than
+  // counting the one it is on as "the next".
+  const EPS = 1
+
+  let nearest = stops[0]
+
+  for (const stop of stops) if (Math.abs(stop - offset) < Math.abs(nearest - offset)) nearest = stop
+
+  if (direction > 0) return Math.max(stops.find((stop) => stop > anchor + EPS) ?? limit, nearest)
+  if (direction < 0) return Math.min([...stops].reverse().find((stop) => stop < anchor - EPS) ?? 0, nearest)
+
+  return nearest
+}
+
+/**
  * Whether a press-and-release was a tap on the thing under it, rather than the start of a drag.
  *
  * **This is why the row list could not simply keep firing on `pointerdown`.** A scrollable list

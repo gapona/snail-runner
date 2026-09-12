@@ -667,6 +667,10 @@ export function createQuestBoard(scene: Phaser.Scene, depth: number): QuestBoard
       win.h = windowH
       win.extent = extent
       scroll?.setWindow({ x: contentX, y: rowsTop, width: contentW, height: windowH }, extent)
+      // **Paged, not coasted.** The window is one or two rows tall, so the shop's free coast —
+      // hundreds of pixels per flick — overshot the whole list on every gesture; reported as the
+      // scroll being far too sensitive. One flick, one row. See `snapTarget`.
+      scroll?.setSnap((QUEST_ROW.height + QUEST_ROW.gap) * scale)
       scroll?.setEnabled(true)
 
       barX = x + size.w - (QUEST_PANEL.padX * scale) / 2

@@ -15334,6 +15334,33 @@ window (one row plus the peek) scrolling 53.5px to the third row; at 740x200 a 3
 `verify:ui` holds the arithmetic with the dropping rule as its control (1 of 3 rows reachable at a
 60px room, 3 of 3 through the window).
 
+### ⚠ And then the scroll was far too sensitive, so the window is paged, not coasted
+
+Reported the round after: *the scroll sensitivity became too high.* It was the shop's physics on a
+window a row tall. `stepMomentum` coasts `v / λ` — about **325px for every px/ms** of release speed —
+which is a gentle glide down a catalogue and, on a 50px window with **54px of travel**, several times
+the whole list: every flick slammed it to the end and every lifted finger drifted past the row it
+stopped on.
+
+`snapTarget` (pure, `scrollList.ts`) and `ScrollPanel.setSnap(pitch)`: the quest window comes to rest
+on row boundaries, **one row per gesture**. A release faster than `SNAP_FLICK_PX_PER_MS` (0.25) goes
+to the next stop that way; anything slower settles on the nearest; a wheel notch is one row. The stops
+are the multiples of the row pitch short of the travel, plus the travel itself, and the list eases onto
+its stop (`SNAP_EASE_MS`, exponential, frame-rate invariant) rather than jumping.
+
+- **⚠ The flick is counted from where the list was when the finger went down, not where it was let
+  go.** The drag half of a flick already moves the list, so a 40px flick on 37px rows crossed the
+  first stop before the lift and "the next stop" was the one after it — two rows for one gesture.
+  Mid-ease, the anchor is the stop the list was heading for, so two quick flicks are two rows. A drag
+  that genuinely carried the list further still lands where the finger took it.
+- **The shop keeps its free coast.** A long catalogue is browsed; a list a row tall is paged.
+- `verify:scroll` holds it with two controls: a 1 px/ms free coast travels more than five times the
+  window's travel, and the release-anchored rule sends a 40px flick two rows.
+
+Measured at 828x260 (window 50.5px, extent 104): flicks up go 0 → 37 → 53.5 and stop at the end; a
+40px flick from rest that dragged the list to 40 settles on 37; a slow 15px drag settles back to 0.
+Zero errors.
+
 ### ⚠ The jump is higher, and it is a mechanic change, not a drawing one
 
 Reported in the same message: in landscape the snail should jump visibly higher. With heights on the
@@ -15371,6 +15398,9 @@ App bugs:
   were nowhere on screen — reported three times. The rows scroll in a camera window now; that camera
   ignores every other object for input too, or the heading answers to taps inside the list. → same
   section
+- **The quest window coasted like the shop's catalogue**: ~325px per px/ms of release speed against
+  54px of travel, so every flick ran to the end. It pages one row per gesture now, counted from the
+  press. → "And then the scroll was far too sensitive"
 
 - **A finger steered `absolute` though relative drag measured 5x better on a phone** — the better
   mode was behind a DEV key, i.e. a keyboard. Ships as drag-anywhere with a flick up to jump; the
