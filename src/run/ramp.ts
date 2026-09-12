@@ -44,12 +44,18 @@ import type { PlayerState } from './playerMotion'
 /**
  * How high a ramp throws the snail, in world units.
  *
- * **2.8x `JUMP_APEX`, and the multiple is what makes it a different verb.** The tallest obstacle
- * band tops out at 620; a jump's 430 is under that, which is the whole reason `blocking` exists as
- * a class. 1200 is comfortably over everything, so the middle of a ramp flight is the one time in
+ * **2.4x `JUMP_APEX`, and clearing `blocking` is what makes it a different verb.** The tallest
+ * obstacle band tops out at 932; a jump's 560 is under that, which is the whole reason `blocking`
+ * exists as a class. 1330 is comfortably over everything, so the middle of a ramp flight is the one time in
  * the game the road below simply does not apply.
+ *
+ * **1200 -> 1330 when the jump went 430 -> 560**, and it is the barrier that moved it, not the jump:
+ * `blocking` is derived from the apex and grew 802 -> 932, and at 1200 a ramp cleared that for 33%
+ * of its flight against the 49% the tumble fix bought. Keeping the ramp's old 398 units of margin
+ * over the tallest band gives it back (see `verify:ramp`). The multiple of a jump fell 2.8x -> 2.4x;
+ * what makes the ramp a different verb was always clearing `blocking`, which it still does.
  */
-export const RAMP_APEX = 1200
+export const RAMP_APEX = 1330
 
 /**
  * Launch velocity and air time, **solved from `RAMP_APEX` and the game's one gravity.**

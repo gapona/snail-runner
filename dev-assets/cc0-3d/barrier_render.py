@@ -71,7 +71,8 @@ YAW, PITCH = 0.0, 9.0
 # to be taller than the highest the mascot ever reaches, or the frame at the apex draws the snail
 # clear above the thing that just stopped it. `JUMP_APEX + PLAYER_BODY_H * 1.2` = 430 + 372. See
 # `OBSTACLE_BANDS` in src/run/constants.ts, which is where that arithmetic lives.
-TARGETS = {"low": 680 / 230, "blocking": 680 / 802}
+# And 932 since the apex went 430 -> 560: 560 + 372.
+TARGETS = {"low": 680 / 230, "blocking": 680 / 932}
 
 # How deep a barrier is, as a fraction of its own height. Thin, because these are boards.
 DEPTH = {"low": 0.55, "blocking": 0.13}

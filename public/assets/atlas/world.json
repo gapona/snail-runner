@@ -4,7 +4,7 @@
    "frame": {
     "h": 384,
     "w": 199,
-    "x": 1746,
+    "x": 1740,
     "y": 784
    },
    "rotated": false,
@@ -84,7 +84,7 @@
    "frame": {
     "h": 384,
     "w": 236,
-    "x": 831,
+    "x": 825,
     "y": 784
    },
    "rotated": false,
@@ -124,8 +124,8 @@
    "frame": {
     "h": 384,
     "w": 287,
-    "x": 0,
-    "y": 784
+    "x": 1300,
+    "y": 392
    },
    "rotated": false,
    "sourceSize": {
@@ -284,7 +284,7 @@
    "frame": {
     "h": 384,
     "w": 309,
-    "x": 1655,
+    "x": 983,
     "y": 392
    },
    "rotated": false,
@@ -304,7 +304,7 @@
    "frame": {
     "h": 384,
     "w": 270,
-    "x": 295,
+    "x": 289,
     "y": 784
    },
    "rotated": false,
@@ -424,7 +424,7 @@
    "frame": {
     "h": 384,
     "w": 314,
-    "x": 1011,
+    "x": 339,
     "y": 392
    },
    "rotated": false,
@@ -564,7 +564,7 @@
    "frame": {
     "h": 384,
     "w": 314,
-    "x": 1333,
+    "x": 661,
     "y": 392
    },
    "rotated": false,
@@ -764,7 +764,7 @@
    "frame": {
     "h": 384,
     "w": 215,
-    "x": 1305,
+    "x": 1299,
     "y": 784
    },
    "rotated": false,
@@ -904,7 +904,7 @@
    "frame": {
     "h": 384,
     "w": 210,
-    "x": 1528,
+    "x": 1522,
     "y": 784
    },
    "rotated": false,
@@ -1004,7 +1004,7 @@
    "frame": {
     "h": 384,
     "w": 250,
-    "x": 573,
+    "x": 567,
     "y": 784
    },
    "rotated": false,
@@ -1124,7 +1124,7 @@
    "frame": {
     "h": 384,
     "w": 222,
-    "x": 1075,
+    "x": 1069,
     "y": 784
    },
    "rotated": false,
@@ -1143,18 +1143,18 @@
   "obstacle-blocking-0": {
    "frame": {
     "h": 384,
-    "w": 330,
-    "x": 339,
+    "w": 283,
+    "x": 1595,
     "y": 392
    },
    "rotated": false,
    "sourceSize": {
     "h": 384,
-    "w": 330
+    "w": 283
    },
    "spriteSourceSize": {
     "h": 384,
-    "w": 330,
+    "w": 283,
     "x": 0,
     "y": 0
    },
@@ -1163,18 +1163,18 @@
   "obstacle-blocking-1": {
    "frame": {
     "h": 384,
-    "w": 326,
-    "x": 677,
-    "y": 392
+    "w": 281,
+    "x": 0,
+    "y": 784
    },
    "rotated": false,
    "sourceSize": {
     "h": 384,
-    "w": 326
+    "w": 281
    },
    "spriteSourceSize": {
     "h": 384,
-    "w": 326,
+    "w": 281,
     "x": 0,
     "y": 0
    },
@@ -1621,11 +1621,11 @@
    },
    "obstacle-blocking-0": {
     "file": "obstacle/obstacle-blocking-0.png",
-    "sha1": "2ce2ae5aa9f8cb5ceff8ab58e21009d9ae0eef00"
+    "sha1": "4e974cf8acb1e0b68075972d4da0dde1977f8bc1"
    },
    "obstacle-blocking-1": {
     "file": "obstacle/obstacle-blocking-1.png",
-    "sha1": "1d30785487162d1ee76f8dada204bb29a53a0663"
+    "sha1": "6442bcf181940bd51a94c5fc3773d42d2da44ecf"
    },
    "obstacle-low-0": {
     "file": "obstacle/obstacle-low-0.png",

@@ -624,9 +624,10 @@ export class MainMenu extends Phaser.Scene {
     const compact = this.compactLandscape(width, height, scale)
     const chipH = QUEST_CHIP.height * scale
     const x = compact && !this.quests.expanded ? this.purse.x + this.purse.width + QUEST_BOARD_GAP * scale : SIDE_MARGIN * scale
-    const y = compact
+    const underPurse = this.purse.y + this.purse.height + STACK_GAP * scale
+    let y = compact
       ? this.quests.expanded
-        ? this.purse.y + this.purse.height + STACK_GAP * scale
+        ? underPurse
         : this.purse.y + this.purse.height / 2 - chipH / 2
       : this.title.y + this.title.height / 2 + QUEST_BOARD_GAP * scale
     // **⚠ The board gives way where the column cannot hold both it and the button, and it is the
@@ -647,13 +648,22 @@ export class MainMenu extends Phaser.Scene {
     // is hidden while it is open**. That is what a dialog is; it is also what removes the hazard of
     // a tap on the panel's own blank space falling through to Play and starting a run, since a
     // hidden object is not hit-tested. The heading is the way back, and Play is one tap away again.
-    const tight = this.quests.expanded && (compact || y + questPanelSize(QUEST_SLOTS, scale, width, x).h > floor)
+    const panelH = questPanelSize(QUEST_SLOTS, scale, width, x).h
+    const tight = this.quests.expanded && (compact || y + panelH > floor)
+    const openFloor = height - this.nav.heightAt(width) - STACK_GAP * scale
+    // **⚠ And the stack's room was not always enough either.** Between 360 and ~400px tall — a phone
+    // sideways with its toolbar showing, not only the 300px webview — the panel still started under
+    // the wordmark, and the rows that did not fit were dropped: measured at 844x360, 780x370 and
+    // 900x380, two of three, reported as "only the first is visible". So wherever the open panel
+    // cannot hold every row under the wordmark, it takes the wordmark's band as well, exactly as the
+    // compact frame always did — the rule is "all of them, or the wordmark gives way", not a height.
+    const takesTitle = tight && (compact || y + panelH > openFloor)
+    if (takesTitle) y = underPurse
 
     this.stackCovered = tight
-    // Open on a compact frame, the panel has the wordmark's band too — so the wordmark goes with the
-    // stack. Hidden rather than drawn under, for the same reason the stack is.
-    this.title.setVisible(!(compact && tight))
-    this.quests.layout(x, y, width, scale, tight ? height - this.nav.heightAt(width) - STACK_GAP * scale : floor)
+    // Hidden rather than drawn under, for the same reason the stack is.
+    this.title.setVisible(!takesTitle)
+    this.quests.layout(x, y, width, scale, tight ? openFloor : floor)
   }
 
   /**

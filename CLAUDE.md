@@ -15289,6 +15289,38 @@ Checked on the frame at 828x300 — menu collapsed and open, garage, records, sh
 the apex of a jump over a low block, and the result panel — and at 844x390, 384x744 and 1920x945 for
 regressions. 26 suites green.
 
+### ⚠ The open quest panel still dropped rows between 360 and ~400px tall
+
+Reported again after the round above: *only the first quest row is visible.* The compact mode covers
+frames under 360px; above that, the open panel still started under the wordmark, and `fitting`
+dropped whatever did not reach the nav bar — measured two of three at 844x360, 780x370 and 900x380,
+the heights of a phone sideways with its toolbar showing. The rule is now "all rows, or the wordmark
+gives way" rather than a height: wherever the open panel cannot hold every row under the title, it
+starts under the coin row and the title hides with the stack (`takesTitle` in `layoutQuests`). Three
+rows at every frame swept, 828x300 to 1920x945.
+
+### ⚠ The jump is higher, and it is a mechanic change, not a drawing one
+
+Reported in the same message: in landscape the snail should jump visibly higher. With heights on the
+sprite's own scale the apex read as exactly what it is — 1.39 heights — and the frog, the thing most
+often jumped, is 343 tall: the feet cleared it by 0.28 of a body, which is "almost catches".
+
+**A visual-only gain was not available.** The drawn box is the collision box; a lift drawn higher
+than the model shows the snail clear of a frog on frames the model hits it, and it breaks the rule
+that a jump may never *draw* clear of the tall barrier (a gain over ~1.14 does). So the model moved:
+
+| | before | after |
+|---|---|---|
+| `JUMP_APEX` | 430 (1.39 heights) | **560 (1.81)** |
+| `JUMP_AIR_MS` | 700 | **800** — gravity 7020 -> 7000, the same jump taken higher |
+| `blocking.yHigh` | 802 | **932**, derived; barrier art re-rendered at 0.73:1, not stretched |
+| `CRITTER_JUMP_WINDOW` | 0.45 | **0.62**, so the frog keeps its 343 and the apex becomes daylight |
+| `RAMP_APEX` | 1200 | **1330**, the old 398 of margin over `blocking`; clears it 46.8% of a flight |
+
+Three `verify:obstacles` fixtures had the old apex baked in as `PLAYER_BODY_H + 220`; they state the
+band against `JUMP_APEX` now. The difficulty table barely moves (blocking share 0.12 -> 0.11, from the
+longer flight `provePassable` has to prove). All 26 suites green.
+
 ## Known Issues Fixed
 
 Bugs and gotchas hit and fixed while building the platform/save/audio layers — recorded so they don't get

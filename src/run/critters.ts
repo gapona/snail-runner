@@ -102,8 +102,14 @@ export const CRITTER_BASE_SPEED = SPEED_BASE * 0.35
  * jump is no longer a window to aim at but an instant to hit, and the one guarantee the whole
  * feature rests on — that a jump always answers a bug — is what goes. Growth past here has to come
  * out of the width, and the width is why a bug is now the flattest thing on the road.
+ *
+ * **0.45 -> 0.62 when `JUMP_APEX` went 430 -> 560, and it is the window that moved, not the frog.**
+ * The report was that the jump looked too low, and the frog is what a jump is most often taken
+ * over; holding its height (344.7 against 343.1) and letting the higher apex become daylight above
+ * it is the whole of the visible gain — and a wider window is only ever the easier direction, 496ms
+ * of a flight rather than 315. The ceiling argument above is unchanged: it is about 0.45 as a floor.
  */
-export const CRITTER_JUMP_WINDOW = 0.45
+export const CRITTER_JUMP_WINDOW = 0.62
 
 /**
  * How much of the drivable road one bug may claim, at most.

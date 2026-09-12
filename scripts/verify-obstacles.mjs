@@ -151,7 +151,11 @@ check('an obstacle carries its band rather than a flag naming its behaviour', ()
   // grow the body past it and a *grounded* snail reaches into the fixture, so raising
   // `PLAYER_BODY_H` failed a check about flags-versus-bands for a reason that had nothing to do
   // with either. What the fixture means is "a band above the snail", so it says that.
-  const above = { ...branch, yLow: PLAYER_BODY_H + 20, yHigh: PLAYER_BODY_H + 220 }
+  //
+  // **⚠ And its top was a second literal ceiling, on the apex this time**: `PLAYER_BODY_H + 220`
+  // is 530, which a jump reached while the apex was 430 and flies clean over at 560. "Met in the
+  // air" means the apex is inside it, so the top is stated against the apex.
+  const above = { ...branch, yLow: PLAYER_BODY_H + 20, yHigh: JUMP_APEX + PLAYER_BODY_H / 2 }
 
   assert.equal(hits(GROUNDED, above), false)
   assert.equal(hits(AT_APEX, above), true)
@@ -221,9 +225,9 @@ check('⚠ the flight proof is redundant TODAY, and this names the fact that mak
   // nothing: a band above the road is free on the ground and sealed in the air.
   const above = {
     ...createObstacle({ id: 1, z: 0, offsetX: 0, halfWidths: 0.3, kind: 'blocking' }),
-    // Derived from the body rather than the removed class's literal 362 — see the fixture above.
+    // Derived from the body and the apex rather than from literals — see the fixture above.
     yLow: PLAYER_BODY_H + 20,
-    yHigh: PLAYER_BODY_H + 220,
+    yHigh: JUMP_APEX + PLAYER_BODY_H / 2,
   }
 
   assert.equal(hits(GROUNDED, above), false)

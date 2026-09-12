@@ -381,8 +381,8 @@ export function tutorialLayout(
   // thing the tutorial teaches is the thing the game actually deals.
   obstacles.push(...drawWall(at('wall'), nextObstacleId))
 
-  // A tall barrier, which a jump does not clear — `blocking.yHigh` is 620 against a `JUMP_APEX` of
-  // 430. Off the centreline with the road open past it, so "go around" is a move the player can
+  // A tall barrier, which a jump does not clear — `blocking.yHigh` is 932 against a `JUMP_APEX` of
+  // 560. Off the centreline with the road open past it, so "go around" is a move the player can
   // still make on the frame they finish reading the card.
   obstacles.push(
     createObstacle({

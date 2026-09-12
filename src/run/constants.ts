@@ -633,8 +633,13 @@ export const MAX_ATTAINABLE_SPEED = SPEED_CAP * FEVER_SPEED_FACTOR
  * It lengthens `FLIGHT_LENGTH_Z` by the same 13%, and `provePassable` reads that directly — a
  * jump-only row commits the snail to the air for the whole flight, so everything inside it has to
  * be clearable from the air too. That check does the accounting; nothing here has to.
+ *
+ * **Raised again, 700 -> 800, with the apex 430 -> 560, for the same reason and by the same rule.**
+ * Gravity comes out at 7000 against 7020, i.e. the same jump taken higher rather than a snappier
+ * one — and, the half that matters most, the ramp's own flight is solved through this gravity, so
+ * holding it holds the ramp to within a third of a percent.
  */
-export const JUMP_AIR_MS = 700
+export const JUMP_AIR_MS = 800
 
 /**
  * Apex height above the road, in world units.
@@ -648,8 +653,16 @@ export const JUMP_AIR_MS = 700
  * Raised from 320 to 430 because a snail that barely clears a barrel does not read as jumping.
  * Every band moved with it — see `OBSTACLE_BANDS` — so the inequalities hold with the same margins
  * they had before rather than by a hair.
+ *
+ * **⚠ And raised again, 430 -> 560, off a phone held sideways: the snail should jump higher than
+ * it visually does.** Once heights were drawn on the sprite's own scale (`lift.ts`) the apex read
+ * as what it is on every frame — 1.39 snail heights — and the thing a player jumps most often, the
+ * frog, stands 343 tall: the feet cleared it by 87 units, 0.28 of a body, which is "almost catches"
+ * exactly. At 560 the apex is 1.81 heights and the frog is cleared by 0.69 of one. `blocking` is
+ * derived from this and grew with it (802 -> 932) so a jump still cannot *draw* clear of the tall
+ * barrier; the frog kept its size — see `CRITTER_JUMP_WINDOW`, which widened instead.
  */
-export const JUMP_APEX = 430
+export const JUMP_APEX = 560
 
 /**
  * Gravity and launch velocity — **solved from the two numbers above, never tuned directly.**
@@ -692,8 +705,10 @@ export const OBSTACLE_DEPTH = SEGMENT_LENGTH
  *
  * | band       | range        | outcome                                             |
  * |------------|--------------|-----------------------------------------------------|
- * | `low`      | `[0, 230]`   | cleared by a jump — the apex puts the foot at 430    |
- * | `blocking` | `[0, 802]`   | **cannot** be jumped; must be gone around           |
+ * | `low`      | `[0, 230]`   | cleared by a jump — the apex puts the foot at 560    |
+ * | `blocking` | `[0, 932]`   | **cannot** be jumped; must be gone around           |
+ *
+ * (932 since the apex went to 560; the history below speaks of 802, which was 430 + 372.)
  *
  * ## ⚠ `blocking` is taller than the snail ever gets, and 620 was not
  *
