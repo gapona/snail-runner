@@ -7,6 +7,8 @@ import { themeIds } from '../road/themes'
 import { t } from '../i18n/strings'
 import { UI_MASTER_KEYS } from '../ui/uiSprites'
 import { ATLAS_IMAGE_PATH, ATLAS_JSON_PATH, ATLAS_KEY } from '../art/atlas'
+import { shaderWarmupJobs } from '../art/shaderWarmup'
+import { createObstacleTextures } from '../run/obstacleArt'
 import { SNAIL_FRAMES, SNAIL_TEXTURE, SNAIL_TEXTURE_SIZE, snailFrameKey } from '../run/snailArt'
 import { INK } from '../run/artPalette'
 import { bindLayout } from '../ui/layout'
@@ -95,6 +97,8 @@ export class Preloader extends Phaser.Scene {
   private progress = 0
   private elapsedMs = 0
   private failed: string[] = []
+  /** Shader variants still to compile — see `art/shaderWarmup.ts`. One a frame, the rest in `create`. */
+  private warmup: (() => void)[] = []
 
   constructor() {
     super('Preloader')
@@ -106,6 +110,7 @@ export class Preloader extends Phaser.Scene {
     this.progress = 0
     this.elapsedMs = 0
     this.failed = []
+    this.warmup = shaderWarmupJobs(this.game)
 
     // Zero bytes and no theme file: `ensureSkyTextures` paints its gradient onto a canvas from the
     // active theme's own two sky colours. The road is deliberately not drawn — it is the expensive
@@ -201,6 +206,16 @@ export class Preloader extends Phaser.Scene {
 
       return
     }
+
+    // **Whatever the loading frames did not get to, now, before the front screen exists** — see
+    // `art/shaderWarmup.ts`. A variant compiled here costs the player nothing; the same variant
+    // compiled on the frame a run first needs it is a stall in the middle of the road.
+    for (const job of this.warmup.splice(0)) job()
+    // **The obstacles' contour, here rather than on the first run.** It is a pixel pass over five
+    // textures that `ObstacleSprites` used to trigger from inside `RunScene.create` — i.e. on the
+    // frame the player pressed Play, once a session. The shipped art does not depend on the theme,
+    // so it is built once and kept; see `createObstacleRims`.
+    createObstacleTextures(this)
 
     this.scene.start('MainMenu')
   }
@@ -325,6 +340,9 @@ export class Preloader extends Phaser.Scene {
     }
 
     this.drawBar()
+    // One program a frame while the files arrive: the thread is waiting on the network anyway, and
+    // the bar keeps moving between compiles.
+    this.warmup.shift()?.()
   }
 
   layout(width: number, height: number): void {

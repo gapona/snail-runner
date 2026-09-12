@@ -95,21 +95,62 @@ export function paintInkRim(
 ): number {
   if (rim <= 0) return 0
 
-  const opaque = (x: number, y: number) => {
-    // Outside the canvas counts as transparent: the trim leaves a subject touching the frame, so
-    // treating the outside as opaque would leave those edges with no contour at all.
-    if (x < 0 || y < 0 || x >= width || y >= height) return false
+  const size = width * height
+  const solid = new Uint8Array(size)
 
-    return pixels[(y * width + x) * 4 + 3] > 0
-  }
+  for (let i = 0; i < size; i++) solid[i] = pixels[i * 4 + 3] > 0 ? 1 : 0
+
+  // Outside the canvas counts as transparent: the trim leaves a subject touching the frame, so
+  // treating the outside as opaque would leave those edges with no contour at all.
+  const opaque = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < width && y < height && solid[y * width + x] === 1
 
   // The offsets inside the radius, computed once rather than per pixel.
   const offsets: number[] = []
+  const rim2 = rim * rim
 
   for (let dy = -rim; dy <= rim; dy++) {
     for (let dx = -rim; dx <= rim; dx++) {
       if (dx === 0 && dy === 0) continue
-      if (dx * dx + dy * dy <= rim * rim) offsets.push(dx, dy)
+      if (dx * dx + dy * dy <= rim2) offsets.push(dx, dy)
+    }
+  }
+
+  // **⚠ Stamped outward from the edge, never searched inward from every pixel — and it was the
+  // latter for as long as this pass existed.** The obvious form asks, of every opaque pixel, "is any
+  // pixel within `rim` of me transparent?", which walks the whole disc for every pixel of the
+  // interior only to answer "no". Measured at 230ms for the five obstacles on a desktop, on the
+  // first run of every session — i.e. well over a second of the frame frozen on a phone, at the
+  // exact moment the player pressed Play.
+  //
+  // The answer is identical, and it is a fact about the lattice rather than an approximation: the
+  // nearest transparent pixel `q` to an opaque pixel `p` always has an OPAQUE 4-neighbour, because
+  // one step from `q` toward `p` along the dominant axis is strictly closer to `p` and therefore not
+  // transparent. So only transparent pixels that touch the silhouette — including the one-pixel
+  // ring outside the canvas, for the same reason — can ever be anybody's nearest, and stamping the
+  // disc from each of those visits the perimeter instead of the area. `verify:palettes` holds the
+  // output to the old form byte for byte on every shipped obstacle.
+  const nearest2 = new Int32Array(size).fill(rim2 + 1)
+  const stamp = (sx: number, sy: number): void => {
+    for (let i = 0; i < offsets.length; i += 2) {
+      const x = sx + offsets[i]
+      const y = sy + offsets[i + 1]
+
+      if (x < 0 || y < 0 || x >= width || y >= height) continue
+
+      const at = y * width + x
+
+      if (solid[at] === 0) continue
+
+      const d2 = offsets[i] * offsets[i] + offsets[i + 1] * offsets[i + 1]
+
+      if (d2 < nearest2[at]) nearest2[at] = d2
+    }
+  }
+
+  for (let y = -1; y <= height; y++) {
+    for (let x = -1; x <= width; x++) {
+      if (opaque(x, y)) continue
+      if (opaque(x - 1, y) || opaque(x + 1, y) || opaque(x, y - 1) || opaque(x, y + 1)) stamp(x, y)
     }
   }
 
@@ -121,30 +162,14 @@ export function paintInkRim(
   // band, and `Math.max(1, ...)` on the inner one would force a pixel of it back on at every width.
   const inner = tones.innerShare <= 0 ? 0 : Math.max(1, Math.round(rim * tones.innerShare))
   const outer = Math.max(1, rim - inner)
-  const mark = new Uint8Array(width * height)
+  const mark = new Uint8Array(size)
   let painted = 0
 
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (!opaque(x, y)) continue
+  for (let i = 0; i < size; i++) {
+    if (solid[i] === 0 || nearest2[i] > rim2) continue
 
-      let nearest = Infinity
-
-      for (let i = 0; i < offsets.length; i += 2) {
-        if (opaque(x + offsets[i], y + offsets[i + 1])) continue
-
-        const dx = offsets[i]
-        const dy = offsets[i + 1]
-        const distance = Math.sqrt(dx * dx + dy * dy)
-
-        if (distance < nearest) nearest = distance
-      }
-
-      if (nearest === Infinity) continue
-
-      mark[y * width + x] = nearest <= outer ? 1 : 2
-      painted++
-    }
+    mark[i] = Math.sqrt(nearest2[i]) <= outer ? 1 : 2
+    painted++
   }
 
   const band = (color: number) => [(color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff]

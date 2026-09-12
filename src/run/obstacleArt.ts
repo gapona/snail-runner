@@ -188,7 +188,11 @@ const generated = new Set<string>()
  * `verify:palettes` measures the PNGs.
  */
 export function generatedObstacleKeys(): readonly string[] {
-  return OBSTACLE_TEXTURE_KEYS.filter((key) => generated.has(key))
+  // A generated source takes its contour with it: the rim was cut from the fallback's pixels, and a
+  // fallback redrawn in a new theme's tint must not keep the old contour. A *loaded* source keeps
+  // its rim for the whole session — the render is the same on every theme, so its contour is too,
+  // and rebuilding it would be a pixel pass bought for nothing.
+  return OBSTACLE_TEXTURE_KEYS.filter((key) => generated.has(key)).flatMap((key) => [key, `${key}-rim`])
 }
 
 type Scale = (f: number) => number
@@ -249,8 +253,15 @@ export function createObstacleTextures(scene: Phaser.Scene): void {
  * fallback — and this reads the texture manager rather than the file system, so it cannot tell and
  * does not need to.
  *
- * The rim keys join `generated`, so `applyTheme` removes them with everything else it regenerates:
- * a fallback redrawn in a new theme's tint must not keep the previous theme's contour beside it.
+ * **⚠ This used to say the rim keys join `generated` so `applyTheme` removes them, and they never
+ * were removed**: `generatedObstacleKeys` filters `OBSTACLE_TEXTURE_KEYS`, which holds the source
+ * keys only. Harmless for the shipped art, whose contour does not depend on the theme, and wrong for
+ * a fallback redrawn in a new tint. `generatedObstacleKeys` now hands back each generated source's
+ * rim beside it, which is what the sentence always meant.
+ *
+ * **Built by `Preloader.create`, not by the first run.** It used to be reached from
+ * `ObstacleSprites`' constructor, i.e. inside `RunScene.create` on the frame the player pressed
+ * Play — 230ms on a desktop for the search form of `paintInkRim`, once a session.
  */
 function createObstacleRims(scene: Phaser.Scene): void {
   for (const kind of Object.keys(OBSTACLE_VARIANTS) as ObstacleKind[]) {
@@ -278,7 +289,6 @@ function createObstacleRims(scene: Phaser.Scene): void {
       paintInkRim(data.data, width, height, rimWidthPx(width, height, OBSTACLE_RIM), OBSTACLE_RIM)
       canvas.putData(data, 0, 0)
       canvas.refresh()
-      generated.add(key)
     }
   }
 }

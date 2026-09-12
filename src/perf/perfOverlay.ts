@@ -139,6 +139,9 @@ function renderCompact(stats: FrameStatsSnapshot): string {
   return `wall ${stats.wall.p50.toFixed(1)}/${stats.wall.p90.toFixed(1)}/${stats.wall.p99.toFixed(1)}  cpu ${stats.cpu.p50.toFixed(1)}/${stats.cpu.p90.toFixed(1)}/${stats.cpu.p99.toFixed(1)}  long ${share.toFixed(1)}%${ovl}`
 }
 
+/** Commit and build time, injected by `vite.config.ts` — see `buildId` there for why. */
+declare const __BUILD_ID__: string
+
 function renderText(device: DeviceInfo, label: string, stats: FrameStatsSnapshot, sceneLine: string, other: string | null): string {
   const share = stats.frames > 0 ? ((100 * stats.long) / stats.frames).toFixed(1) : '0.0'
   const phase = stats.longPhase
@@ -148,6 +151,7 @@ function renderText(device: DeviceInfo, label: string, stats: FrameStatsSnapshot
   return [
     `${device.frame}  ${device.renderer}  ${device.samples}`,
     device.gpu,
+    `build ${__BUILD_ID__}`,
     `${label.padEnd(8).slice(0, 8)}p50    p90    p99    max   (n ${stats.wall.n})`,
     `wall  ${ms(stats.wall.p50)}  ${ms(stats.wall.p90)}  ${ms(stats.wall.p99)}  ${ms(stats.wall.max)}`,
     `cpu   ${ms(stats.cpu.p50)}  ${ms(stats.cpu.p90)}  ${ms(stats.cpu.p99)}  ${ms(stats.cpu.max)}`,
@@ -245,6 +249,7 @@ export function mountPerfOverlay(game: Phaser.Game): void {
     JSON.stringify(
       {
         at: new Date().toISOString(),
+        build: __BUILD_ID__,
         device,
         userAgent: navigator.userAgent,
         msaaFlag: msaaDisabled(location.search) ? 'off' : 'default',

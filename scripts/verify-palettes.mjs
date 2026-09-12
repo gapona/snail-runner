@@ -786,6 +786,114 @@ check('every obstacle separates from every ground, by its own colour or by its c
   assert.equal(failures.length, 0, `obstacles the landscape swallows: ${failures.join(', ')}`)
 })
 
+check('the contour pass stamps from the edge and paints exactly what the search did', () => {
+  // **⚠ The pass that paints the obstacles' contour cost 230ms on a desktop**, on the first run of
+  // every session, because it asked every opaque pixel whether anything within the rim was
+  // transparent. It stamps outward from the transparent pixels touching the silhouette now. That is
+  // exact rather than approximate -- see `paintInkRim` -- and this is what holds it to that: the
+  // shipped-before search, kept here as the reference, over every shipped obstacle and over
+  // synthetic shapes that touch the canvas edge, hold a hole, and are one pixel thin.
+  function searchRim(pixels, width, height, rim, tones) {
+    const opaque = (x, y) => x >= 0 && y >= 0 && x < width && y < height && pixels[(y * width + x) * 4 + 3] > 0
+    const offsets = []
+
+    for (let dy = -rim; dy <= rim; dy++) {
+      for (let dx = -rim; dx <= rim; dx++) {
+        if ((dx !== 0 || dy !== 0) && dx * dx + dy * dy <= rim * rim) offsets.push(dx, dy)
+      }
+    }
+
+    const inner = tones.innerShare <= 0 ? 0 : Math.max(1, Math.round(rim * tones.innerShare))
+    const outer = Math.max(1, rim - inner)
+    const mark = new Uint8Array(width * height)
+    let painted = 0
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (!opaque(x, y)) continue
+
+        let nearest = Infinity
+
+        for (let i = 0; i < offsets.length; i += 2) {
+          if (opaque(x + offsets[i], y + offsets[i + 1])) continue
+          nearest = Math.min(nearest, Math.sqrt(offsets[i] * offsets[i] + offsets[i + 1] * offsets[i + 1]))
+        }
+
+        if (nearest === Infinity) continue
+        mark[y * width + x] = nearest <= outer ? 1 : 2
+        painted++
+      }
+    }
+
+    const band = (color) => [(color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff]
+
+    for (let i = 0; i < mark.length; i++) {
+      if (!mark[i]) continue
+      const [r, g, b] = band(mark[i] === 1 ? tones.color : tones.innerColor)
+      pixels[i * 4] = r
+      pixels[i * 4 + 1] = g
+      pixels[i * 4 + 2] = b
+    }
+
+    return painted
+  }
+
+  const cases = []
+
+  for (const key of OBSTACLE_ART_KEYS) {
+    const path = `public/assets/obstacle/${key}.png`
+
+    if (existsSync(path)) {
+      const png = decodePng(readFileSync(path))
+
+      cases.push({ label: key, width: png.width, height: png.height, data: png.data })
+    }
+  }
+
+  // A disc that runs off two edges, with a hole through it and a one-pixel spur: the three places a
+  // shortcut through the lattice would disagree with the search.
+  const width = 61
+  const height = 47
+  const shape = new Uint8ClampedArray(width * height * 4)
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const r2 = (x - 50) ** 2 + (y - 8) ** 2
+      const on = (r2 < 30 * 30 && r2 > 5 * 5) || (y === 40 && x > 3 && x < 30)
+
+      shape[(y * width + x) * 4 + 3] = on ? 255 : 0
+    }
+  }
+  cases.push({ label: 'synthetic edge / hole / spur', width, height, data: shape })
+
+  for (const rim of [1, 3, 7]) {
+    for (const c of cases) {
+      const size = rim === 3 ? rimWidthPx(c.width, c.height, OBSTACLE_RIM) : rim
+      const expected = Uint8ClampedArray.from(c.data)
+      const actual = Uint8ClampedArray.from(c.data)
+      const want = searchRim(expected, c.width, c.height, size, OBSTACLE_RIM)
+      const got = paintInkRim(actual, c.width, c.height, size, OBSTACLE_RIM)
+
+      assert.equal(got, want, `${c.label} at rim ${size}: painted ${got}, the search painted ${want}`)
+      assert.ok(Buffer.from(actual).equals(Buffer.from(expected)), `${c.label} at rim ${size}: the pixels differ from the search`)
+      assert.ok(want > 0, `${c.label} at rim ${size}: nothing was painted, so this compares nothing`)
+    }
+  }
+
+  const first = cases[0]
+  const size = rimWidthPx(first.width, first.height, OBSTACLE_RIM)
+  let started = performance.now()
+
+  searchRim(Uint8ClampedArray.from(first.data), first.width, first.height, size, OBSTACLE_RIM)
+  const searchMs = performance.now() - started
+
+  started = performance.now()
+  paintInkRim(Uint8ClampedArray.from(first.data), first.width, first.height, size, OBSTACLE_RIM)
+  const stampMs = performance.now() - started
+
+  console.log(`    ${cases.length} shapes at three rim widths, byte-identical; ${first.label}: search ${searchMs.toFixed(1)}ms, stamp ${stampMs.toFixed(1)}ms`)
+})
+
 check('the contour brackets the range, so no ground can defeat both of its tones', () => {
   // **The structural half, and it is what makes the `or` above worth anything.** If both tones ever
   // land on the same side of the ground's luminance range, there is a ground that defeats the whole

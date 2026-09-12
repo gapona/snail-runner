@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
@@ -102,7 +103,32 @@ function perfReportSink(): Plugin {
   }
 }
 
+/**
+ * Which commit a build was made from, and when — shown by the perf overlay.
+ *
+ * **Because a phone is the one place a stale build cannot be told from a live one.** A report came
+ * back describing a defect the build it was supposedly taken on had just fixed, and nothing on the
+ * screen could say which build the phone was running: the preview serves from a LAN address the
+ * browser happily caches. `+dirty` marks a build made from uncommitted work, which is how a round is
+ * tested before it is committed.
+ */
+function buildId(): string {
+  const stamp = new Date().toISOString().slice(5, 16).replace('T', ' ')
+
+  try {
+    const hash = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()
+    const dirty = execSync('git status --porcelain', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() !== ''
+
+    return `${hash}${dirty ? '+dirty' : ''} ${stamp}Z`
+  } catch {
+    return `unknown ${stamp}Z`
+  }
+}
+
 export default defineConfig({
+  define: {
+    __BUILD_ID__: JSON.stringify(buildId()),
+  },
   // Playables does not host games at the domain root, so root-absolute asset paths
   // (Vite's default, e.g. `/assets/foo.js`) 404 there even though they work locally.
   // './' emits relative paths (`./assets/foo.js`) that resolve correctly regardless of
@@ -112,6 +138,13 @@ export default defineConfig({
   server: {
     port: 8080,
     open: true,
+  },
+  // **The preview is what the phone is pointed at, and a phone caches it.** `sirv` sends an ETag and
+  // no `Cache-Control`, so a mobile browser is free to keep last night's `index.html` — and with it
+  // last night's bundle — and a defect report then describes a build that no longer exists. Local
+  // serving only: nothing here reaches the submission ZIP.
+  preview: {
+    headers: { 'Cache-Control': 'no-store' },
   },
   build: {
     outDir: 'dist',

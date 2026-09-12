@@ -15030,6 +15030,71 @@ pickup pool's 128 objects and 42 of the critter pool's 56 were on `__MISSING`.
 Verified in the running game at 384x744: over 440m of a run, **0 visible objects on
 `__MISSING`**, and 14 coins under 6px wide drawn as gold dots.
 
+## ⚠ The Start Of A Run Stuttered Because Two Things Happened Once A Session
+
+`src/art/shaderWarmup.ts`, the Preloader, and a rewritten `paintInkRim`. Reported from the phone
+after the coin fix: *the start of a run still stutters, later it is acceptable.* "Later it is fine"
+is the clue — both causes happen **once a session**, and both were measured by instrumenting the
+GL context (`compileShader`, `linkProgram`, `texImage2D`, `generateMipmap`) and timing
+`RunScene.create` section by section, at 384x744 in the dev build.
+
+### Phaser 4 compiles a program for every texture COUNT it meets
+
+`BatchHandlerQuad.run` calls `finalizeTextureCount(entry.unit)` for each sub-batch and asks for a
+program built for exactly that many texture units — `…_7TexCount_GetTexture7_Tint` and the `…8…`
+one are different programs, each compiled and linked **synchronously** the first time a batch
+happens to hold that many textures. Up to sixteen for the sprite batch and sixteen for the tile
+sprites. Which counts turn up depends on what is on screen, so they trickled in: the menu compiled
+the 1-, 2-, 3-, 4-, 5-, 7- and 8-texture variants, and **the tenth frame of the first run compiled
+the 9**. Nothing on a desktop GPU; a stall on a phone's, in the middle of the road, until the
+session has seen every count — i.e. until "later".
+
+- **Compiled behind the loading bar now**: `shaderWarmupJobs` queues one job per count per batch,
+  `Preloader.tick` runs one a frame while the files download, and `create` flushes the rest before
+  the handover. Measured after: **33 programs exist when the menu arrives** (16 + 16 + `FLAT_`), and
+  **the menu and a 1500-frame run compile none.**
+- **⚠ The first version warmed the tile-sprite batch in its default configuration, which this game
+  never draws**: sixteen programs for nothing, while the two it really uses —
+  `…TexCoordFrameWrap_1…` and `…_4…` — were still compiled in front of the player. A program's key
+  is its whole addition list, so the warm-up switches `TexCoordFrameWrap` on for the compile and
+  puts it back. Found by listing `shaderProgramFactory.programs` after the change, not by trusting
+  the count of 16.
+- **Not `render.skipUnreadyShaders`**: that compiles in parallel and skips drawing whatever asks for
+  an unready program — pop-in instead of a stall. Off here (Phaser's default).
+- `verify:perf` holds the ordering in `Preloader` and the warm-up's configuration by reading the
+  source, because both are Phaser.
+
+### The obstacles' contour was 230ms of a 288ms create, on the first run only
+
+`ObstacleSprites`' constructor reached `createObstacleRims`, so the pixel pass ran inside
+`RunScene.create` on the frame the player pressed Play. The pass asked every opaque pixel whether
+anything within the rim was transparent — the whole disc, for every pixel of the interior, to
+answer "no".
+
+- **It stamps outward from the edge now, and the output is identical.** The nearest transparent
+  pixel to an opaque one always has an opaque 4-neighbour (one step toward it along the dominant
+  axis is strictly closer, hence opaque), so only transparent pixels touching the silhouette —
+  including the ring outside the canvas — can be anybody's nearest. `verify:palettes` holds it to
+  the shipped-before search **byte for byte**, on all five obstacles and a synthetic shape that
+  runs off the canvas, has a hole and a one-pixel spur, at three rim widths: ~11x faster in Node.
+- **And it is built in `Preloader.create`**, since the shipped art's contour does not depend on the
+  theme. First run's create: **288 → 52ms** on a desktop.
+- **⚠ The docstring said the rim keys join `generated` so `applyTheme` removes them; they never
+  were**, because `generatedObstacleKeys` filters the source keys only. `generatedObstacleKeys`
+  now hands back each generated source's rim beside it — a fallback redrawn in a new tint gets a
+  new contour, and a loaded render keeps its one for the session.
+
+### What was measured and left alone
+
+- **The distance readout re-renders its text on every metre** for the first kilometre (every ~3
+  frames), then every 10m — which also fits "the start, then fine". Measured at **0.02ms** a
+  re-render and upload; not the cause, not changed.
+- **Coins were not reproduced**: 0 visible `__MISSING`, `__DEFAULT` or whole-sheet objects over
+  1500 frames. The report may have come from a cached build, which nothing could show: the perf
+  overlay now prints **`build <hash>[+dirty] <time>Z`** (injected by `vite.config.ts`'s `buildId`),
+  and `vite preview` sends `Cache-Control: no-store`, because `sirv`'s ETag with no cache header let
+  a phone keep last night's `index.html`.
+
 ## Known Issues Fixed
 
 Bugs and gotchas hit and fixed while building the platform/save/audio layers — recorded so they don't get
@@ -15037,6 +15102,15 @@ silently reintroduced or re-debugged from scratch. Full detail lives in the sect
 index.
 
 App bugs:
+
+- **Every sprite-batch texture count compiled its own shader the first time a batch held it**,
+  synchronously and mid-run, until the session had seen them all — the stutter "at the start, then
+  fine". Warmed behind the loading bar now. → "The Start Of A Run Stuttered Because Two Things
+  Happened Once A Session"
+- **The obstacles' contour pass was 230ms of the first run's `create`**, searching the whole disc
+  from every interior pixel; it stamps from the edge now, byte-identical, and runs in the Preloader.
+  → same section
+- **The rim keys were never removed by `applyTheme`**, though the comment said they were. → same
 
 - **Distant coins (and critters, and the first decor prop) drew Phaser's `__MISSING` texture** —
   three pools made their slots on a key that became a frame name with the atlas, and primed their

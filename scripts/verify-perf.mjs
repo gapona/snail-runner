@@ -284,4 +284,33 @@ check('the overlay is referenced from main.ts only inside the DEV-or-perf branch
   assert.ok(!pkg.scripts['build:perf'].includes('check-bundle'), 'the perf build must not run the guard that forbids its own overlay')
 })
 
+check('every shader variant and the obstacle contour are built behind the loading bar, not on the first run', () => {
+  // **The start of a run stuttered and later it was fine**, and two things did it, both once a
+  // session: Phaser compiling a new sprite-batch program for every texture COUNT it had not met yet
+  // (the tenth frame of the first run compiled the 9-texture variant), and the obstacles' contour
+  // pass running inside `RunScene.create` (230ms of a 288ms create on a desktop). Both belong to the
+  // loading screen. Measured live after the move: 33 programs exist when the menu arrives, the run
+  // compiles none, and the first run's create is 52ms.
+  //
+  // Read from the source, because `Preloader` and the render nodes are Phaser.
+  const preloader = readFileSync(new URL('../src/scenes/Preloader.ts', import.meta.url), 'utf8')
+  const create = preloader.slice(preloader.indexOf('  create() {'))
+  const handover = create.indexOf("this.scene.start('MainMenu')")
+
+  assert.ok(preloader.includes('this.warmup = shaderWarmupJobs(this.game)'), 'the Preloader no longer queues the warm-up')
+  assert.ok(preloader.includes('this.warmup.shift()?.()'), 'the loading frames no longer compile one variant each')
+  assert.ok(create.indexOf('for (const job of this.warmup.splice(0)) job()') > 0, 'create does not flush the rest of the warm-up')
+  assert.ok(create.indexOf('for (const job of this.warmup.splice(0)) job()') < handover, 'the warm-up is flushed after the menu starts, i.e. in front of the player')
+  assert.ok(create.indexOf('createObstacleTextures(this)') > 0 && create.indexOf('createObstacleTextures(this)') < handover, 'the obstacle contour is built after the handover')
+
+  // **⚠ A warm-up in the wrong configuration compiles programs nobody asks for**, which the first
+  // version did: the tile-sprite batch is drawn here with `TexCoordFrameWrap` on, and a program's
+  // key is its whole addition list.
+  const warmup = readFileSync(new URL('../src/art/shaderWarmup.ts', import.meta.url), 'utf8')
+
+  assert.match(warmup, /node: 'BatchHandlerQuad', enable: \[\]/)
+  assert.match(warmup, /node: 'BatchHandlerTileSprite', enable: \['TexCoordFrameWrap'\]/)
+  assert.ok(warmup.includes("import type * as Phaser from 'phaser'"), 'the warm-up must not import phaser as a value')
+})
+
 console.log(`${passed} checks passed`)
