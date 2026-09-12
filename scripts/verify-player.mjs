@@ -49,7 +49,7 @@ import {
   STEER_EDGE_MARGIN,
 } from '../src/run/constants.ts'
 import { FIXED_STEP_MS } from '../src/race/constants.ts'
-import { STEER_PRESETS, getSteerTuning, relativeTarget } from '../src/run/steerTuning.ts'
+import { RELATIVE_SENSITIVITY_DEFAULT, STEER_PRESETS, SWIPE_CROSS_SHARE, dragScale, getSteerTuning, relativeTarget } from '../src/run/steerTuning.ts'
 import { JOYSTICK, createJoystick, joystickRadius, moveJoystick, pressJoystick, releaseJoystick, settleJoystick } from '../src/platform/joystick.ts'
 import { readFileSync } from 'node:fs'
 import { createSteerProbe, steerReport, stepSteerProbe } from '../src/run/steerProbe.ts'
@@ -1707,6 +1707,44 @@ check('steering sideways with a thumb that arcs is not a jump', () => {
   assert.equal(moveJoystick(straight, 200, 600 - r * 0.6, r), true, 'the control did not jump')
 })
 
+check('one swipe crosses the whole road, in portrait and in landscape', () => {
+  // **⚠ Reported from the phone: one gesture should go from edge to edge, and a swipe across the
+  // screen fell a little short.** The sensitivity was a whole frame WIDTH per road, and a thumb
+  // starts and stops a finger's width in from each edge. What is asserted is a swipe a thumb can
+  // actually make — the frame minus 12% at each end, i.e. about 45px in on a phone — measured in the
+  // same units `RunScene` hands `relativeTarget`.
+  const road = 2 * REACHABLE_EDGE
+  const swipeCovers = (w, h, sensitivity, share) => {
+    let target = -REACHABLE_EDGE
+
+    // The swipe arrives as a string of pointer moves, which is how the scene sees it.
+    for (let i = 0; i < 20; i++) target = relativeTarget(target, (share / 20) * dragScale(w, h), sensitivity)
+
+    return (target + REACHABLE_EDGE) / road
+  }
+  const rows = []
+
+  for (const [w, h] of [[320, 568], [384, 744], [844, 390], [744, 384]]) {
+    // A thumb's swipe is a physical length: three quarters of the short side, whichever way up.
+    const thumbOfWidth = (0.76 * Math.min(w, h)) / w
+    const shipped = swipeCovers(w, h, RELATIVE_SENSITIVITY_DEFAULT, thumbOfWidth)
+    // The control is the shipped-before arrangement: a whole frame WIDTH of drag per road.
+    const old = thumbOfWidth
+
+    rows.push(`${w}x${h} ${(shipped * 100).toFixed(0)}% (was ${(old * 100).toFixed(0)}%)`)
+    assert.ok(shipped >= 1.1, `${w}x${h}: a thumb-length swipe crosses ${(shipped * 100).toFixed(0)}% of the road`)
+    assert.ok(old < 1, `${w}x${h}: the control crossed the road, so it is not the reported arrangement`)
+  }
+
+  // And exactly `SWIPE_CROSS_SHARE` of the short side is exactly one road, in either orientation.
+  for (const [w, h] of [[384, 744], [844, 390]]) {
+    const one = swipeCovers(w, h, RELATIVE_SENSITIVITY_DEFAULT, (SWIPE_CROSS_SHARE * Math.min(w, h)) / w)
+
+    assert.ok(Math.abs(one - 1) < 1e-9, `${w}x${h}: the stated swipe crosses ${one} roads`)
+  }
+  console.log(`    a swipe of 76% of the short side crosses: ${rows.join(', ')}`)
+})
+
 check('a finger steers relative with the stick, and a mouse and the keys stay absolute', () => {
   // **⚠ Relative steering existed for a round behind a DEV key, which is to say never on a phone.**
   // It ships as the finger's scheme now; the mode is read only for a touch, so a desktop is exactly
@@ -1716,6 +1754,8 @@ check('a finger steers relative with the stick, and a mouse and the keys stay ab
   const scene = readFileSync(new URL('../src/scenes/RunScene.ts', import.meta.url), 'utf8')
 
   assert.ok(scene.includes("const mode: SteerMode = steer.touch ? tuning.mode : 'absolute'"), 'the mode is no longer the finger alone')
+  // An over-long swipe must stop at the road the finger can reach, not park the snail on the verge.
+  assert.match(scene, /this\.relativeTarget = Math\.min\(\s*REACHABLE_EDGE,\s*Math\.max\(\s*-REACHABLE_EDGE,/, 'the relative request is clamped somewhere other than the reachable road')
   assert.ok(scene.includes("enabled: () => getSteerTuning().mode === 'relative'"), 'the stick is no longer tied to the relative scheme')
   assert.ok(scene.includes("if (source === 'screenTap' && this.steering.joystick.flicked) return"), 'the release of a flick can jump a second time')
 

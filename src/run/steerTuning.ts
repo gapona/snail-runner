@@ -77,12 +77,11 @@ export interface SteerTuning {
   damping: number
   mode: SteerMode
   /**
-   * In `relative` mode, how many road half-widths a full frame-width of drag asks for.
+   * In `relative` mode, how many road half-widths a drag the length of the frame's **short side**
+   * asks for — see `dragScale` for why the short side and not the width.
    *
-   * Below `STEER_REACH * 2` a drag is *finer* than the road it steers on — the whole road takes
-   * more than one screen-width of thumb, which buys precision and costs reach. Above it the
-   * opposite. Ignored in `absolute` mode, where the mapping is the projection's own and there is
-   * nothing to choose.
+   * Higher crosses the road in a shorter swipe and costs precision; lower the opposite. Ignored in
+   * `absolute` mode, where the mapping is the projection's own and there is nothing to choose.
    */
   sensitivity: number
 }
@@ -102,13 +101,44 @@ export const STEER_PRESETS: Readonly<Record<SteerPresetName, { stiffness: number
 }
 
 /**
- * The default relative sensitivity: a whole frame-width of drag crosses the whole drivable road.
+ * How much of the frame's short side one swipe has to cover to cross the whole drivable road.
  *
- * Stated as a multiple of `REACHABLE_EDGE` rather than as a number, so it keeps its meaning if the
- * road, the reach or the mascot ever move — the same discipline `PICKUP_HEIGHT` was corrected to
- * once it stopped being half a body by construction.
+ * **⚠ It was a whole frame WIDTH, and a thumb does not swipe a whole frame.** Reported from the
+ * phone: one gesture should take the snail from one edge of the road to the other, and a swipe
+ * across the screen fell a little short. It could not do anything else — a thumb starts and stops
+ * a finger's width in from each edge, so a "full" swipe is 80–90% of the frame and delivered 80–90%
+ * of the road. In landscape it was far worse: the frame is twice as wide, so the same thumb travel
+ * crossed about a third of the road.
+ *
+ * 0.65 of the short side is about 250px on a phone in either orientation, so an ordinary swipe
+ * crosses the road with a third to spare and a deliberate full swipe saturates at the verge. What it
+ * costs is precision, stated: a gap a row leaves (0.18 half-widths at the median) is about 26px of
+ * thumb travel on a portrait phone, where it was 40.
  */
-export const RELATIVE_SENSITIVITY_DEFAULT = 2 * REACHABLE_EDGE
+export const SWIPE_CROSS_SHARE = 0.65
+
+/**
+ * The default relative sensitivity: a swipe of `SWIPE_CROSS_SHARE` of the short side crosses the
+ * whole drivable road.
+ *
+ * Stated from `REACHABLE_EDGE` rather than as a number, so it keeps its meaning if the road, the
+ * reach or the mascot ever move — the same discipline `PICKUP_HEIGHT` was corrected to once it
+ * stopped being half a body by construction.
+ */
+export const RELATIVE_SENSITIVITY_DEFAULT = (2 * REACHABLE_EDGE) / SWIPE_CROSS_SHARE
+
+/**
+ * Converts a drag measured as a fraction of the frame's width into one measured against its short
+ * side, which is what `sensitivity` is stated in.
+ *
+ * **The short side, because a thumb's reach is a physical length.** The same phone held either way
+ * gives the same thumb the same comfortable swipe, and in landscape that swipe is a much smaller
+ * share of the width. Measured against the width, turning the phone sideways made the road three
+ * times as wide under the thumb.
+ */
+export function dragScale(width: number, height: number): number {
+  return width / Math.max(1, Math.min(width, height))
+}
 
 /**
  * What the game ships with.

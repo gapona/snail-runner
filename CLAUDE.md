@@ -14651,6 +14651,25 @@ Confirmed in the running game at 384x744 with synthetic touch pointers: a 96px d
 continued in the air; the release did not jump again; a tap on a new press did; a mouse at x=60 still
 steered absolute to -0.69 with no stick drawn.
 
+### ⚠ One swipe did not cross the road, because the sensitivity was a frame WIDTH
+
+Reported after play: one gesture should take the snail from edge to edge, and a swipe across the
+screen fell a little short. `RELATIVE_SENSITIVITY_DEFAULT` was one road per whole frame width, and a
+thumb starts and stops a finger's width in from each edge — so a "full" swipe crossed 76% of the
+road on a portrait phone, and **35% in landscape**, where the same thumb travel is a smaller share of
+a wider frame.
+
+It is stated against the frame's **short side** now (`dragScale`): a swipe of `SWIPE_CROSS_SHARE`
+(0.65, about 250px on a phone either way up) crosses the whole reachable road, so a thumb-length
+swipe of three quarters of the short side crosses 117% of it in every orientation. The cost is
+precision: a median row gap is ~26px of thumb travel where it was ~40.
+
+**And the relative request is clamped at `REACHABLE_EDGE`, not `OFFROAD_LIMIT`.** With room to
+spare, an over-long swipe parked the snail on the verge (measured −1.13 against a road edge of
+0.875), which costs speed; absolute steering already stops at the reachable edge and reaches the
+verge only by the spring's overshoot. Measured live after both: three swipes of 290px went
+−0.86 → +0.86 → −0.86.
+
 **Not yet known, and the reason it ships anyway:** whether it *feels* right on a real thumb, which is
 what the report asks and nothing here can measure. `jumpShare`, `recenterMs` and
 `RELATIVE_SENSITIVITY_DEFAULT` are the three numbers to move first if it does not.

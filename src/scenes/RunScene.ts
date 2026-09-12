@@ -9,6 +9,7 @@ import {
   applySteerPreset,
   getSteerTuning,
   relativeTarget,
+  dragScale,
   setSteerTuning,
   steerPresetName,
   type SteerMode,
@@ -132,7 +133,7 @@ import {
   LANDING_HITSTOP_MS,
   OBSTACLE_DEPTH,
   OFFROAD_DRAG,
-  OFFROAD_LIMIT,
+  REACHABLE_EDGE,
   PLAYER_HALF_WIDTHS,
   PLAYER_Z,
   steerTarget,
@@ -1785,9 +1786,18 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
         if (this.steerModeWas !== 'relative') this.relativeTarget = this.player.offsetX
 
         if (steer.active) {
+          // **Clamped at the road the player can reach, not at the verge.** Absolute steering asks
+          // for `REACHABLE_EDGE` at most and reaches the verge only by the spring's overshoot; the
+          // relative request was clamped at `OFFROAD_LIMIT`, so an over-long swipe *parked* the
+          // snail on the verge, which costs speed. Harmless while a swipe barely crossed the road,
+          // and measured at -1.13 against a road edge of 0.875 once one swipe crossed it with room
+          // to spare — see `SWIPE_CROSS_SHARE`.
           this.relativeTarget = Math.min(
-            OFFROAD_LIMIT,
-            Math.max(-OFFROAD_LIMIT, relativeTarget(this.relativeTarget, steer.deltaFraction, tuning.sensitivity)),
+            REACHABLE_EDGE,
+            Math.max(
+              -REACHABLE_EDGE,
+              relativeTarget(this.relativeTarget, steer.deltaFraction * dragScale(this.scale.width, this.scale.height), tuning.sensitivity),
+            ),
           )
         } else {
           // Letting go holds the line, and the request has to be put back on the snail or the next
