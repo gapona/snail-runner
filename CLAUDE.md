@@ -14587,8 +14587,15 @@ person is a model.
 
 ## A Thumbstick For A Finger
 
-`src/platform/joystick.ts` (pure, `npm run verify:player`), `src/run/JoystickView.ts`, and the touch
-half of `bindSteering`. Reported from the phone once the stutter was gone: *no bugs, but the mobile
+`src/platform/joystick.ts` (pure, `npm run verify:player`) and the touch half of `bindSteering`.
+
+**⚠ The circle is gone; the drag and the flick stay.** It shipped as a visible floating stick — a
+ring with a chevron and a knob under the thumb, `run/JoystickView.ts` — and after playing it the
+report was *remove the circle, leave just the drag*. That is the genre's own convention too: a
+runner that steers continuously uses drag-anywhere with nothing on screen and a swipe up to jump,
+and a visible stick belongs to games that move in every direction. The view and `knobShare` are
+deleted; the stick's arithmetic stays, because it is what tells a flick up from a thumb's sideways
+arc. Everything below about *drawing* it is history. Reported from the phone once the stutter was gone: *no bugs, but the mobile
 controls are doubtful — make a circle zone that works like a joystick, left, right and up, mobile
 only.*
 
@@ -15167,8 +15174,8 @@ index.
 App bugs:
 
 - **A finger steered `absolute` though relative drag measured 5x better on a phone** — the better
-  mode was behind a DEV key, i.e. a keyboard. Ships as a floating thumbstick now, with push-up to
-  jump. → "A Thumbstick For A Finger"
+  mode was behind a DEV key, i.e. a keyboard. Ships as drag-anywhere with a flick up to jump; the
+  visible stick it first shipped with was removed after play. → "A Thumbstick For A Finger"
 - **The stick's first "up" was measured from where the thumb landed**, so a flick after any steer
   read as sideways and did not jump. → same section
 

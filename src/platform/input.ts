@@ -344,7 +344,7 @@ export interface SteeringSources {
   /** How fast the keyboard's virtual point travels, in viewport widths per second. */
   keyboardSpeed?: number
   /**
-   * A floating thumbstick for touch — see `platform/joystick.ts`.
+   * The invisible thumbstick a finger's flick up is read through — see `platform/joystick.ts`.
    *
    * `enabled` is asked when a finger lands, so the scene decides whether this touch scheme is the
    * live one without the binder having to know what a scheme is. `onJump` fires on the event a push
@@ -366,7 +366,7 @@ export interface Steering {
    */
   read(dtMs: number): { targetFraction: number; active: boolean; deltaFraction: number; touch: boolean }
   /**
-   * The thumbstick as it stands, for `JoystickView` to draw. Inactive whenever no finger is steering
+   * The flick tracker as it stands — see `platform/joystick.ts`. Inactive whenever no finger is steering
    * through it — including on every device without touch, where it never becomes active at all.
    */
   readonly joystick: Readonly<Joystick>
@@ -389,8 +389,8 @@ export interface Steering {
  * - **A pointer, while it is down.** The fraction is reported with how far it moved and whether it
  *   is a finger, and the *scene* decides what that means: a mouse's column is the request, a
  *   finger's movement is (see `SteerTuning.mode`). Releasing sets `active` false rather than
- *   freezing the last value. A finger also carries a floating thumbstick — `platform/joystick.ts` —
- *   whose push up is a jump, reported through `SteeringSources.joystick.onJump`.
+ *   freezing the last value. A finger's flick up is also a jump — `platform/joystick.ts` — reported
+ *   through `SteeringSources.joystick.onJump`.
  * - **The keyboard, through a virtual point** that travels at `keyboardSpeed` while a key is held
  *   and stays where it was let go. A key cannot express an absolute position, so the point is what
  *   turns a direction back into one; it starts at the centre and is clamped to the frame.

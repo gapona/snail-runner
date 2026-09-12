@@ -118,7 +118,6 @@ import {
 import { PickupSprites } from '../run/PickupSprites'
 import { FeverView } from '../run/FeverView'
 import { Hud } from '../run/Hud'
-import { JoystickView } from '../run/JoystickView'
 import { stepSlime, type SlimePoint } from '../run/slime'
 import { SlimeTrail } from '../run/SlimeTrail'
 import { createRng } from '../race/rng'
@@ -226,7 +225,6 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
   private player!: PlayerState
   private playerView!: PlayerView
   private steering!: Steering
-  private joystickView!: JoystickView
   /**
    * Where a relative drag has asked the snail to be, in half-widths. Unused in `absolute` mode.
    *
@@ -498,7 +496,6 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     })
     // Screen-space, so it goes on `uiCamera` and is hidden from the world camera.
     this.hud = new Hud(this)
-    this.joystickView = new JoystickView(this)
 
     // **The first run teaches itself, and it is the same run.** No second scene and no mode to
     // leave: what a tutorial run has is a hand-placed opening stretch and a card, and when the last
@@ -519,7 +516,6 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     this.uiCamera.ignore(this.worldObjects())
     this.cameras.main.ignore([
       ...this.hud.gameObjects,
-      ...this.joystickView.gameObjects,
       ...this.feverView.gameObjects,
       ...(this.tutorialCard?.gameObjects ?? []),
       this.deathFlashRect,
@@ -597,9 +593,9 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
       leftKeys: ['LEFT', 'A'],
       rightKeys: ['RIGHT', 'D'],
       keyboardSpeed: KEYBOARD_POINT_SPEED,
-      // **A finger steers with a thumbstick; a mouse and the keys are untouched.** See
-      // `platform/joystick.ts` for the report and the measurement behind it. The stick exists only
-      // while the touch scheme is `relative`, so the DEV comparison against `absolute` still works.
+      // **A finger drags and flicks; a mouse and the keys are untouched.** See `platform/joystick.ts`
+      // for the report and the measurement behind it. The flick exists only while the touch scheme is
+      // `relative`, so the DEV comparison against `absolute` still works.
       joystick: {
         enabled: () => getSteerTuning().mode === 'relative',
         onJump: () => this.tryJump(),
@@ -1991,7 +1987,6 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     )
     this.updateTutorial(time)
     this.feverView.update(this.run.fever, delta, width, height)
-    this.joystickView.update(this.steering.joystick, getSteerTuning().mode === 'relative' && !dying, width, height)
     this.dust.update(time, delta, height)
 
     if (import.meta.env.DEV && this.debugMarks && !this.marksVisible) {

@@ -2,7 +2,14 @@
  * The floating thumbstick a finger steers and jumps with.
  *
  * **Rule: this file never imports `phaser`.** It is the arithmetic of one gesture, covered by
- * `npm run verify:player`; `bindSteering` feeds it pointer positions and `JoystickView` draws it.
+ * `npm run verify:player`; `bindSteering` feeds it pointer positions.
+ *
+ * **⚠ It is not drawn.** It shipped as a visible floating stick — a ring with a chevron and a knob
+ * under the thumb — and the report on the phone was *remove the circle, leave just the drag*. That
+ * is also the genre's own convention: a runner that steers continuously uses drag-anywhere with no
+ * control on screen, and a swipe up to jump. So the stick below is an instrument rather than a
+ * picture: it is what tells a flick up from the arc of a thumb steering sideways, and nothing else.
+ * The names stay `joystick`, because the arithmetic is exactly a floating stick's.
  *
  * ## Why a stick, and why it floats
  *
@@ -14,17 +21,12 @@
  * 8 on the same road. That mode existed behind a DEV key, which is to say behind a keyboard, which
  * is to say never on a phone.
  *
- * So this is relative drag with the two things it was missing:
+ * So a finger steers relative, and this adds **the third direction**: a tap still jumps, and a
+ * flick up jumps too, without lifting the thumb that is steering — the one thing a single finger
+ * could not do before.
  *
- * - **Something to see.** A relative control has no place on the screen, and a control with no
- *   place is one the player has to take on trust. The base appears where the thumb lands and the
- *   knob sits under it, so the gesture has a shape the moment it starts.
- * - **The third direction.** A tap still jumps; pushing the stick *up* jumps too, without lifting
- *   the thumb that is steering — which is the one thing a single finger could not do before.
- *
- * It floats rather than sitting in a fixed circle because there is no fixed place to put one: the
- * bottom corners are the lives and the Fever tank, and the bottom middle is the snail itself. A
- * stick that appears under the thumb never covers anything the thumb was not already covering.
+ * The stick floats — it is centred wherever the thumb lands — because a flick is measured from the
+ * thumb and not from any fixed place on the screen.
  *
  * ## The base follows the thumb past the rim
  *
@@ -44,7 +46,7 @@
  * `settleJoystick` eases the base toward the thumb every frame over `recenterMs`. That makes "up"
  * a *flick* rather than a *position*: a quick push leaves the base behind and reads as up, a slow
  * drift is followed and does not — which is also what keeps the arc of a thumb sweeping sideways
- * from ever reading as a jump. It is a high-pass filter on the thumb, drawn as a stick.
+ * from ever reading as a jump. It is a high-pass filter on the thumb, shaped like a stick.
  */
 
 export const JOYSTICK = {
@@ -54,8 +56,6 @@ export const JOYSTICK = {
   minRadius: 44,
   /** And on a tablet or a desktop with touch, a stick the size of a plate is not a thumbstick. */
   maxRadius: 72,
-  /** The knob, as a share of the base's radius. */
-  knobShare: 0.42,
   /**
    * How far up the knob has to get ahead of the base to jump, as a share of the radius.
    *
