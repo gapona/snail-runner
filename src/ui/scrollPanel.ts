@@ -51,6 +51,14 @@ export interface ScrollPanel {
    * would leave the player part-way down a list they have never seen.
    */
   scrollTo(next: number): void
+  /**
+   * Switches the window on and off.
+   *
+   * Off, the camera draws nothing and no press or wheel reaches the list. For a window that is only
+   * sometimes on screen — the front screen's quest panel, which is collapsed unless it is asked for:
+   * a list that went on catching drags while it was shut would steal the steer from under it.
+   */
+  setEnabled(on: boolean): void
   /** Called from the scene's `update`. Steps the flick; a no-op while the finger is down or still. */
   update(time: number, delta: number): void
   destroy(): void
@@ -62,6 +70,9 @@ export function scrollPanel(scene: Phaser.Scene): ScrollPanel {
 
   let offset = 0
   let dragging = false
+  let enabled = true
+  let windowLeft = 0
+  let windowWidth = 0
   let windowTop = 0
   let windowHeight = 0
   let extent = 0
@@ -71,7 +82,15 @@ export function scrollPanel(scene: Phaser.Scene): ScrollPanel {
     region.camera.scrollY = offset
   }
 
-  const inWindow = (pointer: Phaser.Input.Pointer) => pointer.y >= windowTop && pointer.y <= windowTop + windowHeight
+  // **Both axes.** It was the vertical band alone, which was harmless while the only window was a
+  // modal shop panel nearly as wide as the frame; on the front screen the window is a third of it,
+  // and a drag started beside it is the player steering a menu, not scrolling a list.
+  const inWindow = (pointer: Phaser.Input.Pointer) =>
+    enabled &&
+    pointer.x >= windowLeft &&
+    pointer.x <= windowLeft + windowWidth &&
+    pointer.y >= windowTop &&
+    pointer.y <= windowTop + windowHeight
 
   const onDown = (pointer: Phaser.Input.Pointer) => {
     if (!inWindow(pointer)) return
@@ -102,6 +121,8 @@ export function scrollPanel(scene: Phaser.Scene): ScrollPanel {
     momentum.velocity = -computeReleaseVelocity(momentum)
   }
   const onWheel = (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
+    if (!enabled) return
+
     resetScrollMomentum(momentum)
     setScroll(offset + dy)
   }
@@ -125,6 +146,8 @@ export function scrollPanel(scene: Phaser.Scene): ScrollPanel {
       return windowHeight
     },
     setWindow(bounds, contentExtent) {
+      windowLeft = bounds.x
+      windowWidth = bounds.width
       windowTop = bounds.y
       windowHeight = bounds.height
       extent = contentExtent
@@ -134,6 +157,14 @@ export function scrollPanel(scene: Phaser.Scene): ScrollPanel {
     scrollTo(next) {
       resetScrollMomentum(momentum)
       setScroll(next)
+    },
+    setEnabled(on) {
+      enabled = on
+      region.camera.setVisible(on)
+      if (!on) {
+        dragging = false
+        resetScrollMomentum(momentum)
+      }
     },
     update(time, delta) {
       if (dragging || momentum.velocity === 0) return

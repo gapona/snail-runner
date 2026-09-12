@@ -348,6 +348,14 @@ export class MainMenu extends Phaser.Scene {
     this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height)
     this.uiCamera.ignore(this.worldObjects())
     this.cameras.main.ignore(this.uiObjects())
+    // **The quest rows are drawn by a third camera, the panel's scrolling window**, and by nothing
+    // else — see `ui/scrollRegion.ts` for why a camera's viewport is the only clip this renderer
+    // has. Built last so it composites over the panel's own plate; and it ignores everything that is
+    // not a row, *for input as much as for drawing*: an object it did not ignore is hit-tested in
+    // the window's scrolled coordinates, so the heading or the Play button would answer to a tap
+    // somewhere inside the list.
+    this.uiCamera.ignore(this.quests.rowObjects)
+    this.quests.attachScroll([...new Set([...this.children.list, ...this.worldObjects(), ...this.uiObjects()])])
 
     this.quests.collectTargets.forEach((target, index) => {
       // The collect fires on a *tap*, the rule every row list in this project is under: the rows are
@@ -470,6 +478,8 @@ export class MainMenu extends Phaser.Scene {
         newRun: this.resumable ? boxOf(this.newRunButton) : null,
         questChip: rectOf(this.quests.chip.getBounds()),
         questsExpanded: this.quests.expanded,
+        questRows: this.quests.rowsShown,
+        questWindow: this.quests.window,
         shop: rectOf(this.nav.targets.shop.getBounds()),
         settings: rectOf(this.nav.targets.settings.getBounds()),
         mascot: rectOf(this.mascot.sprite.getBounds()),
@@ -847,11 +857,12 @@ export class MainMenu extends Phaser.Scene {
     this.time.delayedCall(EXIT.accelerateMs, () => this.scene.start('RunScene'))
   }
 
-  update(_time: number, delta: number): void {
+  update(time: number, delta: number): void {
     const width = this.scale.width
     const height = this.scale.height
 
     this.elapsedMs += delta
+    this.quests.update(time, delta)
 
     // The camera leans towards the mascot exactly as it does in a run, so the one object the
     // picture is about is also the one the frame is composed around.

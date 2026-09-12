@@ -179,6 +179,47 @@ export function questBoardHeight(count: number, scale: number): number {
   return count * QUEST_ROW.height * scale + Math.max(0, count - 1) * QUEST_ROW.gap * scale
 }
 
+/**
+ * How much of the next row the scroll window leaves in view when not every row fits.
+ *
+ * **A row cut off at a row boundary says the list has ended**, which is the one thing a window that
+ * scrolls must never say. Half a row under the last whole one is the ordinary way a list tells a
+ * thumb there is more of it, before the chevron under the window says so again.
+ */
+export const QUEST_WINDOW_PEEK = 0.45
+
+/**
+ * How tall the open panel's rows window is, given `count` rows and `room` pixels to put them in.
+ *
+ * **⚠ The rows used to be DROPPED against the floor, and that is why the quests were not visible.**
+ * On a phone held sideways in a webview the room under the heading holds one row, so the panel
+ * showed one and the other two did not exist anywhere on screen — reported twice, and the second
+ * report came after the wordmark had already been made to give its band up. Now every row is laid
+ * out and the window scrolls: all of them fit, the window is exactly their height and nothing
+ * scrolls; otherwise it shows whole rows plus `QUEST_WINDOW_PEEK` of the next, and never less than
+ * one whole row, because a window that cannot show one row is not a window.
+ */
+export function questWindowHeight(count: number, room: number, scale: number): number {
+  const extent = questBoardHeight(count, scale)
+
+  if (extent <= room) return extent
+
+  const rowH = QUEST_ROW.height * scale
+  const pitch = (QUEST_ROW.height + QUEST_ROW.gap) * scale
+  const peek = QUEST_WINDOW_PEEK * rowH
+
+  if (room < pitch + peek) return Math.min(extent, Math.max(rowH, room))
+
+  return Math.min(extent, Math.floor((room - peek) / pitch) * pitch + peek)
+}
+
+/** The open panel's height around a rows window `window` tall. */
+export function questPanelHeightFor(window: number, scale: number): number {
+  return (
+    QUEST_PANEL.padY * 2 * scale + QUEST_PANEL.headerHeight * scale + QUEST_PANEL.headerGap * scale + window
+  )
+}
+
 /** How wide and tall the open panel is, for `rows` rows at `scale` inside a frame of `width`. */
 export function questPanelSize(
   rows: number,

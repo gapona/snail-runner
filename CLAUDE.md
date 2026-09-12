@@ -15299,6 +15299,41 @@ gives way" rather than a height: wherever the open panel cannot hold every row u
 starts under the coin row and the title hides with the stack (`takesTitle` in `layoutQuests`). Three
 rows at every frame swept, 828x300 to 1920x945.
 
+### ⚠ And it was reported a third time, so the rows scroll instead of dropping
+
+*Quests are still not visible — make it a window with a scroll.* Every frame the harness sweeps fits
+all three rows since the round above, and the phone still showed one — most likely a frame shorter
+than 300px (a webview's own header bar in landscape). **Whatever the frame, dropping rows is the
+failure mode**, so there is none left: every live quest is laid out, and the **window** over them is
+what is sized to the room (`questWindowHeight`, pure, in `questLayout.ts`).
+
+- **The rows are drawn by a third camera whose viewport is the window** — the one clip this renderer
+  has, see `ui/scrollRegion.ts` — through `ui/scrollPanel.ts`, the shop's own wiring. Rows sit in the
+  camera's local coordinates and the camera pans over them; drag, flick and wheel all scroll.
+- **Built after the interface camera**, because a later camera composites over an earlier one and the
+  panel's plate is drawn by the interface camera: built first, the rows would be painted over by their
+  own background. `attachScroll` is the call, and `MainMenu` makes it right after the split.
+- **⚠ The window camera ignores everything that is not a row, for INPUT as much as drawing.** An object
+  it does not ignore is hit-tested in the window's *scrolled* coordinates, so the heading (a `Zone`,
+  which was in no list at all) would have toggled the panel from a tap inside the list. It is handed
+  the display list plus the curated world and interface lists — pooled slots are off the display list
+  while idle. Measured: a tap mapped onto the heading's rectangle from inside the scrolled window hits
+  nothing; the third row's `COLLECT`, scrolled into view, hits.
+- **Not a row boundary**: when rows do not all fit the window shows whole rows plus
+  `QUEST_WINDOW_PEEK` (0.45) of the next, never less than one row, and a thin scrollbar in the panel's
+  right padding says the rest. The scrollbar is chrome, drawn by the interface camera, redrawn only
+  when the offset moves.
+- **`scrollPanel` gained `setEnabled` and a bounded x.** Off, its camera draws nothing and no press or
+  wheel reaches it — the panel is collapsed most of the time and a list that caught drags while shut
+  would steal them. `inWindow` checked only y, harmless in the near-full-width shop and wrong for a
+  window a third of the frame wide. The shop was re-driven after the change: a drag still scrolls it.
+- The panel opens at the top of the list every time, for the reason it is not remembered across scenes.
+
+Measured: all three rows unscrolled at 828x300, 844x360, 384x744 and 1920x945; at 828x260 a 50.5px
+window (one row plus the peek) scrolling 53.5px to the third row; at 740x200 a 30px one-row window.
+`verify:ui` holds the arithmetic with the dropping rule as its control (1 of 3 rows reachable at a
+60px room, 3 of 3 through the window).
+
 ### ⚠ The jump is higher, and it is a mechanic change, not a drawing one
 
 Reported in the same message: in landscape the snail should jump visibly higher. With heights on the
@@ -15332,6 +15367,10 @@ App bugs:
 - **Every height on the road was drawn on the frame's height axis while every size was drawn on its
   width**, so a jump's apex was 2.7 snail heights in portrait and 0.5 on a sideways phone. → "A Phone
   Sideways In A Webview Is 828x300"
+- **The open quest panel dropped the rows that did not fit**, so on a short frame two of three quests
+  were nowhere on screen — reported three times. The rows scroll in a camera window now; that camera
+  ignores every other object for input too, or the heading answers to taps inside the list. → same
+  section
 
 - **A finger steered `absolute` though relative drag measured 5x better on a phone** — the better
   mode was behind a DEV key, i.e. a keyboard. Ships as drag-anywhere with a flick up to jump; the

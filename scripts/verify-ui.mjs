@@ -79,9 +79,12 @@ import {
   questBarBox,
   questBoardHeight,
   questChipSize,
+  questPanelHeightFor,
   questPanelSize,
   questRowColumns,
   questSegmentBox,
+  questWindowHeight,
+  QUEST_WINDOW_PEEK,
 } from '../src/ui/questLayout.ts'
 import { secondaryMaxWidth } from '../src/ui/menuLayout.ts'
 import { titleBand } from '../src/ui/menuLayout.ts'
@@ -1431,6 +1434,49 @@ check('⚠ the board is a chip until it is asked for, and the open panel always 
   assert.ok(open > chipOnly * 2.5, 'the open panel is barely taller than the chip, i.e. collapsing buys nothing')
   for (const row of rows) console.log(`    ${row}`)
   console.log(`    collapsed the board is ${chipOnly.toFixed(0)}px of the frame against ${open.toFixed(0)}px open`)
+})
+
+check('⚠ the open quest panel scrolls its rows rather than dropping them', () => {
+  // **The rows were dropped against the floor, and on a phone held sideways that left one of three
+  // on screen and the other two nowhere** — reported twice. Every row is laid out now and the
+  // window over them is what fits the room; this holds the window's own arithmetic.
+  const pitch = QUEST_ROW.height + QUEST_ROW.gap
+  const rowH = QUEST_ROW.height
+  const all = questBoardHeight(3, 1)
+  const lines = []
+
+  for (let room = 0; room <= all + 40; room += 0.5) {
+    const h = questWindowHeight(3, room, 1)
+
+    if (all <= room) {
+      assert.equal(h, all, `room ${room}: every row fits and the window is not their height`)
+      continue
+    }
+    // Scrolling: never less than one whole row, never taller than the rows, and never over the room
+    // unless one row is all it could be.
+    assert.ok(h >= rowH - 1e-9, `room ${room}: the window is ${h}px, under one row`)
+    assert.ok(h < all, `room ${room}: a window as tall as the rows does not scroll`)
+    assert.ok(h <= Math.max(room, rowH) + 1e-9, `room ${room}: the window runs past its room`)
+    // **Never cut at a row boundary**: a window ending between two rows says the list has ended.
+    if (room >= pitch + QUEST_WINDOW_PEEK * rowH) {
+      const into = h % pitch
+
+      assert.ok(Math.abs(into - QUEST_WINDOW_PEEK * rowH) < 1e-6, `room ${room}: the window ends ${into}px into a row`)
+    }
+  }
+
+  // The control is the shipped-before rule — rows that fit, the rest dropped — at the rooms a
+  // sideways phone leaves: it reaches fewer rows than the window does at every one of them.
+  for (const room of [40, 60, 90]) {
+    const dropped = Math.max(1, [1, 2, 3].filter((n) => questBoardHeight(n, 1) <= room).length)
+    const window = questWindowHeight(3, room, 1)
+
+    assert.ok(dropped < 3, `room ${room}: the control drops nothing, so it measures nothing`)
+    lines.push(`room ${room}px: ${dropped} of 3 rows reachable before, 3 of 3 through a ${window.toFixed(1)}px window`)
+  }
+
+  assert.equal(questPanelHeightFor(all, 1), questPanelSize(3, 1, 1000, 16).h, 'the panel around three rows is not the three-row panel')
+  for (const line of lines) console.log(`    ${line}`)
 })
 
 check("⚠ the front screen's one control colour is fixed, and its LABEL reads on it", () => {

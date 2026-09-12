@@ -13,11 +13,15 @@ import {
   QUEST_PANEL,
   QUEST_ROW,
   questChipSize,
+  questPanelHeightFor,
   questPanelSize,
   questRowColumns,
   questSegmentBox,
+  questWindowHeight,
   type QuestBarBox,
 } from './questLayout'
+import { scrollPanel, type ScrollPanel } from './scrollPanel'
+import { maxScroll } from './scrollList'
 import {
   isQuestComplete,
   questProgress,
@@ -258,20 +262,40 @@ interface Row {
 export interface QuestBoardView {
   /** Everything the board draws with — for the camera split and the entry cascade's one list. */
   readonly objects: Phaser.GameObjects.GameObject[]
+  /**
+   * The rows alone: what the scroll window's camera draws and no other camera may.
+   *
+   * The caller's main and interface cameras must `ignore()` these, and `attachScroll` makes the
+   * window's own camera ignore everything else — the mutual split `scrollRegion.ts` documents.
+   */
+  readonly rowObjects: Phaser.GameObjects.GameObject[]
   /** What a tap toggles: the collapsed chip, and the open panel's own heading. */
   readonly chip: Phaser.GameObjects.Container
   readonly header: Phaser.GameObjects.Zone
   /** One per slot, bound once in `create` — the rows are reused, never rebuilt. */
   readonly collectTargets: Phaser.GameObjects.Text[]
   readonly expanded: boolean
-  /** How many rows the last `layout` actually drew — see the floor it is dropped against. */
+  /** How many rows the last `layout` laid out — every live quest, reachable by scrolling. */
   readonly rowsShown: number
+  /** The rows window in screen pixels, and how far it scrolls. For the DEV measurement hook. */
+  readonly window: { x: number; y: number; w: number; h: number; extent: number; offset: number }
   /** The board's bottom edge in screen pixels, for whatever the menu stacks under it. */
   readonly bottom: number
   questIdAt(index: number): number
   setBoard(board: QuestBoard): void
   setExpanded(expanded: boolean): void
+  /**
+   * Builds the rows window's camera. **Call once, after every other camera in the scene exists.**
+   *
+   * A camera added later composites over one added earlier, and the panel's plate is drawn by the
+   * interface camera: a window camera added before it would have its rows painted over by their own
+   * background. `ignore` is everything in the scene that is not a row — the display list *and* any
+   * pooled object off it, since a slot put back on the list later keeps whichever filter it had.
+   */
+  attachScroll(ignore: Phaser.GameObjects.GameObject[]): void
   layout(x: number, y: number, frameWidth: number, scale: number, floor: number): void
+  /** Steps the window's flick and keeps its scrollbar on the offset. From the scene's `update`. */
+  update(time: number, delta: number): void
   destroy(): void
 }
 
@@ -350,10 +374,23 @@ export function createQuestBoard(scene: Phaser.Scene, depth: number): QuestBoard
     questId: -1,
   }))
 
+  /**
+   * The window's scrollbar, in the panel's right padding: a faint track and a thumb whose length is
+   * the share of the rows in view. Drawn only while the rows do not all fit — a scrollbar on a list
+   * that does not scroll is a control that does nothing. Chrome, so the interface camera draws it.
+   */
+  const scrollBar = scene.add.graphics().setDepth(depth + 2)
+
   let board: QuestBoard | null = null
   let expanded = false
   let bottom = 0
   let rowsShown = 0
+  let scroll: ScrollPanel | null = null
+  const win = { x: 0, y: 0, w: 0, h: 0, extent: 0, offset: 0 }
+  /** Where the bar goes, and what it last drew, so a still list costs no redraw. */
+  let barX = 0
+  let barScale = 1
+  let barDrawnAt = Number.NaN
 
   const rowObjects = (row: Row): (Phaser.GameObjects.Graphics | Phaser.GameObjects.Text)[] => [
     row.mark,
@@ -380,6 +417,24 @@ export function createQuestBoard(scene: Phaser.Scene, depth: number): QuestBoard
       return
     }
     ;(object.input.hitArea as Phaser.Geom.Rectangle).setTo(x, y, w, h)
+  }
+
+  function drawScrollBar(): void {
+    const offset = scroll?.offset ?? 0
+    const travel = maxScroll(win.extent, win.h)
+
+    barDrawnAt = offset
+    scrollBar.clear()
+    if (!expanded || travel <= 0) return
+
+    const w = Math.max(3, 4 * barScale)
+    const thumbH = Math.max(win.h * (win.h / win.extent), 14 * barScale)
+    const thumbY = win.y + (win.h - thumbH) * (offset / travel)
+
+    scrollBar.fillStyle(KIT.plate, 0.55)
+    scrollBar.fillRoundedRect(barX - w / 2, win.y, w, win.h, w / 2)
+    scrollBar.fillStyle(KIT.rim, 0.85)
+    scrollBar.fillRoundedRect(barX - w / 2, thumbY, w, thumbH, w / 2)
   }
 
   function layoutChip(x: number, y: number, scale: number): { w: number; h: number } {
@@ -500,8 +555,11 @@ export function createQuestBoard(scene: Phaser.Scene, depth: number): QuestBoard
     }
   }
 
+  const allRowObjects = rows.flatMap(rowObjects)
+
   return {
-    objects: [...panel.gameObjects, title, headerChevron, chip, ...rows.flatMap(rowObjects)],
+    objects: [...panel.gameObjects, title, headerChevron, scrollBar, chip, ...allRowObjects],
+    rowObjects: allRowObjects,
     chip,
     header,
     collectTargets: rows.map((row) => row.collect),
@@ -510,6 +568,9 @@ export function createQuestBoard(scene: Phaser.Scene, depth: number): QuestBoard
     },
     get rowsShown() {
       return rowsShown
+    },
+    get window() {
+      return { ...win, offset: scroll?.offset ?? 0 }
     },
     get bottom() {
       return bottom
@@ -521,7 +582,19 @@ export function createQuestBoard(scene: Phaser.Scene, depth: number): QuestBoard
       board = next
     },
     setExpanded(next) {
+      // Opened at the top of the list, every time: the panel is not remembered across a collapse
+      // for the same reason it is not remembered across scenes — see `MainMenu.toggleQuests`.
+      if (next && !expanded) scroll?.scrollTo(0)
       expanded = next
+    },
+    attachScroll(ignore) {
+      if (scroll) return
+
+      const mine = new Set<Phaser.GameObjects.GameObject>(allRowObjects)
+
+      scroll = scrollPanel(scene)
+      scroll.camera.ignore(ignore.filter((object) => !mine.has(object)))
+      scroll.setEnabled(expanded)
     },
     layout(x, y, frameWidth, scale, floor) {
       const live = liveQuests()
@@ -539,25 +612,21 @@ export function createQuestBoard(scene: Phaser.Scene, depth: number): QuestBoard
         panel.clear()
         header.setSize(1, 1)
         setRectHitArea(header, 0, 0, 1, 1)
+        scroll?.setEnabled(false)
+        drawScrollBar()
         bottom = y + layoutChip(x, y, scale).h
         return
       }
 
       const headerH = QUEST_PANEL.padY * scale + QUEST_PANEL.headerHeight * scale
-      // **⚠ The plate is sized for the rows that FIT, not for the rows there are.** The rows were
-      // dropped against `floor` below and the plate was not, so on a short landscape frame the panel
-      // drew its background for three rows under the nav bar and showed one — reported as the third
-      // row not being visible at all.
-      let fitting = 0
-
-      while (
-        fitting < live.length &&
-        y + headerH + QUEST_PANEL.headerGap * scale + questBoardHeight(fitting + 1, scale) + QUEST_PANEL.padY * scale <= floor
-      ) {
-        fitting += 1
-      }
-
-      const size = questPanelSize(Math.max(1, fitting), scale, frameWidth, x)
+      const rowsTop = y + headerH + QUEST_PANEL.headerGap * scale
+      // **⚠ Every row is laid out, and the WINDOW is what is sized to the room.** The rows used to
+      // be dropped against `floor` — and the plate sized for the ones that fit, after a round in
+      // which it had been drawn for three and shown one — so on a phone held sideways the other two
+      // quests were nowhere on screen at all. Reported twice. See `questWindowHeight`.
+      const extent = questBoardHeight(live.length, scale)
+      const windowH = questWindowHeight(live.length, floor - rowsTop - QUEST_PANEL.padY * scale, scale)
+      const size = { w: questPanelSize(1, scale, frameWidth, x).w, h: questPanelHeightFor(windowH, scale) }
       const contentX = x + QUEST_PANEL.padX * scale
       const contentW = size.w - QUEST_PANEL.padX * 2 * scale
 
@@ -575,29 +644,51 @@ export function createQuestBoard(scene: Phaser.Scene, depth: number): QuestBoard
       header.setPosition(x + size.w / 2, y + headerH / 2).setSize(size.w, headerH)
       setRectHitArea(header, 0, 0, size.w, headerH)
 
-      let rowY = y + headerH + QUEST_PANEL.headerGap * scale
+      // **The rows are laid out in the window camera's own coordinates** — origin at the window's
+      // top-left, never re-touched by a scroll tick, since the camera pans over them. The shop's
+      // rows are placed the same way, which is why they look wrong in a debugger and are not.
+      let rowY = 0
 
       for (let i = 0; i < rows.length; i++) {
         const quest = live[i]
 
-        // A row that would run past the floor is dropped rather than drawn off the bottom of the
-        // frame. The chip's own count still tells the truth, which is what makes that safe.
-        if (!quest || i >= fitting) continue
+        if (!quest) continue
 
         for (const object of rowObjects(rows[i])) object.setVisible(true)
-        layoutRow(rows[i], quest, contentX, rowY, contentW, scale)
+        layoutRow(rows[i], quest, 0, rowY, contentW, scale)
         rows[i].collect.setVisible(isQuestComplete(quest))
         rowsShown += 1
         rowY += (QUEST_ROW.height + QUEST_ROW.gap) * scale
       }
 
+      win.x = contentX
+      win.y = rowsTop
+      win.w = contentW
+      win.h = windowH
+      win.extent = extent
+      scroll?.setWindow({ x: contentX, y: rowsTop, width: contentW, height: windowH }, extent)
+      scroll?.setEnabled(true)
+
+      barX = x + size.w - (QUEST_PANEL.padX * scale) / 2
+      barScale = scale
+      drawScrollBar()
+
       bottom = y + size.h
     },
+    update(time, delta) {
+      if (!scroll || !expanded) return
+
+      scroll.update(time, delta)
+      if (scroll.offset !== barDrawnAt) drawScrollBar()
+    },
     destroy() {
+      scroll?.destroy()
+      scroll = null
       panel.destroy()
       header.destroy()
       title.destroy()
       headerChevron.destroy()
+      scrollBar.destroy()
       chip.destroy(true)
       for (const row of rows) for (const object of rowObjects(row)) object.destroy()
     },
