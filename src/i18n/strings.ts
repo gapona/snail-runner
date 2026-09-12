@@ -183,6 +183,7 @@ const en = {
   best: 'Best',
   menu: 'Menu',
   doubleCoins: '🎬 Double coins',
+  coinsDoubled: '✓ Coins doubled',
   waveIncoming: 'Wave {n} of {total} in {seconds}',
   // The endless run: no total, because there is not one. See `WaveBanner.announce`.
   waveEndless: 'Endless',
@@ -367,6 +368,7 @@ const es: Record<StringKey, string> = {
   best: 'Mejor',
   menu: 'Menú',
   doubleCoins: '🎬 Duplicar monedas',
+  coinsDoubled: '✓ Monedas duplicadas',
   waveIncoming: 'Oleada {n} de {total} en {seconds}',
   waveEndless: 'Sin fin',
   levelEndless: 'Sin fin',

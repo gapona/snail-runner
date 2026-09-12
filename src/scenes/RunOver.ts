@@ -124,6 +124,15 @@ const BEST_GAP = 6
 const COIN_GAP = 14
 const DIVIDER_GAP = 18
 const BUTTON_GAP = 10
+/**
+ * One label size for every action on the panel.
+ *
+ * **⚠ They were 22, 17, 26, 17 and 17**, so the column read as five different kinds of control — the
+ * lead a size up, `Again` two sizes up, the rest down — and was reported as different font sizes.
+ * Which action matters most is already said by the face (one `solid`, the way out `muted`); saying
+ * it a second time with the type made the panel look assembled from parts.
+ */
+const ACTION_FONT = 20
 const MIN_SCREEN_MARGIN = 12
 /**
  * How far the panel may shrink to fit a short viewport.
@@ -320,7 +329,7 @@ export class RunOver extends Phaser.Scene {
     const leadContinue = offerContinue ? 'ad' : offerContinueCoins && affordCoins ? 'coins' : 'again'
 
     if (offerContinue) {
-      this.continueButton = kitButton(this, t('continueRun'), { solid: leadContinue === 'ad', fontSize: 22 })
+      this.continueButton = kitButton(this, t('continueRun'), { solid: leadContinue === 'ad', fontSize: ACTION_FONT })
     }
     if (offerContinueCoins) {
       // **⚠ The one offer in the game that had no coin alternative now has one, and it outlives the
@@ -330,12 +339,12 @@ export class RunOver extends Phaser.Scene {
       // is what one ad pays, so the two doors into the same room cost the same.
       this.continueCoinsButton = kitButton(this, t('continueCoins', { n: CONTINUE_COINS }), {
         solid: leadContinue === 'coins',
-        fontSize: leadContinue === 'coins' ? 22 : 17,
+        fontSize: ACTION_FONT,
       })
       this.continueCoinsButton.setEnabled(affordCoins)
     }
-    this.againButton = kitButton(this, t('again'), { solid: leadContinue === 'again', fontSize: 26 })
-    this.menuButton = kitButton(this, t('menu'), { muted: true, fontSize: 17 })
+    this.againButton = kitButton(this, t('again'), { solid: leadContinue === 'again', fontSize: ACTION_FONT })
+    this.menuButton = kitButton(this, t('menu'), { muted: true, fontSize: ACTION_FONT })
     // **⚠ A run that banked nothing is not offered the doubler at all.** It used to be built
     // always and disabled at zero, which put a dead grey control in the middle of the column on
     // exactly the runs a player is least pleased with — and it is the frame the "why are the
@@ -347,7 +356,7 @@ export class RunOver extends Phaser.Scene {
     // pay is not offered rather
     // than drawn and refused, because a control the player presses and is given nothing for reads
     // as the game dropping it.
-    if (this.coins > 0) this.doubleButton = kitButton(this, t('doubleCoins'), { fontSize: 17 })
+    if (this.coins > 0) this.doubleButton = kitButton(this, t('doubleCoins'), { fontSize: ACTION_FONT })
 
     this.actions = [
       ...(this.continueButton ? [this.continueButton] : []),
@@ -463,7 +472,21 @@ export class RunOver extends Phaser.Scene {
 
     const granted = await showRewarded(this.game, 'coins-double')
 
-    if (!granted) return
+    // **Nothing was given, so nothing was spent.** A refused, skipped or unavailable ad leaves the
+    // offer where it was; a grey button after an ad that never paid reads as the game having
+    // taken the offer away for nothing.
+    if (!granted) {
+      this.doubled = false
+      this.doubleButton?.setEnabled(true)
+
+      return
+    }
+
+    // **⚠ The used offer says it was used.** It went grey and kept its label, which on a phone reads
+    // exactly as a control that is broken — reported off a frame where the coins had in fact been
+    // doubled (48 collected, +96 banked). Disabled still, because it is one per run; the label is
+    // what says why.
+    this.doubleButton?.setText(t('coinsDoubled'))
 
     mutate((state) => {
       state.coins = earnCoins(state.coins, this.coins)
@@ -635,11 +658,7 @@ export class RunOver extends Phaser.Scene {
     this.bestText.setFontSize(16 * scale)
     this.bonusText.setFontSize(18 * scale)
     this.coinText.setFontSize(22 * scale)
-    this.continueButton?.setFontSize(22 * scale)
-    this.continueCoinsButton?.setFontSize(17 * scale)
-    this.againButton.setFontSize(26 * scale)
-    this.doubleButton?.setFontSize(17 * scale)
-    this.menuButton.setFontSize(17 * scale)
+    for (const button of this.actions) button.setFontSize(ACTION_FONT * scale)
 
     const readout =
       this.title.height +
