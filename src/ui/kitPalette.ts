@@ -208,7 +208,7 @@ export function sliderHitHeight(scale: number): number {
  * the hand when its short side is small. On width alone an 844x390 landscape phone is a desktop and
  * keeps a 1.0 HUD — which is the frame the rule most needs to reach.
  */
-export const HUD_SCALE = { reference: 480, max: 1.35 } as const
+export const HUD_SCALE = { reference: 480, max: 1.35, landscapeHeight: 300 } as const
 
 /**
  * The run HUD's scale at a given viewport. 1 on a desk, up to `HUD_SCALE.max` in the hand.
@@ -226,5 +226,14 @@ export function hudScale(width: number, height: number): number {
   // has to be the neutral value, not the loud one.
   if (!(short > 0)) return 1
 
-  return Math.min(HUD_SCALE.max, Math.max(1, HUD_SCALE.reference / short))
+  // **⚠ But in landscape the short side is the HEIGHT, and height is the one thing a landscape phone
+  // has none of.** Keyed on the short side alone, a phone held sideways in a webview — about 828x300
+  // once the browser's own header has taken its share — got the *biggest* HUD in the game: a top
+  // band a third of the frame tall over a road squeezed into the bottom third, reported as
+  // everything overlapping everything. The physical argument still holds, and it is capped by what
+  // the frame can hold: no bigger than the height allows, where `landscapeHeight` is the height at
+  // which the unscaled HUD is already as much of the frame as it should be. 844x390 is unchanged.
+  const landscapeCap = width > height ? height / HUD_SCALE.landscapeHeight : Infinity
+
+  return Math.max(1, Math.min(HUD_SCALE.max, HUD_SCALE.reference / short, landscapeCap))
 }

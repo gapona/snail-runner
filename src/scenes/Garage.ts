@@ -23,7 +23,7 @@ import { ownsSnailSkin, resolveSelectedSnail, skinItemId, snailSkin, snailSkinId
 import { EXIT_GLYPH, EXIT_PLATED_ALPHA } from '../ui/exitButton'
 import { wardrobeStack, wardrobeStrip, wardrobeStripHeight } from '../ui/garageLayout'
 import { createPlayerState } from '../run/playerMotion'
-import { PLAYER_Z, readableScale, SPEED_BASE } from '../run/constants'
+import { mascotReadableScale, PLAYER_Z, SPEED_BASE } from '../run/constants'
 import { t, tOptional } from '../i18n/strings'
 import { titleCase } from '../ui/format'
 
@@ -423,7 +423,12 @@ export class Garage extends Phaser.Scene {
       scale,
       drawn ? this.mascot.drawnBox : fallbackBox(width, height),
       height - this.nav.heightAt(width),
-      { name: this.name.height, action: this.action.height, arrow: this.previous.width },
+      {
+        name: this.name.height,
+        action: this.action.height,
+        arrow: this.previous.width,
+        stackWidth: Math.max(this.name.width, this.action.width),
+      },
     )
 
     this.name.setFontSize(GARAGE.nameSize * scale * boxes.fit)
@@ -478,7 +483,13 @@ export class Garage extends Phaser.Scene {
       const owns = ownsSnailSkin(state.purchases, id)
       const worn = state.selectedSnail === id
 
-      this.strip.fillStyle(worn ? KIT.active : KIT.rim, owns ? 1 : 0.28)
+      // **A dark disc under every dot**, because the strip is drawn over the picture and a pale dot at
+      // 0.28 is a pale dot on a pale sky: in landscape, where the stack stands beside the mascot
+      // against the air, the four unowned dots simply were not there. The ink is the same trick the
+      // wordmark's stroke is — the dot is dark-edged against whatever is behind it.
+      this.strip.fillStyle(KIT.plate, 0.6)
+      this.strip.fillCircle(dot.x, dot.y, dot.radius + Math.max(1.5, dot.radius * 0.4))
+      this.strip.fillStyle(worn ? KIT.active : KIT.rim, owns ? 1 : 0.4)
       this.strip.fillCircle(dot.x, dot.y, dot.radius)
       // The one on screen keeps a ring whether or not it is owned, or a run of unowned items would
       // leave the player unable to see where they are in the list at all.
@@ -503,7 +514,7 @@ export class Garage extends Phaser.Scene {
     // ratio is a property of the device, and `readableScale` is the lever that was already built for
     // exactly this and already used by `MainMenu` — 1 at 1280px and wider, up to 1.9 on a phone.
     // It costs nothing here: there is no collision on this screen, which is what `sizeScale` is for.
-    this.mascot.setSizeScale(GARAGE.mascotScale * readableScale(width))
+    this.mascot.setSizeScale(GARAGE.mascotScale * mascotReadableScale(width, height))
     this.placedAgainst = null
 
     this.previous.setFontSize(GARAGE.arrowSize * scale)

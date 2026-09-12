@@ -98,7 +98,7 @@ import {
   UI_THEME_COLORS,
 } from '../src/ui/kitPalette.ts'
 import { percentFor, SLIDER_STEPS, snapValue, stepValue, valueFromX, xForValue } from '../src/ui/sliderMath.ts'
-import { GARAGE_LAYOUT, wardrobeStack } from '../src/ui/garageLayout.ts'
+import { GARAGE_LAYOUT, wardrobeStack, wardrobeStripHeight } from '../src/ui/garageLayout.ts'
 import { readableScale } from '../src/run/constants.ts'
 import { EXIT_ALPHA, EXIT_GLYPH, EXIT_PLATED_ALPHA } from '../src/ui/exitButton.ts'
 import { chroma, contrastRatio, hueDistance, relativeLuminance, toOklab } from '../src/road/color.ts'
@@ -1546,6 +1546,12 @@ check('the HUD is drawn bigger in the hand and unchanged on a desk', () => {
   // this rule most needs to reach.
   assert.ok(hudScale(844, 390) > 1, 'a landscape phone is treated as a desktop, i.e. the scale is keyed on width')
   assert.ok(Math.abs(hudScale(844, 390) - hudScale(390, 844)) < 1e-9, 'the same phone rotated is scaled differently')
+  // **⚠ Except where the landscape frame has no height to give.** A phone sideways in a webview is
+  // about 828x300, and keyed on the short side alone it drew the biggest HUD in the game over a road
+  // squeezed into the bottom third. Capped by the height there — and the control is the uncapped
+  // rule, which gives that frame the full 1.35.
+  assert.equal(hudScale(828, 300), 1, 'a short landscape frame still gets a HUD bigger than a desktop one')
+  assert.ok(Math.min(HUD_SCALE.max, HUD_SCALE.reference / 300) > 1.3, 'the control no longer reproduces the reported HUD')
   // Monotonic, and capped rather than unbounded: a 240px frame must not get a HUD twice the size.
   assert.ok(hudScale(320, 568) >= hudScale(375, 667), 'a narrower frame is scaled smaller')
   assert.equal(hudScale(120, 200), HUD_SCALE.max, 'the cap does not hold on an absurdly small frame')
@@ -1685,6 +1691,14 @@ check('⚠ the wardrobe caption is never drawn over the mascot', () => {
       const clear = boxes.name.x < mascot.left || boxes.name.x > mascot.right
 
       assert.ok(clear, `the side stack is over the mascot at ${w}x${h}`)
+      // **⚠ And the dot strip has its row between the caption and the button**, which the side
+      // branch left out: measured at 828x300, the dots were drawn behind the button's top edge.
+      const captionBottom = boxes.name.y + sizes.name / 2
+      const buttonTop = boxes.action.y - sizes.action / 2
+      assert.ok(
+        buttonTop - captionBottom >= wardrobeStripHeight(scale) - 1e-9,
+        `the side stack leaves ${(buttonTop - captionBottom).toFixed(1)}px for a ${wardrobeStripHeight(scale).toFixed(1)}px strip at ${w}x${h}`,
+      )
     } else {
       assert.ok(top >= mascot.bottom, `the caption is ${(mascot.bottom - top).toFixed(0)}px over the mascot at ${w}x${h}`)
       assert.ok(

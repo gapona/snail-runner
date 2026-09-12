@@ -15231,6 +15231,64 @@ answer "no".
   and `vite preview` sends `Cache-Control: no-store`, because `sirv`'s ETag with no cache header let
   a phone keep last night's `index.html`.
 
+## A Phone Sideways In A Webview Is 828x300
+
+Reported off three screenshots of the build in Telegram's in-app browser, held sideways: buttons over
+buttons on every screen, the third quest row not visible at all, and a jump that "visually almost
+catches" the obstacle it cleared. The frame is about **828x300** — shorter than anything the viewport
+sweeps here had ever held, since 844x390 was the landscape case.
+
+### ⚠ The jump: heights were drawn on the height axis and sizes on the width axis
+
+`src/run/lift.ts` (pure, `npm run verify:jump`). `projectInto` scales a lateral world offset by
+`screenWidth / 2` and a vertical one by `screenHeight / 2`, so a world unit is a different number of
+pixels across than up — by exactly the aspect. The road is a flat ribbon and never noticed. A
+billboard did: `billboardRectInto` sizes a sprite off the width and lifts it off the ground by the
+height, so the two halves of one object were on two scales. A jump's apex, in the snail's own drawn
+heights:
+
+| frame | before | after |
+|---|---|---|
+| portrait 384x744 | 2.70 — drew clear of the tall barrier it cannot clear | 1.39 |
+| desktop 1920x945 | 0.78 | 1.39 |
+| webview 828x300 | **0.50** — feet below a low block's top | 1.39 |
+
+1.39 is the number the bands were designed against, on every frame. `drawnLift` draws a height on the
+sprite's own scale; above `LIFT_KNEE` (0.72) of the room between the ground point and the top of the
+frame it eases toward that room, so a ramp flight on a short frame rises into the top of the frame
+and stays there rather than leaving it. The room is measured to the top of a **snail** whatever is
+lifted, so a coin and the snail at one world height are drawn at one lift and an arc chain stays on
+the flight. `liftedRectInto` is what every pool that draws at a height calls — player, pickups,
+critters, obstacles. **`src/road/` is untouched**: this lifts from the ground point the billboard
+already projected, which is the one thing that has to agree with the road.
+
+### The menu has a compact mode
+
+`compactLandscape` = side-by-side **and** under 360px tall. The column there cannot stack coins,
+wordmark, board and Play (about 250px against 234 above the bar), so the collapsed quest chip moves up
+into the coin row beside the purse, the wordmark is fitted to the gap between that row and the stack
+(`fitTitleUnderCoinRow`), and the open panel takes the wordmark's band as well as the stack's — both
+hidden while it is open, as the stack already was. All three rows show at 828x300.
+
+### Everything else that did not fit
+
+- **`hudScale` is capped by the frame's height in landscape** (`HUD_SCALE.landscapeHeight` 300).
+  Keyed on the short side alone, a sideways phone drew the biggest HUD in the game over a road 300px
+  tall — the band took about 27% of the frame.
+- **The mascot's readable boost is portrait-only** (`mascotReadableScale`): on a wide frame the snail
+  is already large against the height, and boosting it pushed it into everything.
+- **Garage**: the side column sits between the arrow's outer edge and the frame's, not between the
+  mascot and the frame — the arrow stands in that space and was drawn across the name and the button.
+  **⚠ And the side branch did not reserve the dot strip**, which `needed` counts — so the dots were
+  drawn behind the button. `verify:ui` holds the strip's row now. The unowned dots also carry a dark
+  disc: at 0.28 alpha a pale dot on a pale sky is not there.
+- **Records and Shop** fit by height as well as width (`MIN_FIT` 0.6, the `Settings` pattern). The
+  shop shows one row at 828x300 and scrolls, which is the documented scroll-window trade.
+
+Checked on the frame at 828x300 — menu collapsed and open, garage, records, shop, settings, a run at
+the apex of a jump over a low block, and the result panel — and at 844x390, 384x744 and 1920x945 for
+regressions. 26 suites green.
+
 ## Known Issues Fixed
 
 Bugs and gotchas hit and fixed while building the platform/save/audio layers — recorded so they don't get
@@ -15238,6 +15296,10 @@ silently reintroduced or re-debugged from scratch. Full detail lives in the sect
 index.
 
 App bugs:
+
+- **Every height on the road was drawn on the frame's height axis while every size was drawn on its
+  width**, so a jump's apex was 2.7 snail heights in portrait and 0.5 on a sideways phone. → "A Phone
+  Sideways In A Webview Is 828x300"
 
 - **A finger steered `absolute` though relative drag measured 5x better on a phone** — the better
   mode was behind a DEV key, i.e. a keyboard. Ships as drag-anywhere with a flick up to jump; the

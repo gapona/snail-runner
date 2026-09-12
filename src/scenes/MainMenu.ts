@@ -26,11 +26,11 @@ import { WorldView } from '../run/WorldView'
 import { biomeIndexForSegment } from '../road/biomes'
 import { PlayerView } from '../run/PlayerView'
 import { createQuestBoard, type QuestBoardView } from '../ui/questBoard'
-import { questPanelSize } from '../ui/questLayout'
+import { QUEST_CHIP, questPanelSize } from '../ui/questLayout'
 import { claimQuest, QUEST_SLOTS, resolveQuestBoard, type QuestBoard } from '../run/quests'
 import { createRng } from '../race/rng'
 import { createPlayerState } from '../run/playerMotion'
-import { PLAYER_REST_Y_FRACTION, PLAYER_WIDTH, PLAYER_Z, readableScale, SPEED_BASE } from '../run/constants'
+import { PLAYER_REST_Y_FRACTION, PLAYER_WIDTH, PLAYER_Z, mascotReadableScale, SPEED_BASE } from '../run/constants'
 import { CAMERA_HEIGHT, HORIZON_Y } from '../road/constants'
 import { INK } from '../run/artPalette'
 
@@ -609,8 +609,26 @@ export class MainMenu extends Phaser.Scene {
    * sun is on the right, and the mascot is centred and lower.
    */
   private layoutQuests(width: number, height: number, scale: number): void {
-    const x = SIDE_MARGIN * scale
-    const y = this.title.y + this.title.height / 2 + QUEST_BOARD_GAP * scale
+    // The same corner, and the same inset, the garage puts its own coin line in. Placed first: on a
+    // compact frame the collapsed board hangs off it.
+    this.purse.setFontSize(PURSE_SIZE * scale)
+    this.purse.setPosition(PURSE_INSET * scale, PURSE_INSET * scale)
+    this.purse.setText(`\u{1FA99} ${getState().coins}`)
+
+    // **⚠ On a short landscape frame the column cannot stack coins, wordmark, board and Play**, and
+    // it tried: at 828x300 — a phone sideways in a webview — the four needed about 250px against
+    // 234 above the bar, so the chip was drawn across the top of the Play button. There, the
+    // collapsed chip moves up into the coin row beside the purse, which is dead space on this frame;
+    // open, the panel takes the wordmark's band as well as the stack's (see `tight`), because three
+    // rows are what it is for.
+    const compact = this.compactLandscape(width, height, scale)
+    const chipH = QUEST_CHIP.height * scale
+    const x = compact && !this.quests.expanded ? this.purse.x + this.purse.width + QUEST_BOARD_GAP * scale : SIDE_MARGIN * scale
+    const y = compact
+      ? this.quests.expanded
+        ? this.purse.y + this.purse.height + STACK_GAP * scale
+        : this.purse.y + this.purse.height / 2 - chipH / 2
+      : this.title.y + this.title.height / 2 + QUEST_BOARD_GAP * scale
     // **⚠ The board gives way where the column cannot hold both it and the button, and it is the
     // one that gives.** On a landscape phone the Play stack stands *beside* the mascot, i.e. in this
     // column, and there are 182px between the title and the bar for a 108px board plus a 132px
@@ -629,14 +647,45 @@ export class MainMenu extends Phaser.Scene {
     // is hidden while it is open**. That is what a dialog is; it is also what removes the hazard of
     // a tap on the panel's own blank space falling through to Play and starting a run, since a
     // hidden object is not hit-tested. The heading is the way back, and Play is one tap away again.
-    const tight = this.quests.expanded && y + questPanelSize(QUEST_SLOTS, scale, width, x).h > floor
+    const tight = this.quests.expanded && (compact || y + questPanelSize(QUEST_SLOTS, scale, width, x).h > floor)
 
     this.stackCovered = tight
-    this.quests.layout(x, y, width, scale, tight ? height - this.nav.heightAt(width) : floor)
-    // The same corner, and the same inset, the garage puts its own coin line in.
-    this.purse.setFontSize(PURSE_SIZE * scale)
-    this.purse.setPosition(PURSE_INSET * scale, PURSE_INSET * scale)
-    this.purse.setText(`\u{1FA99} ${getState().coins}`)
+    // Open on a compact frame, the panel has the wordmark's band too — so the wordmark goes with the
+    // stack. Hidden rather than drawn under, for the same reason the stack is.
+    this.title.setVisible(!(compact && tight))
+    this.quests.layout(x, y, width, scale, tight ? height - this.nav.heightAt(width) - STACK_GAP * scale : floor)
+  }
+
+  /**
+   * On a compact frame, the wordmark between the coin row and the Play button — shrunk to the gap.
+   *
+   * The collapsed board lives in the coin row there (see `layoutQuests`), and the band `titleRow`
+   * places the wordmark in starts above that row's bottom on a 300px frame: measured, the chip ran
+   * across the top of the letters. So the wordmark starts under the row and is shrunk to what is
+   * left above the stack, which is the order this screen already keeps — the decoration gives way
+   * and the button does not.
+   */
+  private fitTitleUnderCoinRow(width: number, height: number, scale: number): void {
+    const top = Math.max(this.purse.y + this.purse.height, this.quests.bottom) + STACK_GAP * scale
+    const bottom = this.stackFloor(width, height, scale) - this.stackHeight(scale) - STACK_GAP * scale * 1.5
+    const room = bottom - top
+
+    if (room > 0 && this.title.height > room) {
+      const size = (Number.parseFloat(String(this.title.style.fontSize)) || TITLE_FONT_SIZE) * (room / this.title.height)
+
+      this.title.setFontSize(size)
+      this.title.setStroke(toCssColor(INK), size * TITLE_INK.stroke)
+      this.title.setShadow(0, size * TITLE_INK.shadowY, toCssColor(INK), 0, true, true)
+    }
+    this.title.setY(top + this.title.height / 2)
+  }
+
+  /**
+   * A landscape frame too short to stack the coins, the wordmark, the board and the Play button in
+   * one column — see `layoutQuests`. 844x390 is not one; a phone sideways in a webview is.
+   */
+  private compactLandscape(width: number, height: number, scale: number): boolean {
+    return this.sideBySide(width, height, scale) && height < COMPACT_LANDSCAPE_HEIGHT
   }
 
 
@@ -866,8 +915,9 @@ export class MainMenu extends Phaser.Scene {
         // stands at the composition's own distance.
         MASCOT.zScale
       : this.mascotLift(width, height, scale).z
-    this.mascot.setSizeScale(mascotScale(this.mascotZ) * readableScale(width))
+    this.mascot.setSizeScale(mascotScale(this.mascotZ) * mascotReadableScale(width, height))
     this.layoutQuests(width, height, scale)
+    if (this.compactLandscape(width, height, scale) && this.title.visible) this.fitTitleUnderCoinRow(width, height, scale)
     this.placeStack(width, height, scale)
     this.layoutCorner(width, scale)
   }
@@ -992,7 +1042,12 @@ export class MainMenu extends Phaser.Scene {
         // left and this frame moves the button into the same column, which is a collision the
         // vertical measurements could not see because they were taken against the mascot and the
         // bar. The two share the column by stacking, and the board is a chip until it is asked for.
-        Math.min(this.quests.bottom + STACK_GAP * scale * 1.5, this.stackFloor(width, height, scale) - stack)
+        Math.min(
+          // On a compact frame the board is up in the coin row, so the stack hangs off the wordmark.
+          (this.compactLandscape(width, height, scale) ? this.title.y + this.title.height / 2 : this.quests.bottom) +
+            STACK_GAP * scale * 1.5,
+          this.stackFloor(width, height, scale) - stack,
+        )
       : this.stackTop(width, height, scale)
     const column = sideBySide ? width * SIDE_COLUMN : width / 2
 
@@ -1186,3 +1241,5 @@ const SIDE_COLUMN = 0.28
 const SIDE_BY_SIDE_MIN_ASPECT = 1.3
 
 const QUEST_BOARD_GAP = 18
+/** Below this height a side-by-side frame is compact — see `compactLandscape`. */
+const COMPACT_LANDSCAPE_HEIGHT = 360

@@ -30,6 +30,7 @@ import { groundPointInto, type GroundPoint } from './groundProjection'
 import { createShadow } from './shadowArt'
 import { hidePooled, showPooled } from './pooled'
 import { addArtImage, setArt } from '../art/atlas'
+import { liftedRectInto } from './lift'
 
 /**
  * Every pickup on screen, from a fixed pool.
@@ -179,7 +180,7 @@ export class PickupSprites {
         // icon at 95% of that box on a phone, which is the coin-the-size-of-the-road failure
         // `PICKUP_DRAW_SIZE` exists to prevent.
         const drawn = pickupDrawWidth(screenWidth)
-        const rect = billboardRectInto(
+        const rect = liftedRectInto(
           this.rect,
           ground,
           pickup.offsetX,

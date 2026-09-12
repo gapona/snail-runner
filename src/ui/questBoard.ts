@@ -8,6 +8,7 @@ import { t } from '../i18n/strings'
 import { pipFills } from './fruitGauge'
 import {
   questBarSegments,
+  questBoardHeight,
   QUEST_CHIP,
   QUEST_PANEL,
   QUEST_ROW,
@@ -542,10 +543,23 @@ export function createQuestBoard(scene: Phaser.Scene, depth: number): QuestBoard
         return
       }
 
-      const size = questPanelSize(live.length, scale, frameWidth, x)
+      const headerH = QUEST_PANEL.padY * scale + QUEST_PANEL.headerHeight * scale
+      // **⚠ The plate is sized for the rows that FIT, not for the rows there are.** The rows were
+      // dropped against `floor` below and the plate was not, so on a short landscape frame the panel
+      // drew its background for three rows under the nav bar and showed one — reported as the third
+      // row not being visible at all.
+      let fitting = 0
+
+      while (
+        fitting < live.length &&
+        y + headerH + QUEST_PANEL.headerGap * scale + questBoardHeight(fitting + 1, scale) + QUEST_PANEL.padY * scale <= floor
+      ) {
+        fitting += 1
+      }
+
+      const size = questPanelSize(Math.max(1, fitting), scale, frameWidth, x)
       const contentX = x + QUEST_PANEL.padX * scale
       const contentW = size.w - QUEST_PANEL.padX * 2 * scale
-      const headerH = QUEST_PANEL.padY * scale + QUEST_PANEL.headerHeight * scale
 
       panel.draw(x + size.w / 2, y + size.h / 2, size.w, size.h)
 
@@ -568,7 +582,7 @@ export function createQuestBoard(scene: Phaser.Scene, depth: number): QuestBoard
 
         // A row that would run past the floor is dropped rather than drawn off the bottom of the
         // frame. The chip's own count still tells the truth, which is what makes that safe.
-        if (!quest || rowY + QUEST_ROW.height * scale > floor) continue
+        if (!quest || i >= fitting) continue
 
         for (const object of rowObjects(rows[i])) object.setVisible(true)
         layoutRow(rows[i], quest, contentX, rowY, contentW, scale)

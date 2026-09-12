@@ -14,6 +14,7 @@ import { OBSTACLE_POOL_SIZE, type Obstacle } from './obstacles'
 import { groundPointInto, type GroundPoint } from './groundProjection'
 import { createShadow } from './shadowArt'
 import { hidePooled, showPooled } from './pooled'
+import { liftedRectInto } from './lift'
 
 /** What one pool slot is currently showing, so a frame can skip work it does not need. */
 interface SlotState {
@@ -185,7 +186,7 @@ export class ObstacleSprites {
         const worldWidth = obstacle.halfWidths * 2 * ROAD_WIDTH
         const worldHeight = obstacle.yHigh - obstacle.yLow
 
-        const rect = billboardRectInto(
+        const rect = liftedRectInto(
           this.rect,
           ground,
           obstacle.offsetX,

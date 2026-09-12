@@ -11,6 +11,8 @@
 // moment anything asks "is this obstacle jumpable?" the model has been replaced by a lookup table
 // and the third class stops being free.
 import assert from 'node:assert/strict'
+import { drawnLift } from '../src/run/lift.ts'
+import { CAMERA_DEPTH as CAMERA_DEPTH_FOR_LIFT } from '../src/road/constants.ts'
 import {
   SHADOW_APEX,
   SHADOW_FOOTPRINT,
@@ -35,6 +37,8 @@ import {
   PLAYER_BODY_H,
   PLAYER_HALF_WIDTHS,
   PLAYER_WIDTH,
+  PLAYER_Z,
+  PLAYER_REST_Y_FRACTION,
 } from '../src/run/constants.ts'
 import { FIXED_STEP_MS } from '../src/race/constants.ts'
 import { ROAD_WIDTH } from '../src/road/constants.ts'
@@ -429,6 +433,62 @@ check('⚠ the hill clips the mark as well as the object', () => {
     `    flat road keeps 1.00; a mark ${markHeight / 4}px past the crest keeps ` +
       `${shadowClipFade(500 + markHeight / 4, markHeight, 500).toFixed(2)}, one half a mark past it keeps 0.00`,
   )
+})
+
+check('a height is drawn on the sprite own scale, so the jump looks the same on every frame', () => {
+  // **⚠ The projection lifts by the frame's HEIGHT and sizes sprites by its WIDTH**, so a jump
+  // measured in snail heights depended on the aspect: 2.7 on a portrait phone, 0.78 on a desktop and
+  // 0.50 on a landscape webview, where the feet stayed below the top of a `low` block the collision
+  // said they cleared. Reported as the jump visually almost catching the obstacle.
+  const scale = CAMERA_DEPTH_FOR_LIFT / PLAYER_Z
+  const rows = []
+
+  for (const [w, h] of [[384, 744], [1920, 945], [828, 300]]) {
+    const ground = h * PLAYER_REST_Y_FRACTION
+    const body = (scale * PLAYER_BODY_H * w) / 2
+    const now = drawnLift(scale, JUMP_APEX, ground, w, h) / body
+    // The control: the arrangement that shipped, the road's own vertical scale.
+    const before = ((scale * JUMP_APEX * h) / 2) / body
+
+    rows.push(`${w}x${h} ${now.toFixed(2)} (was ${before.toFixed(2)})`)
+    assert.ok(Math.abs(now - JUMP_APEX / PLAYER_BODY_H) < 1e-9, `${w}x${h}: the apex is ${now.toFixed(2)} snail heights`)
+    // And the feet at the apex clear a low block's top by what the bands say they do.
+    assert.ok(now > OBSTACLE_BANDS.low.yHigh / PLAYER_BODY_H, `${w}x${h}: the feet are drawn under a low block at the apex`)
+  }
+  assert.ok(((CAMERA_DEPTH_FOR_LIFT / PLAYER_Z) * JUMP_APEX * 300) / 2 / (((CAMERA_DEPTH_FOR_LIFT / PLAYER_Z) * PLAYER_BODY_H * 828) / 2) < OBSTACLE_BANDS.low.yHigh / PLAYER_BODY_H, 'the control drew the landscape apex clear, so it is not the reported arrangement')
+  console.log(`    apex in snail heights: ${rows.join(', ')}`)
+})
+
+check('a ramp flight on a short frame rises into the top of the frame and stays in it', () => {
+  // At true scale a ramp apex is 3.9 snail heights, and a 300px landscape frame is about four: the
+  // flight would leave the top of the screen. Above the knee the lift is eased toward the room and
+  // never reaches it.
+  const w = 828
+  const h = 300
+  const scale = CAMERA_DEPTH_FOR_LIFT / PLAYER_Z
+  const ground = h * PLAYER_REST_Y_FRACTION
+  const body = (scale * PLAYER_BODY_H * w) / 2
+  const top = ground - drawnLift(scale, RAMP_APEX, ground, w, h) - body
+  const unbounded = ground - (scale * RAMP_APEX * w) / 2 - body
+
+  assert.ok(top >= 0, `the snail's top at the ramp apex is at ${top.toFixed(0)}px`)
+  assert.ok(unbounded < 0, 'the control stayed on screen, so the ceiling was not needed here')
+
+  // Monotonic, and exactly the true lift wherever a jump reaches.
+  let previous = -Infinity
+
+  for (let y = 0; y <= 2000; y += 10) {
+    const lift = drawnLift(scale, y, ground, w, h)
+
+    assert.ok(lift >= previous, `the lift fell at ${y}`)
+    previous = lift
+  }
+  for (const [fw, fh] of [[384, 744], [1920, 945], [828, 300]]) {
+    const fGround = fh * PLAYER_REST_Y_FRACTION
+    const exact = (scale * JUMP_APEX * fw) / 2
+
+    assert.ok(Math.abs(drawnLift(scale, JUMP_APEX, fGround, fw, fh) - exact) < 1e-9, `${fw}x${fh}: a jump reached the ceiling`)
+  }
 })
 
 console.log(`${passed} checks passed`)

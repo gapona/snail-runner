@@ -123,7 +123,12 @@ export class Records extends Phaser.Scene {
   }
 
   layout(width: number, height: number): void {
-    const scale = uiScale(width)
+    // **⚠ Fitted to the height as well as the width.** The panel was clamped to the frame and its
+    // rows were laid out at full size regardless, so on a landscape phone — 828x300 once a webview's
+    // header has taken its share — the last row ran under the Close button. One factor over the
+    // whole panel, floored at `MIN_FIT` so the type stays readable and Close stays a thumb wide.
+    const natural = (PANEL.top + ROW_COUNT * PANEL.row + PANEL.bottom) * uiScale(width)
+    const scale = uiScale(width) * Math.min(1, Math.max(MIN_FIT, (height - 24) / natural))
 
     this.backdrop.setSize(width, height)
     if (!this.backdrop.input) this.backdrop.setInteractive()
@@ -133,7 +138,7 @@ export class Records extends Phaser.Scene {
     // Measured from its own contents rather than a fixed height — the fit pass every stacked panel
     // in this project has needed, and for the same reason: `uiScale` scales on *width*, so a
     // landscape phone keeps full-size type in a frame with no room for it.
-    const panelH = Math.min(height - 40 * scale, (PANEL.top + ROW_COUNT * PANEL.row + PANEL.bottom) * scale)
+    const panelH = Math.min(height - 12, (PANEL.top + ROW_COUNT * PANEL.row + PANEL.bottom) * scale)
     const x = (width - panelW) / 2
     const y = (height - panelH) / 2
 
@@ -171,6 +176,8 @@ export class Records extends Phaser.Scene {
 /** How the panel is laid out, in unscaled pixels. */
 const PANEL = { width: 380, top: 62, row: 38, bottom: 62 } as const
 const ROW_COUNT = 5
+/** How far the panel may be shrunk to fit a short frame — see `layout`. */
+const MIN_FIT = 0.6
 /** Below the plate, which is itself below the content — see `Settings`' own note. */
 const BACKDROP_DEPTH = -2
 

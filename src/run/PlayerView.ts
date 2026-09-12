@@ -24,6 +24,7 @@ import {
 import { PICKUP_COLORS } from './artPalette'
 import { DEFAULT_SNAIL_SKIN } from './snailSkins'
 import type { PlayerState } from './playerMotion'
+import { liftedRectInto } from './lift'
 
 /**
  * The snail's footprint in the units `billboardRectInto` wants.
@@ -369,7 +370,7 @@ export class PlayerView {
 
     // Then the snail itself, lifted by its world height through the same helper — so the lift is
     // in the projection's own units and shrinks with distance exactly as the sprite does.
-    billboardRectInto(
+    liftedRectInto(
       this.rect,
       ground,
       player.offsetX,

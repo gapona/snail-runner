@@ -139,7 +139,7 @@ export function wardrobeStack(
   scale: number,
   mascot: { left: number; right: number; top: number; bottom: number },
   barTop: number,
-  sizes: { name: number; action: number; arrow: number },
+  sizes: { name: number; action: number; arrow: number; stackWidth?: number },
 ): WardrobeBoxes {
   const gap = GARAGE_LAYOUT.gap * scale
   const feet = mascot.bottom
@@ -172,14 +172,36 @@ export function wardrobeStack(
 
   if (side) {
     // The mascot keeps the side of the frame it is standing on; the stack takes the other one.
-    const column = mascot.left > width / 2 ? mascot.left / 2 : width - (width - mascot.right) / 2
+    //
+    // **⚠ Beyond the ARROW on that side, not merely beyond the mascot.** The column was centred in
+    // the space between the mascot and the frame's edge — and the arrow stands in exactly that space,
+    // just off the mascot's edge, so on a landscape phone the right arrow was drawn across the
+    // skin's name and its button. Reported as everything overlapping. What is between the arrow and
+    // the edge is the column's, and when the stack is wider than that it is held inside the frame
+    // rather than allowed back over the arrow's far side.
+    const stackHalf = (sizes.stackWidth ?? 0) / 2
+    const edge = GARAGE_LAYOUT.arrowMargin * scale
+    const onLeft = mascot.left > width / 2
+    const from = onLeft ? edge : arrows.rightX + half + gap
+    const to = onLeft ? arrows.leftX - half - gap : width - edge
+    const centred = (from + to) / 2
+    // Centred in the space when the stack fits in it; otherwise kept inside the frame, which is the
+    // one bound that may not give.
+    const column =
+      to - from >= stackHalf * 2
+        ? centred
+        : Math.min(Math.max(centred, edge + stackHalf), width - edge - stackHalf)
     const middle = (barTop + mascot.top) / 2
+    // **⚠ The strip is part of this stack too**, and the side branch left it out: the caption and
+    // the button were centred as a pair with one `gap` between them, and the dots — drawn under the
+    // caption — landed behind the button. Measured at 828x300. `needed` already counts it.
+    const top = middle - needed / 2
 
     return {
       side,
       fit,
-      name: { x: column, y: middle - (sizes.action / 2 + gap / 2) },
-      action: { x: column, y: middle + (sizes.name / 2 + gap / 2) },
+      name: { x: column, y: top + sizes.name / 2 },
+      action: { x: column, y: top + needed - sizes.action / 2 },
       arrows,
     }
   }

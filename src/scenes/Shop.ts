@@ -95,6 +95,8 @@ const BOTTOM_PAD = 16
  */
 const MAX_PANEL_HEIGHT_FRACTION = 0.86
 const MIN_WINDOW_HEIGHT = 60
+/** How far the whole panel may be shrunk to fit a short frame — see `layout`. */
+const MIN_FIT = 0.6
 
 /** Below the plate's own negative depth — see the backdrop's own note in `create()`. */
 const BACKDROP_DEPTH = -10
@@ -270,18 +272,26 @@ export class Shop extends Phaser.Scene {
   }
 
   layout(width: number, height: number): void {
-    const scale = uiScale(width)
     // **The list is what the active tab holds, not what the catalogue holds.** Every measurement
     // below - the panel's height, the window's height, the scroll extent - is about the rows the
     // player can actually reach, so a 21-row upgrade tab must not make the themes tab scroll.
     const visible = this.visibleRows()
     const tabsHeight = this.tabs.length > 1 ? TABS_HEIGHT : 0
+    // **⚠ Fitted to the height, because the width said nothing about it.** On a landscape phone —
+    // 828x300 once a webview's header has taken its share — the chrome alone was most of the panel
+    // at full size, the list window was held at its 60px floor anyway, and the Close button was
+    // drawn across the one row the window could show. The scale is solved so the chrome plus one
+    // window's worth of list fits the panel, floored at `MIN_FIT`.
+    const maxPanel = Math.max(height * MAX_PANEL_HEIGHT_FRACTION, height - 24)
+    const chromeUnscaled = TOP_PAD + HEADER_HEIGHT + TOPUP_HEIGHT + tabsHeight + FOOTER_HEIGHT + BOTTOM_PAD
+    const scale =
+      uiScale(width) * Math.min(1, Math.max(MIN_FIT, maxPanel / ((chromeUnscaled + MIN_WINDOW_HEIGHT) * uiScale(width))))
     const rowsHeight = contentHeight(visible.length, ROW_HEIGHT, ROW_GAP)
     const chromeHeight = (TOP_PAD + HEADER_HEIGHT + TOPUP_HEIGHT + tabsHeight + FOOTER_HEIGHT + BOTTOM_PAD) * scale
     // The panel is as tall as its content wants **or** as tall as the screen allows, whichever is
     // smaller. Only the second branch scrolls; a short catalogue lays out exactly as it did before
     // this scene could scroll at all, which is what keeps the template's own demo unchanged.
-    const panelHeight = Math.min(chromeHeight + rowsHeight * scale, height * MAX_PANEL_HEIGHT_FRACTION)
+    const panelHeight = Math.min(chromeHeight + rowsHeight * scale, maxPanel)
     const panelWidth = Math.min(PANEL_WIDTH * scale, width - 24)
 
     const cx = width / 2
@@ -323,7 +333,7 @@ export class Shop extends Phaser.Scene {
     // The scrolling window: everything between the tab strip and the footer.
     const windowTop = panelTop + (TOP_PAD + HEADER_HEIGHT + TOPUP_HEIGHT + tabsHeight) * scale
 
-    this.windowSize = windowHeight(panelHeight, chromeHeight, MIN_WINDOW_HEIGHT)
+    this.windowSize = windowHeight(panelHeight, chromeHeight, MIN_WINDOW_HEIGHT * scale)
     this.rowsExtent = contentHeight(visible.length, ROW_HEIGHT * scale, ROW_GAP * scale)
     this.scroll.setWindow(
       { x: panelLeft, y: windowTop, width: panelWidth, height: this.windowSize },

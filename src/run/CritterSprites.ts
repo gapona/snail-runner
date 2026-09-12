@@ -43,6 +43,7 @@ import { SHADOW_DARKEN, SHADOW_FOOTPRINT, shadowAlpha, shadowClipFade, shadowSca
 import { createShadow } from './shadowArt'
 import { addArtImage, hasArt, setArt } from '../art/atlas'
 import { hidePooled, showPooled } from './pooled'
+import { liftedRectInto } from './lift'
 
 /**
  * How many bugs may be drawn at once.
@@ -298,7 +299,7 @@ export class CritterSprites {
       // swap waits until the hop has lifted the creature by exactly this offset, the base is at
       // ground level at that instant.
       const baseOffset = hop.tucked && air ? tuckOffset(critter.kind) * hop.scaleY : 0
-      const rect = billboardRectInto(
+      const rect = liftedRectInto(
         this.rect,
         ground,
         critter.offsetX,

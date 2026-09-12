@@ -513,6 +513,21 @@ export function readableScale(screenWidth: number): number {
 }
 
 /**
+ * `readableScale` for the front screen's and the garage's mascot — on a portrait frame only.
+ *
+ * **⚠ A frame narrower than 1280 is a phone in portrait and a phone in landscape alike, and only one
+ * of them is short of width.** The boost exists because everything on the road is sized off the
+ * width and a portrait phone has little of it; a phone held sideways has plenty of width and very
+ * little height. At the 828x300 a landscape webview leaves, the boost still read 1.55 and drew the
+ * menu's snail over half the frame's height and the garage's across the arrows beside it —
+ * reported as everything overlapping everything. Sideways, the width-sized mascot is already the
+ * right share of the frame.
+ */
+export function mascotReadableScale(screenWidth: number, screenHeight: number): number {
+  return screenHeight >= screenWidth ? readableScale(screenWidth) : 1
+}
+
+/**
  * How the speed tracks the Fever ceiling, as a fraction of the remaining gap closed per second.
  *
  * **Not `SPEED_ACCEL`, and that is the point.** The ordinary chase has a 5.9-second time constant,
