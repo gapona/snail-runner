@@ -14717,6 +14717,29 @@ spare, an over-long swipe parked the snail on the verge (measured −1.13 agains
 verge only by the spring's overshoot. Measured live after both: three swipes of 290px went
 −0.86 → +0.86 → −0.86.
 
+### ⚠ And then sideways in a webview it was far too sensitive, because the short side is not a thumb
+
+Reported from the phone held sideways in Telegram (about 828x300): *reduce the snail's swipe
+sensitivity.* The short side there is not the phone's width — it is the width less the webview's
+header and the system bars — so 0.65 of it was **195px, under a quarter of the frame**, against 250px
+on the same phone upright. Same thumb, same phone, a road 28% narrower under it because the chrome
+took some height.
+
+`SWIPE_CROSS_WIDTH_FLOOR` (0.36) and `swipeCrossPx`: a road-crossing swipe is 0.65 of the short side
+**or 0.36 of the width, whichever is longer**, and `dragScale` is stated against that. Delivered:
+**298px at 828x300** (was 195), 304 at 844x390, 266 at 740x360 — and **nothing moves in portrait**,
+where 0.36 of the width is always under 0.65 of it. The tutorial's steer demonstration draws the
+same length.
+
+- **What it costs, stated:** in landscape a thumb-length swipe (three quarters of the short side)
+  now crosses about three quarters of the road rather than all of it. The "one swipe edge to edge"
+  promise is a portrait promise; sideways, a full road is a third of the screen.
+- `verify:player` asserts the floor on three landscape frames with the shipped-before 0.65 of the
+  short side as its control (24% of the width at 828x300), and that every portrait frame is
+  unchanged to the float.
+- Measured live at 828x300: a 100px drag moves the snail **0.58** half-widths (was 0.89), and 298px
+  crosses the reachable road exactly (−1.728). Zero errors.
+
 **Not yet known, and the reason it ships anyway:** whether it *feels* right on a real thumb, which is
 what the report asks and nothing here can measure. `jumpShare`, `recenterMs` and
 `RELATIVE_SENSITIVITY_DEFAULT` are the three numbers to move first if it does not.
@@ -15401,6 +15424,10 @@ App bugs:
 - **The quest window coasted like the shop's catalogue**: ~325px per px/ms of release speed against
   54px of travel, so every flick ran to the end. It pages one row per gesture now, counted from the
   press. → "And then the scroll was far too sensitive"
+- **The snail's swipe was stated against the frame's short side, which a webview's header shrinks**,
+  so sideways at 828x300 the whole road crossed in 195px — under a quarter of the screen. A crossing
+  swipe is at least 36% of the width now (298px); portrait is unchanged. → "And then sideways in a
+  webview it was far too sensitive"
 
 - **A finger steered `absolute` though relative drag measured 5x better on a phone** — the better
   mode was behind a DEV key, i.e. a keyboard. Ships as drag-anywhere with a flick up to jump; the

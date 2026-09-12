@@ -6,6 +6,7 @@ import { toCssColor } from '../ui/theme'
 import { uiScale } from '../ui/uiScale'
 import { HUD_DEPTH } from './hudDepth'
 import { INK } from './artPalette'
+import { swipeCrossPx } from './steerTuning'
 import { currentStep, stepSatisfied, cardVisible, type TutorialState } from './tutorial'
 
 /** A box on the HUD the current card is pointing at, in screen pixels. */
@@ -220,8 +221,8 @@ export class TutorialCard {
 
     if (kind === 'steer') {
       // Left, right and back, slowly: a finger sliding, not a flick. The track is as long as one
-      // swipe should be — see `SWIPE_CROSS_SHARE` — so the demonstration is the real distance.
-      const reach = Math.min(width, height) * 0.3
+      // swipe should be — see `swipeCrossPx` — so the demonstration is the real distance.
+      const reach = swipeCrossPx(width, height) / 2
       const phase = 0.5 - 0.5 * Math.cos(((now % 2000) / 2000) * Math.PI * 2)
       const x = cx - reach + phase * reach * 2
       const arrow = 9 * scale

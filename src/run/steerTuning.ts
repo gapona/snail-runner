@@ -118,8 +118,34 @@ export const STEER_PRESETS: Readonly<Record<SteerPresetName, { stiffness: number
 export const SWIPE_CROSS_SHARE = 0.65
 
 /**
- * The default relative sensitivity: a swipe of `SWIPE_CROSS_SHARE` of the short side crosses the
- * whole drivable road.
+ * The shortest a road-crossing swipe may be, as a share of the frame's WIDTH.
+ *
+ * **⚠ The short side stopped being a thumb's length the moment the game was played sideways in a
+ * webview.** Reported from a phone held sideways in Telegram, about 828x300: the snail's swipe was
+ * far too sensitive. The short side there is not the phone's width — it is the phone's width minus
+ * the webview's own header and the system bars — so 0.65 of it was **195px, under a quarter of the
+ * frame**, against 250px on the same phone held upright. The same thumb on the same phone got a road
+ * that was 28% narrower under it, only because the chrome took some height.
+ *
+ * So in landscape the crossing swipe is also at least this share of the width: **298px at 828x300**
+ * (was 195), 304 at 844x390, and nothing in portrait moves, because there `0.36` of the width is
+ * always less than `0.65` of it. What it costs is stated: on a sideways phone a full road now needs
+ * about a third of the screen of travel, and a thumb-length swipe (three quarters of the short side)
+ * crosses about three quarters of the road rather than all of it — the portrait promise that one
+ * swipe goes edge to edge is a portrait promise.
+ */
+export const SWIPE_CROSS_WIDTH_FLOOR = 0.36
+
+/**
+ * How many pixels of horizontal drag cross the whole drivable road on this frame: `SWIPE_CROSS_SHARE`
+ * of the short side, but never less than `SWIPE_CROSS_WIDTH_FLOOR` of the width.
+ */
+export function swipeCrossPx(width: number, height: number): number {
+  return Math.max(SWIPE_CROSS_SHARE * Math.min(width, height), SWIPE_CROSS_WIDTH_FLOOR * width)
+}
+
+/**
+ * The default relative sensitivity: a swipe of `swipeCrossPx` crosses the whole drivable road.
  *
  * Stated from `REACHABLE_EDGE` rather than as a number, so it keeps its meaning if the road, the
  * reach or the mascot ever move — the same discipline `PICKUP_HEIGHT` was corrected to once it
@@ -137,7 +163,9 @@ export const RELATIVE_SENSITIVITY_DEFAULT = (2 * REACHABLE_EDGE) / SWIPE_CROSS_S
  * times as wide under the thumb.
  */
 export function dragScale(width: number, height: number): number {
-  return width / Math.max(1, Math.min(width, height))
+  // `swipeCrossPx / SWIPE_CROSS_SHARE` is the length `sensitivity` is stated against: the short
+  // side, or on a wide frame the floor the width sets — see `SWIPE_CROSS_WIDTH_FLOOR`.
+  return width / Math.max(1, swipeCrossPx(width, height) / SWIPE_CROSS_SHARE)
 }
 
 /**

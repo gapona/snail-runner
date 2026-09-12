@@ -49,7 +49,16 @@ import {
   STEER_EDGE_MARGIN,
 } from '../src/run/constants.ts'
 import { FIXED_STEP_MS } from '../src/race/constants.ts'
-import { RELATIVE_SENSITIVITY_DEFAULT, STEER_PRESETS, SWIPE_CROSS_SHARE, dragScale, getSteerTuning, relativeTarget } from '../src/run/steerTuning.ts'
+import {
+  RELATIVE_SENSITIVITY_DEFAULT,
+  STEER_PRESETS,
+  SWIPE_CROSS_SHARE,
+  SWIPE_CROSS_WIDTH_FLOOR,
+  dragScale,
+  getSteerTuning,
+  relativeTarget,
+  swipeCrossPx,
+} from '../src/run/steerTuning.ts'
 import { JOYSTICK, createJoystick, joystickRadius, moveJoystick, pressJoystick, releaseJoystick, settleJoystick } from '../src/platform/joystick.ts'
 import { readFileSync } from 'node:fs'
 import { createSteerProbe, steerReport, stepSteerProbe } from '../src/run/steerProbe.ts'
@@ -1707,7 +1716,7 @@ check('steering sideways with a thumb that arcs is not a jump', () => {
   assert.equal(moveJoystick(straight, 200, 600 - r * 0.6, r), true, 'the control did not jump')
 })
 
-check('one swipe crosses the whole road, in portrait and in landscape', () => {
+check('one swipe crosses the whole road in portrait, and swipeCrossPx is exactly one road', () => {
   // **⚠ Reported from the phone: one gesture should go from edge to edge, and a swipe across the
   // screen fell a little short.** The sensitivity was a whole frame WIDTH per road, and a thumb
   // starts and stops a finger's width in from each edge. What is asserted is a swipe a thumb can
@@ -1724,8 +1733,9 @@ check('one swipe crosses the whole road, in portrait and in landscape', () => {
   }
   const rows = []
 
-  for (const [w, h] of [[320, 568], [384, 744], [844, 390], [744, 384]]) {
-    // A thumb's swipe is a physical length: three quarters of the short side, whichever way up.
+  // The portrait promise: a thumb-length swipe crosses the road with room to spare.
+  for (const [w, h] of [[320, 568], [384, 744]]) {
+    // A thumb's swipe is a physical length: three quarters of the short side.
     const thumbOfWidth = (0.76 * Math.min(w, h)) / w
     const shipped = swipeCovers(w, h, RELATIVE_SENSITIVITY_DEFAULT, thumbOfWidth)
     // The control is the shipped-before arrangement: a whole frame WIDTH of drag per road.
@@ -1736,13 +1746,38 @@ check('one swipe crosses the whole road, in portrait and in landscape', () => {
     assert.ok(old < 1, `${w}x${h}: the control crossed the road, so it is not the reported arrangement`)
   }
 
-  // And exactly `SWIPE_CROSS_SHARE` of the short side is exactly one road, in either orientation.
-  for (const [w, h] of [[384, 744], [844, 390]]) {
-    const one = swipeCovers(w, h, RELATIVE_SENSITIVITY_DEFAULT, (SWIPE_CROSS_SHARE * Math.min(w, h)) / w)
+  // Exactly `swipeCrossPx` of drag is exactly one road, on every frame.
+  for (const [w, h] of [[384, 744], [844, 390], [828, 300], [1920, 945]]) {
+    const one = swipeCovers(w, h, RELATIVE_SENSITIVITY_DEFAULT, swipeCrossPx(w, h) / w)
 
     assert.ok(Math.abs(one - 1) < 1e-9, `${w}x${h}: the stated swipe crosses ${one} roads`)
   }
   console.log(`    a swipe of 76% of the short side crosses: ${rows.join(', ')}`)
+})
+
+check('on a phone held sideways in a webview, crossing the road takes a third of the screen', () => {
+  // **⚠ Reported from a phone sideways in Telegram (about 828x300): the swipe was far too sensitive.**
+  // Stated purely against the short side, the webview's header and the system bars made the crossing
+  // swipe 195px — under a quarter of the frame, and 28% shorter than on the same phone upright.
+  const rows = []
+
+  for (const [w, h] of [[828, 300], [844, 390], [740, 360]]) {
+    const px = swipeCrossPx(w, h)
+    // The control is the shipped-before arrangement: 0.65 of the short side, whatever the width.
+    const old = SWIPE_CROSS_SHARE * Math.min(w, h)
+
+    rows.push(`${w}x${h} ${px.toFixed(0)}px = ${((px / w) * 100).toFixed(0)}% of the width (was ${old.toFixed(0)}px)`)
+    assert.ok(px >= SWIPE_CROSS_WIDTH_FLOOR * w - 1e-9, `${w}x${h}: crossing takes ${px}px`)
+    assert.ok(px / w >= 0.33, `${w}x${h}: crossing the road is ${((px / w) * 100).toFixed(0)}% of the width`)
+  }
+
+  // The control has to fail the same bound on the reported frame, or the check measures nothing.
+  assert.ok((SWIPE_CROSS_SHARE * 300) / 828 < 0.33, 'the shipped-before swipe was already a third of the frame')
+  // And upright, nothing moved: the floor is below 0.65 of the width on every portrait frame.
+  for (const [w, h] of [[320, 568], [384, 744], [375, 667]]) {
+    assert.equal(swipeCrossPx(w, h), SWIPE_CROSS_SHARE * w, `${w}x${h}: the portrait swipe changed`)
+  }
+  console.log(`    crossing swipe: ${rows.join(', ')}`)
 })
 
 check('a finger steers relative with the stick, and a mouse and the keys stay absolute', () => {
