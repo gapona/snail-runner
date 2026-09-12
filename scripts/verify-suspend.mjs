@@ -7,6 +7,7 @@
 // a stored `Infinity` that reaches the camera as `NaN` and blanks the frame, a coin banked twice —
 // and every one of those is a number nobody would look at.
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { createRunState, takeHit } from '../src/run/runState.ts'
 import { createPlayerState } from '../src/run/playerMotion.ts'
 import { isResumable, resolveSuspended } from '../src/run/suspend.ts'
@@ -17,6 +18,7 @@ import { MAX_SHIELDS, RUN_LIVES, SPEED_BASE } from '../src/run/constants.ts'
 import { SEGMENT_LENGTH } from '../src/road/constants.ts'
 import { migrate } from '../src/save/migrate.ts'
 import { DEFAULT_SAVE_STATE, SAVE_SCHEMA_VERSION } from '../src/save/types.ts'
+import { COUNTDOWN_MAX_STEP_MS, RESUME_COUNTDOWN_MS, countdownDigit, countdownPulse, stepCountdown } from '../src/run/countdown.ts'
 
 let passed = 0
 
@@ -264,6 +266,49 @@ check('v16 drops the stage fields and adds the snapshot, and an older save still
   assert.equal(migrate(withSettings(0.7)).settings.soundVolume, 0.6, 'the effects slider moved, and its scale did not')
   // And a v7 save, which predates the sliders, arrives at the new default rather than the old one.
   assert.equal(migrate({ v: 7, settings: { sound: true, music: true } }).settings.musicVolume, 1, 'a v7 save arrived at the old default')
+})
+
+check('a continue and a resumed run hold the road for a 3-2-1, and the snail stays steerable', () => {
+  // Asked for after playing: once a continue is taken, pause and count 3-2-1 in the middle of the
+  // screen, so there is time to focus. The pure half first.
+  assert.deepEqual([3000, 2500, 2001, 2000, 1500, 1000, 1, 0, -5].map(countdownDigit), [3, 3, 3, 2, 2, 1, 1, 0, 0])
+
+  // One second a digit at 60Hz, and exactly three seconds in all.
+  let left = RESUME_COUNTDOWN_MS
+  let frames = 0
+  const seen = []
+
+  while (left > 0) {
+    const digit = countdownDigit(left)
+
+    if (seen[seen.length - 1] !== digit) seen.push(digit)
+    left = stepCountdown(left, 1000 / 60)
+    frames++
+  }
+  assert.deepEqual(seen, [3, 2, 1])
+  // 180 frames, give or take the one a float remainder of 1000/60 leaves at the end.
+  assert.ok(frames >= 180 && frames <= 181, `the count took ${frames} frames at 60Hz`)
+
+  // A backgrounded tab's five-second delta takes one clamped step, not the whole count.
+  assert.equal(stepCountdown(RESUME_COUNTDOWN_MS, 5000), RESUME_COUNTDOWN_MS - COUNTDOWN_MAX_STEP_MS)
+  assert.equal(stepCountdown(RESUME_COUNTDOWN_MS, NaN), RESUME_COUNTDOWN_MS)
+
+  // Each digit arrives large and snaps down, and is gone before the next one lands.
+  assert.ok(countdownPulse(3000).scale > 1.5 && countdownPulse(2500).scale < 1.05, 'a digit does not punch in')
+  assert.equal(countdownPulse(2500).alpha, 1)
+  assert.ok(countdownPulse(2010).alpha < 0.1, 'a digit is still on screen as the next arrives')
+  assert.equal(countdownPulse(0).alpha, 0)
+
+  // And the scene half, read from the source because `RunScene` imports phaser: both continues go
+  // through `continueRun`, which starts the count; a resumed run starts with one; and the count is
+  // one of the things that freezes the road — not the snail.
+  const scene = readFileSync(new URL('../src/scenes/RunScene.ts', import.meta.url), 'utf8')
+  const at = scene.indexOf('  continueRun(): void {')
+  const continueBody = scene.slice(at, at + 1500)
+
+  assert.ok(continueBody.includes('this.countdownLeftMs = RESUME_COUNTDOWN_MS'), 'a continue no longer counts down')
+  assert.ok(scene.includes('this.countdownLeftMs = this.resumed ? RESUME_COUNTDOWN_MS : 0'), 'a resumed run no longer counts down')
+  assert.ok(scene.includes('const frozen = dying || taught || counting'), 'the count no longer holds the road')
 })
 
 console.log(`\n${passed} checks passed`)

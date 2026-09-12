@@ -16,6 +16,7 @@ import {
   type SteerPresetName,
 } from '../run/steerTuning'
 import { HUD_DEPTH } from '../run/hudDepth'
+import { getDisplayFontStack } from '../ui/font'
 import * as Phaser from 'phaser'
 import { bindAction, bindSteering, type Steering } from '../platform/input'
 import { bindLayout } from '../ui/layout'
@@ -119,6 +120,7 @@ import {
 import { PickupSprites } from '../run/PickupSprites'
 import { FeverView } from '../run/FeverView'
 import { Hud } from '../run/Hud'
+import { countdownDigit, countdownPulse, RESUME_COUNTDOWN_MS, stepCountdown } from '../run/countdown'
 import { stepSlime, type SlimePoint } from '../run/slime'
 import { SlimeTrail } from '../run/SlimeTrail'
 import { createRng } from '../race/rng'
@@ -226,6 +228,11 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
   private player!: PlayerState
   private playerView!: PlayerView
   private steering!: Steering
+  /**
+   * What is left of the 3-2-1 before a continued or resumed run moves again. See `run/countdown.ts`.
+   */
+  private countdownLeftMs = 0
+  private countdownText!: Phaser.GameObjects.Text
   /**
    * Where a relative drag has asked the snail to be, in half-widths. Unused in `absolute` mode.
    *
@@ -412,6 +419,9 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     const resume = saved.tutorialDone ? resolveSuspended(saved.suspendedRun) : null
 
     this.resumed = resume !== null
+    // A run picked up from the front screen lands mid-road exactly as a continue does, so it gets the
+    // same count; a fresh run starts at a standstill and needs none.
+    this.countdownLeftMs = this.resumed ? RESUME_COUNTDOWN_MS : 0
     this.run = resume?.run ?? createRunState()
     this.player = resume?.player ?? createPlayerState()
     this.squash = createSquashState()
@@ -497,6 +507,15 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     })
     // Screen-space, so it goes on `uiCamera` and is hidden from the world camera.
     this.hud = new Hud(this)
+    // **Centred and large, on the screen rather than on the road**, stroked the way the HUD's own
+    // readouts are so it reads over sky and ground alike. Over the HUD, under nothing: for three
+    // seconds it is the only thing on the screen that is happening.
+    this.countdownText = this.add
+      .text(0, 0, '', { fontFamily: getDisplayFontStack(), fontSize: 120, color: '#ffffff' })
+      .setOrigin(0.5)
+      .setStroke('#1b2433', 14)
+      .setDepth(HUD_DEPTH + 2)
+      .setAlpha(0)
 
     // **The first run teaches itself, and it is the same run.** No second scene and no mode to
     // leave: what a tutorial run has is a hand-placed opening stretch and a card, and when the last
@@ -517,6 +536,7 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     this.uiCamera.ignore(this.worldObjects())
     this.cameras.main.ignore([
       ...this.hud.gameObjects,
+      this.countdownText,
       ...this.feverView.gameObjects,
       ...(this.tutorialCard?.gameObjects ?? []),
       this.deathFlashRect,
@@ -1636,7 +1656,32 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     this.death = createPlayerDeath()
     this.deathFlashRect.setAlpha(0)
     this.invulnerableUntilDistance = this.run.distance + CONTINUE_GRACE_Z
+    // **A 3-2-1 before the road moves** — the panel closes on the press, and the player's thumb is
+    // still on the button they pressed. See `run/countdown.ts`.
+    this.countdownLeftMs = RESUME_COUNTDOWN_MS
     this.scene.resume()
+  }
+
+  /** Ticks the 3-2-1 and draws it. Nothing is drawn once it has run out. */
+  private drawCountdown(delta: number, width: number, height: number): void {
+    const digit = countdownDigit(this.countdownLeftMs)
+
+    if (digit === 0) {
+      if (this.countdownText.alpha !== 0) this.countdownText.setAlpha(0)
+
+      return
+    }
+
+    const pulse = countdownPulse(this.countdownLeftMs)
+    const size = Math.round(Math.min(width, height) * 0.32)
+
+    if (this.countdownText.text !== String(digit)) this.countdownText.setText(String(digit))
+    if (this.countdownText.style.fontSize !== `${size}px`) {
+      this.countdownText.setFontSize(size)
+      this.countdownText.setStroke('#1b2433', Math.max(6, size * 0.1))
+    }
+    this.countdownText.setPosition(width / 2, height * 0.42).setScale(pulse.scale).setAlpha(pulse.alpha)
+    this.countdownLeftMs = stepCountdown(this.countdownLeftMs, delta)
   }
 
   /**
@@ -1757,7 +1802,10 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     // underneath it is the other thing. `stepPlayer` deliberately keeps running, because performing
     // the control is how the two `act` cards are answered. See `tutorialPaused`.
     const taught = this.tutorial !== null && tutorialPaused(this.tutorial, this.run.distance)
-    const frozen = dying || taught
+    // **The 3-2-1 holds the road and leaves the snail alone**, the tutorial card's arrangement: the
+    // count is time to line up, not time spent looking at a still frame. See `run/countdown.ts`.
+    const counting = this.countdownLeftMs > 0
+    const frozen = dying || taught || counting
     const steer = this.steering.read(delta)
     const wasAirborne = !this.player.grounded
 
@@ -1997,6 +2045,7 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     )
     this.updateTutorial(time)
     this.feverView.update(this.run.fever, delta, width, height)
+    this.drawCountdown(delta, width, height)
     this.dust.update(time, delta, height)
 
     if (import.meta.env.DEV && this.debugMarks && !this.marksVisible) {

@@ -12750,6 +12750,27 @@ maximum should be about 15% less deafening than it is.
 Not heard: the harness tab keeps audio suspended, so this is arithmetic on the gains, not a
 listening test — the standing limitation on every audio claim here.
 
+## A 3-2-1 Before The Road Moves Again
+
+`src/run/countdown.ts` (pure, `npm run verify:suspend`). Asked for after playing: once a continue is
+taken, give a pause and a 3-2-1 in the middle of the screen, so there is time to focus. A continue
+put the snail back on the piece of road that killed it on the frame the panel closed — with the
+player's thumb still on the button they had just pressed. `CONTINUE_GRACE_Z` made the first obstacle
+harmless; nothing made the first second readable.
+
+- **The road holds and the snail does not**, the tutorial card's arrangement: `counting` joins
+  `dying` and `taught` in `frozen`, and `stepPlayer` still runs, so the count is time to line up.
+  Measured live: the odometer stood at 3872 through all three digits while a drag moved the snail
+  0.70 half-widths, and the road moved again the frame the count ran out.
+- **The grace survives whole**, because it is a distance and the road is not moving.
+- **Both continues and a resumed run get it.** The ad and the coin continue both land in
+  `continueRun`; a run picked up from the front screen lands mid-road exactly the same way, so
+  `create` starts one when `resumed`. A fresh run starts at a standstill and does not.
+- **Ticked by the frame's own delta, clamped at 100ms**, so a backgrounded tab's multi-second delta
+  cannot skip the count; a paused scene does not tick at all.
+- Each digit punches in at 1.6x and snaps to size, and fades over the last fifth of its second, so
+  the next lands into an empty frame. Display font, stroked like the HUD, over everything.
+
 ## Out of Scope and Why
 
 Deliberately not built, so they don't get "discovered missing" and re-litigated later:
