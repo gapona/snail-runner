@@ -12724,6 +12724,32 @@ and a button colour second. **What the floor is a floor *on* is the fill alone**
 solid fill inside a pale rim at 0.85 alpha with a hard offset shadow, and treating the fill's own
 ratio as the whole story is what made 1.8 against the sky look reasonable.
 
+## Both Sliders At 100%, And The Whole Mix 15% Down
+
+`audio/volume.ts`, save **v17**. Asked for after playing: the volume defaults to 100, and the
+maximum should be about 15% less deafening than it is.
+
+- **`MASTER_GAIN_CEILING` = 0.85, on both channels.** A factor on the gain, never on the slider, so
+  100% still means "all the way up" and 0% still means exactly silent. `soundGainFor` and
+  `musicGainFor` are the only two ways a slider becomes a gain.
+- **⚠ Music defaulted to 70%, and moving it to 100% literally would have made it LOUDER.** Its
+  ceiling was 0.8, so the old default delivered `0.7² × 0.8` = 0.392; at 100% under the same ceiling
+  it would have been 0.8 × 0.85 = 0.68, i.e. 74% louder in the round that asked for quieter. The
+  choice was put to the owner and the answer was "everything 15% down": `MUSIC_GAIN_CEILING` is
+  *solved* as the old default's gain, so the music's 100% is the old 70% less the master ceiling,
+  and the balance between music and effects is exactly what it was. `verify:ui` holds all three
+  ratios against the shipped-before arithmetic.
+- **v17 has no new field; the meaning of `musicVolume` moved**, and a changed meaning is a version
+  bump for the same reason a new field is. `upgradeV16ToV17` re-expresses a saved position so the
+  player hears what they did less 15% (`migratedMusicVolume`): 70% → 100%, 35% → 50%, and anything
+  above the old default lands on 100%, the loudest the new scale goes.
+- **⚠ `upgradeV7ToV8` read `DEFAULT_SAVE_STATE.settings.musicVolume`**, a constant that describes the
+  present, which this file already forbids for migrations. It reads the frozen
+  `LEGACY_DEFAULT_MUSIC_VOLUME` now and v17 carries it forward.
+
+Not heard: the harness tab keeps audio suspended, so this is arithmetic on the gains, not a
+listening test — the standing limitation on every audio claim here.
+
 ## Out of Scope and Why
 
 Deliberately not built, so they don't get "discovered missing" and re-litigated later:

@@ -66,7 +66,7 @@ import {
 import { CAMERA_DEPTH, CAMERA_HEIGHT, ROAD_WIDTH, SPRITE_SCALE } from '../src/road/constants.ts'
 import { createScreenPoint, projectInto } from '../src/road/project.ts'
 import { billboardRectInto, createBillboardRect } from '../src/road/billboard.ts'
-import { clampVolume, DEFAULT_MUSIC_VOLUME, DEFAULT_SOUND_VOLUME, gainFor, isSilent, MUSIC_GAIN_CEILING, musicGainFor } from '../src/audio/volume.ts'
+import { clampVolume, DEFAULT_MUSIC_VOLUME, DEFAULT_SOUND_VOLUME, gainFor, isSilent, LEGACY_DEFAULT_MUSIC_VOLUME, MASTER_GAIN_CEILING, migratedMusicVolume, MUSIC_GAIN_CEILING, musicGainFor, soundGainFor } from '../src/audio/volume.ts'
 import { isTap, TAP_SLOP_PX } from '../src/ui/gesture.ts'
 import { exitButtonBox } from '../src/ui/exitButton.ts'
 import { EXIT_SAFE, exitIsClearOfThumb, TOP_BAR, topBarHeight, topBarLayout } from '../src/ui/topBar.ts'
@@ -235,8 +235,8 @@ check('the curve is monotonic, and half the travel is not half the gain', () => 
 check('the music ceiling lowers the top without moving the bottom', () => {
   // The point of the ceiling: the loudest the music can be is under the loudest an effect can be.
   assert.ok(MUSIC_GAIN_CEILING < 1, 'a ceiling of 1 is no ceiling')
-  assert.equal(musicGainFor(1), MUSIC_GAIN_CEILING)
-  assert.ok(musicGainFor(1) < gainFor(1), 'music at full is not under effects at full')
+  assert.equal(musicGainFor(1), MUSIC_GAIN_CEILING * MASTER_GAIN_CEILING)
+  assert.ok(musicGainFor(1) < soundGainFor(1), 'music at full is not under effects at full')
 
   // Silence has to survive it, or the slider stops being able to switch the channel off - which is
   // why this is a factor on the gain rather than a rescale of the slider.
@@ -267,10 +267,47 @@ check('an edited save cannot poison the mixer', () => {
   }
 })
 
-check('the defaults are in range and music sits under effects', () => {
-  assert.equal(clampVolume(DEFAULT_SOUND_VOLUME), DEFAULT_SOUND_VOLUME)
-  assert.equal(clampVolume(DEFAULT_MUSIC_VOLUME), DEFAULT_MUSIC_VOLUME)
-  assert.ok(DEFAULT_MUSIC_VOLUME < DEFAULT_SOUND_VOLUME, 'music defaulted at or above the effects')
+check('both sliders default to full, and at full the music still sits under the effects', () => {
+  // **The mix is carried by the gain now, not by the slider position.** Music used to default to
+  // 70% so that it sat under the effects; a slider reading 70% on a fresh install reads as something
+  // turned down for no reason. What sits it under the effects is `MUSIC_GAIN_CEILING`.
+  assert.equal(DEFAULT_SOUND_VOLUME, 1)
+  assert.equal(DEFAULT_MUSIC_VOLUME, 1)
+  assert.ok(musicGainFor(DEFAULT_MUSIC_VOLUME) < soundGainFor(DEFAULT_SOUND_VOLUME), 'music at its default is at or above the effects')
+})
+
+check('the whole game is 15% quieter at its defaults and at its top, and the mix did not move', () => {
+  // Asked for after playing: the maximum should be about 15% less deafening. The control is the
+  // shipped-before arrangement, written as its own arithmetic: effects at a gain of 1, music at
+  // 0.7² under a ceiling of 0.8.
+  const before = { sound: 1, music: 0.7 ** 2 * 0.8 }
+  const after = { sound: soundGainFor(DEFAULT_SOUND_VOLUME), music: musicGainFor(DEFAULT_MUSIC_VOLUME) }
+
+  assert.equal(MASTER_GAIN_CEILING, 0.85)
+  assert.ok(Math.abs(after.sound / before.sound - 0.85) < 1e-12, `effects at default are ${after.sound} of before`)
+  assert.ok(Math.abs(after.music / before.music - 0.85) < 1e-12, `music at default is ${after.music / before.music} of before`)
+  assert.ok(Math.abs(after.music / after.sound - before.music / before.sound) < 1e-12, 'the balance between music and effects moved')
+  assert.ok(soundGainFor(1) < gainFor(1), 'the effects top is not under the old top')
+
+  // And the silence at the bottom survives the ceiling on both channels.
+  assert.equal(soundGainFor(0), 0)
+  assert.equal(musicGainFor(0), 0)
+})
+
+check('a saved music slider is re-expressed on the new scale, keeping what the player hears', () => {
+  // The old default lands on the new one, which is the case the migration exists for.
+  assert.equal(migratedMusicVolume(LEGACY_DEFAULT_MUSIC_VOLUME), 1)
+  assert.equal(migratedMusicVolume(0), 0, 'a muted slider came back audible')
+  assert.equal(migratedMusicVolume(0.35), 0.5)
+  assert.equal(migratedMusicVolume(1), 1, 'a slider above the old default went past the top')
+
+  // Below the old default the loudness is kept to within a 5% slider step, less the master ceiling.
+  for (const old of [0.1, 0.2, 0.35, 0.5, 0.6, 0.7]) {
+    const was = gainFor(old) * 0.8
+    const now = musicGainFor(migratedMusicVolume(old))
+
+    assert.ok(Math.abs(now / (was * MASTER_GAIN_CEILING) - 1) < 0.16, `a slider at ${old} now plays at ${(now / was).toFixed(2)} of what it did`)
+  }
 })
 
 // -- The palette -----------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import { DEFAULT_MUSIC_VOLUME, DEFAULT_SOUND_VOLUME } from '../audio/volume'
 
-export const SAVE_SCHEMA_VERSION = 16 as const
+export const SAVE_SCHEMA_VERSION = 17 as const
 
 export interface SaveSettings {
   /**
@@ -200,7 +200,18 @@ export interface SaveStateV16 extends Omit<SaveStateV15, 'v' | 'stagesCleared' |
   suspendedRun: unknown
 }
 
-export type SaveState = SaveStateV16
+/**
+ * v17: no new field — the *meaning* of `settings.musicVolume` moved. Both sliders default to 100%
+ * and the music's 100% is what its old 70% delivered, under a master ceiling 15% below the old
+ * maximum (`audio/volume.ts`). `upgradeV16ToV17` re-expresses a saved position on the new scale.
+ * A version bump for a changed meaning is the same call as a new field: a v16 value read as v17 is
+ * a different loudness, and nothing else could tell the two apart.
+ */
+export interface SaveStateV17 extends Omit<SaveStateV16, 'v'> {
+  v: 17
+}
+
+export type SaveState = SaveStateV17
 
 /**
  * The `selectedTheme` value meaning "whatever the level says".

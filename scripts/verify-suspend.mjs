@@ -217,7 +217,9 @@ check('the ground a resumed run stands on is the same road the seed laid', () =>
 console.log('\nthe save carries it')
 
 check('v16 drops the stage fields and adds the snapshot, and an older save still loads', () => {
-  assert.equal(SAVE_SCHEMA_VERSION, 16, 'the schema version moved without this check moving with it')
+  // v17 moved only the meaning of the music slider (see `upgradeV16ToV17`); everything this check
+  // asserts about v16 is carried through it unchanged.
+  assert.equal(SAVE_SCHEMA_VERSION, 17, 'the schema version moved without this check moving with it')
   assert.equal(DEFAULT_SAVE_STATE.suspendedRun, null, 'a new save starts with something to continue')
 
   // A v15 payload, with the two fields the stage mode owned and a purse worth keeping.
@@ -233,7 +235,7 @@ check('v16 drops the stage fields and adds the snapshot, and an older save still
   const migrated = migrate(old)
 
   assert.notEqual(migrated, null, 'a v15 save no longer loads')
-  assert.equal(migrated.v, 16, `the migrated save is v${migrated.v}`)
+  assert.equal(migrated.v, 17, `the migrated save is v${migrated.v}`)
   assert.equal(migrated.coins, 730, 'the purse did not survive the migration')
   assert.equal(migrated.bestScore, 1549, 'the record did not survive the migration')
   assert.deepEqual(migrated.purchases, ['theme-night'], 'the purchases did not survive the migration')
@@ -251,6 +253,17 @@ check('v16 drops the stage fields and adds the snapshot, and an older save still
 
   // Junk in that slot is refused rather than crashing anything.
   assert.equal(migrate({ ...old, v: 16, suspendedRun: 'stage-3' }).suspendedRun, null, 'a string survived as a run')
+
+  // v16 -> v17: an untouched music slider at the old default of 70% arrives at the new 100%, a
+  // chosen one keeps its loudness, and the effects slider is left exactly where it was.
+  const withSettings = (musicVolume) => ({ ...old, v: 16, settings: { sound: true, music: true, soundVolume: 0.6, musicVolume } })
+
+  assert.equal(migrate(withSettings(0.7)).settings.musicVolume, 1, 'the old default did not land on the new one')
+  assert.equal(migrate(withSettings(0.35)).settings.musicVolume, 0.5, 'a chosen music level did not keep its loudness')
+  assert.equal(migrate(withSettings(0)).settings.musicVolume, 0, 'a muted music slider came back audible')
+  assert.equal(migrate(withSettings(0.7)).settings.soundVolume, 0.6, 'the effects slider moved, and its scale did not')
+  // And a v7 save, which predates the sliders, arrives at the new default rather than the old one.
+  assert.equal(migrate({ v: 7, settings: { sound: true, music: true } }).settings.musicVolume, 1, 'a v7 save arrived at the old default')
 })
 
 console.log(`\n${passed} checks passed`)

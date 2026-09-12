@@ -1,7 +1,7 @@
 // `type` on SaveState is load-bearing, not style: Node's native TS stripping (which
 // `npm run verify:run` loads this file through) erases imports without executing them, so a
 // type imported as a value becomes a missing export at runtime.
-import { clampVolume } from '../audio/volume'
+import { clampVolume, LEGACY_DEFAULT_MUSIC_VOLUME, migratedMusicVolume } from '../audio/volume'
 import { AUTO_THEME_ID, DEFAULT_SAVE_STATE, DEFAULT_THEME_ID, DEFAULT_WEAPON_ID, type SaveState } from './types'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -48,7 +48,7 @@ function normalizeV12(raw: Record<string, unknown>): SaveState {
   const quests = raw.quests
 
   return {
-    v: 16,
+    v: 17,
     // **Passed through rather than validated here.** The save layer knows a board is an object with
     // an array in it; what a quest *kind* is, and what a target should currently be, belongs to
     // `quests.ts` — and `resolveQuestBoard` re-derives every target on the way out, so a board
@@ -211,6 +211,23 @@ function upgradeV10ToV11(raw: Record<string, unknown>): Record<string, unknown> 
  * `suspendedRun` is `null` rather than absent: a returning player has no run in progress, and
  * "there is nothing to continue" is a value rather than a gap.
  */
+/**
+ * v16 -> v17: the music slider's scale moved, so a saved position is re-expressed on it.
+ *
+ * Both sliders default to 100% now and the whole game is 15% quieter at the top (`MASTER_GAIN_CEILING`).
+ * The music's 100% is what its old default of 70% delivered, so a saved position is converted to
+ * keep what the player hears — see `migratedMusicVolume`. An untouched slider at 0.7 lands on 1,
+ * which is the case this exists for: a returning player would otherwise see 70% and be at a quieter
+ * music than a fresh install. The effects slider needs nothing, because its scale did not move.
+ */
+function upgradeV16ToV17(raw: Record<string, unknown>): Record<string, unknown> {
+  const settings = isRecord(raw.settings) ? raw.settings : null
+
+  if (!settings || typeof settings.musicVolume !== 'number') return { ...raw, v: 17 }
+
+  return { ...raw, v: 17, settings: { ...settings, musicVolume: migratedMusicVolume(settings.musicVolume) } }
+}
+
 function upgradeV15ToV16(raw: Record<string, unknown>): Record<string, unknown> {
   return { ...raw, v: 16, suspendedRun: null }
 }
@@ -271,7 +288,9 @@ function upgradeV7ToV8(raw: Record<string, unknown>): Record<string, unknown> {
     settings: {
       ...settings,
       soundVolume: soundOn ? DEFAULT_SAVE_STATE.settings.soundVolume : 0,
-      musicVolume: musicOn ? DEFAULT_SAVE_STATE.settings.musicVolume : 0,
+      // The default *at v8*, frozen: `DEFAULT_MUSIC_VOLUME` moved at v17, and a migration may not
+      // read a constant that describes the present. `upgradeV16ToV17` then carries it forward.
+      musicVolume: musicOn ? LEGACY_DEFAULT_MUSIC_VOLUME : 0,
     },
   }
 }
@@ -441,6 +460,9 @@ export function migrate(raw: unknown): SaveState | null {
       payload = upgradeV15ToV16(payload)
     // falls through
     case 16:
+      payload = upgradeV16ToV17(payload)
+    // falls through
+    case 17:
       return normalizeV12(payload)
 
     default:

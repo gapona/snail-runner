@@ -2,7 +2,7 @@ import * as Phaser from 'phaser'
 import { YTEvents, isAudioEnabled } from '../platform/yt'
 import { getState, mutate } from '../save/store'
 import { teardownDelayMs } from './synth'
-import { clampVolume, gainFor, isSilent, musicGainFor } from './volume'
+import { clampVolume, isSilent, musicGainFor, soundGainFor } from './volume'
 
 /**
  * Sound/music manager sitting on top of Phaser's SoundManager. Scenes must go through
@@ -155,7 +155,7 @@ export function playSfx(key: string, options?: { detune?: number; volume?: numbe
   // overwrote it would flatten the mix the sound design is built on.
   const config = {
     ...options,
-    volume: (options?.volume ?? 1) * gainFor(getState().settings.soundVolume),
+    volume: (options?.volume ?? 1) * soundGainFor(getState().settings.soundVolume),
   }
 
   soundManager.play(key, config as Phaser.Types.Sound.SoundConfig)
