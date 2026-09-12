@@ -51,10 +51,10 @@
 
 import { REACHABLE_EDGE } from './constants'
 
-/** How a thumb makes a request. */
+/** How a thumb makes a request. A mouse and the keys are always `absolute`; this is a finger's. */
 export type SteerMode =
   /**
-   * The finger's column *is* the request — the shipped scheme.
+   * The finger's column *is* the request — the scheme a touch shipped with until the thumbstick.
    *
    * Its cost is that the thumb has to *land on* a column, so its error is a placement error in
    * **screen pixels**, while the road is a fraction of the frame. That is why the same law measures
@@ -110,9 +110,18 @@ export const STEER_PRESETS: Readonly<Record<SteerPresetName, { stiffness: number
  */
 export const RELATIVE_SENSITIVITY_DEFAULT = 2 * REACHABLE_EDGE
 
+/**
+ * What the game ships with.
+ *
+ * **⚠ `mode` is `relative` now, and it is the FINGER's mode.** It shipped `absolute` with relative
+ * behind a DEV key — i.e. behind a keyboard, i.e. never on the one device the measurement was
+ * about — and the controls were then reported from a phone as doubtful. A mouse and the keys are
+ * absolute whatever this says (`RunScene` reads the mode only for a touch), and on a finger this
+ * is the scheme the thumbstick in `platform/joystick.ts` is drawn over.
+ */
 const SHIPPED: SteerTuning = {
   ...STEER_PRESETS.current,
-  mode: 'absolute',
+  mode: 'relative',
   sensitivity: RELATIVE_SENSITIVITY_DEFAULT,
 }
 

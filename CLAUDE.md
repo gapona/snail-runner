@@ -14585,6 +14585,69 @@ exist for. `window.__steer.report()` after a real run on a real phone is what ch
 against a person — and this project's standing rule is that a model nobody has checked against a
 person is a model.
 
+## A Thumbstick For A Finger
+
+`src/platform/joystick.ts` (pure, `npm run verify:player`), `src/run/JoystickView.ts`, and the touch
+half of `bindSteering`. Reported from the phone once the stutter was gone: *no bugs, but the mobile
+controls are doubtful — make a circle zone that works like a joystick, left, right and up, mobile
+only.*
+
+**⚠ The previous section's instrument had already found the problem and nothing had shipped it.**
+Relative drag took a patient player's hits on a portrait phone from 44 to 8, and it lived behind the
+DEV `M` key — i.e. behind a keyboard, i.e. never on a phone. What shipped for a finger was still
+`absolute`. So this round is that mode, made visible and given the third direction:
+
+- **A finger steers relative, and a mouse and the keys are untouched.** `SteerTuning.mode` is the
+  *finger's* mode now and ships `relative`; `RunScene` reads it only when `steer.touch` is true, so
+  a desktop is exactly what it was. The DEV comparison against `absolute` still works (`M`, the
+  panel), and in `absolute` there is no stick at all.
+- **The stick floats: it appears where the thumb lands.** There is no fixed place for a circle on
+  this screen — the bottom corners are the lives and the Fever tank and the bottom middle is the
+  snail — and a stick under the thumb covers nothing the thumb was not already covering. Radius is
+  12% of the short side, held to 44–72px (a thumb at the low end, not a plate on a tablet).
+- **Steering reads the thumb's movement, not the knob.** The stick is the picture of the gesture;
+  the request is still `relativeTarget`, so a stick that clamps at its rim cannot clamp the steer.
+  Past the rim the base is dragged along behind the thumb.
+- **Push up is a jump, and a tap still is.** One chevron on the ring is the only instruction the
+  stick carries.
+
+### ⚠ "Up" from where? The first version answered "from where the thumb landed", and it was wrong
+
+Driven in the running game: a 96px steer right left the knob 46px right of the base, and a clear
+30px flick up from there was 26px up against 38px sideways — **no jump**. A push up worked from a
+fresh stick and nowhere else, which in a run is never, because the thumb has always just been
+steering.
+
+`settleJoystick` eases the base back under the thumb every frame (`recenterMs` 220, frame-rate
+invariant), which turns "up" from a *position* into a *flick*: a quick push leaves the base behind
+and reads as up, a slow drift is followed and does not. That is also what keeps the arc of a thumb
+sweeping sideways from ever reading as a jump — asserted for rises of 0.3, 0.6 and 1.2 radii, with
+the no-drift form as the flick's control.
+
+- `jumpShare` 0.4 against a 220ms base: a 30px flick in 100ms gets 24px ahead of it, a 30px drift
+  over a second never gets 7px ahead. Up also has to beat sideways.
+- It re-arms when the knob comes back within `rearmShare` — by the thumb coming down *or* the base
+  catching a thumb that stayed up — so a second flick needs no reset.
+
+### ⚠ One flick is also a tap, and the guard is per gesture, not per time window
+
+A flick is short and small, so on release it passes `isJumpTap` too: one push asked to jump twice.
+Harmless in the air (no double jump), not harmless on a tutorial card, where the second press would
+acknowledge the next card. The first guard was a wall-clock window after the stick's jump, and the
+harness showed what a window is worth — a real tap on the *next* press was swallowed because the
+clock had barely moved. `Joystick.flicked` is set by the flick, survives the release and is cleared
+by the next press; and `bindAction` now tells its callback which source fired (`ActionSource`), so
+the guard applies to the screen tap alone and a flick followed by the space bar still jumps.
+
+Confirmed in the running game at 384x744 with synthetic touch pointers: a 96px drag moved the snail
+0.43 half-widths and it held when the thumb held; a 30px flick after that steer jumped once; steering
+continued in the air; the release did not jump again; a tap on a new press did; a mouse at x=60 still
+steered absolute to -0.69 with no stick drawn.
+
+**Not yet known, and the reason it ships anyway:** whether it *feels* right on a real thumb, which is
+what the report asks and nothing here can measure. `jumpShare`, `recenterMs` and
+`RELATIVE_SENSITIVITY_DEFAULT` are the three numbers to move first if it does not.
+
 ## The Frame That Drops Once A Lap
 
 A fourth pass, asked for after three rounds of frame work and a report that it still stutters. It
@@ -15102,6 +15165,12 @@ silently reintroduced or re-debugged from scratch. Full detail lives in the sect
 index.
 
 App bugs:
+
+- **A finger steered `absolute` though relative drag measured 5x better on a phone** — the better
+  mode was behind a DEV key, i.e. a keyboard. Ships as a floating thumbstick now, with push-up to
+  jump. → "A Thumbstick For A Finger"
+- **The stick's first "up" was measured from where the thumb landed**, so a flick after any steer
+  read as sideways and did not jump. → same section
 
 - **Every sprite-batch texture count compiled its own shader the first time a batch held it**,
   synchronously and mid-run, until the session had seen them all — the stutter "at the start, then

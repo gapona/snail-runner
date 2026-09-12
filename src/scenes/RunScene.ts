@@ -118,6 +118,7 @@ import {
 import { PickupSprites } from '../run/PickupSprites'
 import { FeverView } from '../run/FeverView'
 import { Hud } from '../run/Hud'
+import { JoystickView } from '../run/JoystickView'
 import { stepSlime, type SlimePoint } from '../run/slime'
 import { SlimeTrail } from '../run/SlimeTrail'
 import { createRng } from '../race/rng'
@@ -225,6 +226,7 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
   private player!: PlayerState
   private playerView!: PlayerView
   private steering!: Steering
+  private joystickView!: JoystickView
   /**
    * Where a relative drag has asked the snail to be, in half-widths. Unused in `absolute` mode.
    *
@@ -496,6 +498,7 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     })
     // Screen-space, so it goes on `uiCamera` and is hidden from the world camera.
     this.hud = new Hud(this)
+    this.joystickView = new JoystickView(this)
 
     // **The first run teaches itself, and it is the same run.** No second scene and no mode to
     // leave: what a tutorial run has is a hand-placed opening stretch and a card, and when the last
@@ -516,6 +519,7 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     this.uiCamera.ignore(this.worldObjects())
     this.cameras.main.ignore([
       ...this.hud.gameObjects,
+      ...this.joystickView.gameObjects,
       ...this.feverView.gameObjects,
       ...(this.tutorialCard?.gameObjects ?? []),
       this.deathFlashRect,
@@ -593,6 +597,13 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
       leftKeys: ['LEFT', 'A'],
       rightKeys: ['RIGHT', 'D'],
       keyboardSpeed: KEYBOARD_POINT_SPEED,
+      // **A finger steers with a thumbstick; a mouse and the keys are untouched.** See
+      // `platform/joystick.ts` for the report and the measurement behind it. The stick exists only
+      // while the touch scheme is `relative`, so the DEV comparison against `absolute` still works.
+      joystick: {
+        enabled: () => getSteerTuning().mode === 'relative',
+        onJump: () => this.tryJump(),
+      },
     })
 
     // **A press anywhere jumps on a mouse; a tap anywhere jumps on a finger.** They share the
@@ -602,7 +613,14 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     // `TAP_SLOP_PX` is a jump rather than a dodge. See `screenTap` for the latency that firing
     // both on the release cost. On a keyboard they are separate keys and the question does not
     // arise.
-    bindAction(this, 'jump', { keys: ['SPACE', 'UP', 'W'], screenTap: true }, () => this.tryJump())
+    bindAction(this, 'jump', { keys: ['SPACE', 'UP', 'W'], screenTap: true }, (source) => {
+      // The release of a press the stick already jumped on — see `Joystick.flicked`. Per gesture,
+      // not per time window: a window measured on the wall clock is one a stalled frame stretches.
+      // And only for the tap, or a flick followed by the space bar would swallow the space bar.
+      if (source === 'screenTap' && this.steering.joystick.flicked) return
+
+      this.tryJump()
+    })
 
     // **⚠ This used to be ESC and nothing else, and it threw the run away.** Two defects in one
     // line: on a phone there was no way out of a run at all, and the way out a keyboard had went
@@ -1752,14 +1770,18 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     // advance either and the frame it thaws on is a clean one.
     if (!dying && !isFrozen(this.playerFreeze, time)) {
       const wasAt = this.player.offsetX
+      // **The mode is the finger's, never the mouse's or the keys'.** A mouse steers by hovering and
+      // the keys by a virtual point, and both are absolute by construction; `relative` is what a
+      // thumb does, which is the scheme `platform/joystick.ts` was built for.
       const tuning = getSteerTuning()
+      const mode: SteerMode = steer.touch ? tuning.mode : 'absolute'
 
       // **The two modes differ in what the thumb's movement *means*, and nothing else.** Absolute
       // hands the column straight to the spring, which is the shipped scheme; relative integrates
       // the movement into a request the thumb pushes around, so the frame's size drops out of the
       // placement error. See `steerTuning.ts` for the measurement that made this worth having a
       // switch for, and note that the spring underneath is the same either way.
-      if (tuning.mode === 'relative') {
+      if (mode === 'relative') {
         // **⚠ Switching mode mid-press has to re-seed the request, or the first delta is applied to
         // a stale one.** `relativeTarget` is only maintained while relative is the live mode, so a
         // switch with a finger already down would push from wherever the request happened to be
@@ -1777,11 +1799,11 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
           this.relativeTarget = this.player.offsetX
         }
       }
-      this.steerModeWas = tuning.mode
+      this.steerModeWas = mode
 
       this.player = stepPlayer(
         this.player,
-        tuning.mode === 'relative'
+        mode === 'relative'
           ? { targetOffsetX: this.relativeTarget, active: steer.active }
           : { targetFraction: steer.targetFraction, active: steer.active },
         delta,
@@ -1790,7 +1812,7 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
       // DEV only: what the finger asked for against what the snail did. See `steerProbe.ts`.
       if (this.steerProbe) {
         const want =
-          tuning.mode === 'relative' ? this.relativeTarget : steerTarget(steer.targetFraction)
+          mode === 'relative' ? this.relativeTarget : steerTarget(steer.targetFraction)
         const scaleAtLane = CAMERA_DEPTH / PLAYER_Z
         const perHalfWidth = (scaleAtLane * ROAD_WIDTH * this.scale.width) / 4
 
@@ -1969,6 +1991,7 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     )
     this.updateTutorial(time)
     this.feverView.update(this.run.fever, delta, width, height)
+    this.joystickView.update(this.steering.joystick, getSteerTuning().mode === 'relative' && !dying, width, height)
     this.dust.update(time, delta, height)
 
     if (import.meta.env.DEV && this.debugMarks && !this.marksVisible) {

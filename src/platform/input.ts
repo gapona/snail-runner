@@ -1,6 +1,7 @@
 import * as Phaser from 'phaser'
 import { isJumpTap, isTap, TAP_SLOP_PX } from '../ui/scrollList'
 import { axisFrom, HeldSourceSet } from './heldSources'
+import { createJoystick, joystickRadius, moveJoystick, pressJoystick, releaseJoystick, settleJoystick, type Joystick } from './joystick'
 
 export interface ActionSources {
   /** Game object(s) that trigger the action on `pointerdown` — Phaser unifies mouse and
@@ -66,12 +67,28 @@ export interface ActionSources {
  * Cleans up all listeners on scene `SHUTDOWN`/`DESTROY`, mirroring `src/ui/layout.ts`'s
  * `bindLayout`.
  */
-export function bindAction(scene: Phaser.Scene, action: string, sources: ActionSources, callback: () => void): void {
-  const guarded = () => {
+/**
+ * Which kind of source fired an action. Almost every caller ignores it — one action is one verb,
+ * whatever triggered it — and the exception is the run's jump: a flick of the thumbstick is also a
+ * screen tap on its release, and only *that* source may be told apart from the keys.
+ */
+export type ActionSource = 'key' | 'pointer' | 'screenTap'
+
+export function bindAction(
+  scene: Phaser.Scene,
+  action: string,
+  sources: ActionSources,
+  callback: (source: ActionSource) => void,
+): void {
+  // **Never handed to `on()` directly.** Phaser calls a listener with the event's own arguments, so
+  // a function that takes a `source` would be handed a pointer or a key event in its place.
+  const fire = (source: ActionSource) => {
     if (!scene.scene.isActive()) return
     console.debug(`[input] action "${action}" fired`)
-    callback()
+    callback(source)
   }
+  const guarded = () => fire('pointer')
+  const onKey = () => fire('key')
 
   const cleanups: Array<() => void> = []
 
@@ -106,7 +123,7 @@ export function bindAction(scene: Phaser.Scene, action: string, sources: ActionS
       // free and a press means one thing only. A finger steers by being held, so every steer starts
       // with a press and only the release can tell a jump from a dodge. See `screenTap`.
       if (!pointer.wasTouch) {
-        guarded()
+        fire('screenTap')
 
         return
       }
@@ -130,7 +147,7 @@ export function bindAction(scene: Phaser.Scene, action: string, sources: ActionS
       // falls back to the wall clock recorded with the press.
       const held = pointer.downTime > 0 ? pointer.getDuration() : performance.now() - start.at
 
-      if (isJumpTap(pointer.x - start.x, pointer.y - start.y, held)) guarded()
+      if (isJumpTap(pointer.x - start.x, pointer.y - start.y, held)) fire('screenTap')
     }
     const onCancel = (pointer: Phaser.Input.Pointer) => pressedAt.delete(pointer.id)
 
@@ -193,8 +210,8 @@ export function bindAction(scene: Phaser.Scene, action: string, sources: ActionS
 
   for (const key of sources.keys ?? []) {
     const eventName = `keydown-${key}`
-    scene.input.keyboard?.on(eventName, guarded)
-    cleanups.push(() => scene.input.keyboard?.off(eventName, guarded))
+    scene.input.keyboard?.on(eventName, onKey)
+    cleanups.push(() => scene.input.keyboard?.off(eventName, onKey))
   }
 
   scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => cleanups.forEach((fn) => fn()))
@@ -326,6 +343,14 @@ export interface SteeringSources {
   rightKeys?: string[]
   /** How fast the keyboard's virtual point travels, in viewport widths per second. */
   keyboardSpeed?: number
+  /**
+   * A floating thumbstick for touch — see `platform/joystick.ts`.
+   *
+   * `enabled` is asked when a finger lands, so the scene decides whether this touch scheme is the
+   * live one without the binder having to know what a scheme is. `onJump` fires on the event a push
+   * up crosses the threshold, gated on the scene being active like every other source here.
+   */
+  joystick?: { enabled(): boolean; onJump(): void }
 }
 
 export interface Steering {
@@ -339,7 +364,12 @@ export interface Steering {
    * the frame the thumb lands. Same reason the tap path records its own press position rather than
    * reading `pointer.downX` — the state the answer needs belongs to the binder.
    */
-  read(dtMs: number): { targetFraction: number; active: boolean; deltaFraction: number }
+  read(dtMs: number): { targetFraction: number; active: boolean; deltaFraction: number; touch: boolean }
+  /**
+   * The thumbstick as it stands, for `JoystickView` to draw. Inactive whenever no finger is steering
+   * through it — including on every device without touch, where it never becomes active at all.
+   */
+  readonly joystick: Readonly<Joystick>
   /** Force-releases every source. Called automatically on focus loss and scene pause. */
   clear(): void
 }
@@ -356,9 +386,11 @@ export interface Steering {
  *
  * Two sources, one answer, same as everywhere else here:
  *
- * - **A pointer, while it is down.** Absolute: the fraction *is* the request. Releasing sets
- *   `active` false rather than freezing the last value, so the caller's spring can coast back to
- *   the centre with its own weight instead of the axis inventing a rest position.
+ * - **A pointer, while it is down.** The fraction is reported with how far it moved and whether it
+ *   is a finger, and the *scene* decides what that means: a mouse's column is the request, a
+ *   finger's movement is (see `SteerTuning.mode`). Releasing sets `active` false rather than
+ *   freezing the last value. A finger also carries a floating thumbstick — `platform/joystick.ts` —
+ *   whose push up is a jump, reported through `SteeringSources.joystick.onJump`.
  * - **The keyboard, through a virtual point** that travels at `keyboardSpeed` while a key is held
  *   and stays where it was let go. A key cannot express an absolute position, so the point is what
  *   turns a direction back into one; it starts at the centre and is clamped to the frame.
@@ -375,6 +407,10 @@ export function bindSteering(scene: Phaser.Scene, action: string, sources: Steer
   const speed = sources.keyboardSpeed ?? 0.9
 
   let pointerFraction: number | null = null
+  // Whether the pointer that is steering is a finger. The scene uses it to pick the touch scheme
+  // for a finger and leave a mouse on the column it hovers over.
+  let pointerTouch = false
+  const stick = createJoystick()
   let keyboardPoint = 0.5
   // What `read` last handed back, so a delta can be reported without the caller having to keep it.
   let lastFraction: number | null = null
@@ -418,18 +454,36 @@ export function bindSteering(scene: Phaser.Scene, action: string, sources: Steer
       return
     }
     pointerFraction = Math.min(1, Math.max(0, pointer.x / scene.scale.width))
+    pointerTouch = pointer.wasTouch
+
+    if (stick.active && pointer.wasTouch && moveJoystick(stick, pointer.x, pointer.y, joystickRadius(scene.scale.width, scene.scale.height))) {
+      sources.joystick?.onJump()
+    }
+  }
+  // **The stick appears on the press, and only for a finger that did not land on a widget.** A
+  // press on the run's exit button is a press on the exit button; drawing a stick under it would say
+  // the thumb is steering when it is leaving.
+  const onDown = (pointer: Phaser.Input.Pointer, currentlyOver?: Phaser.GameObjects.GameObject[]) => {
+    if (scene.scene.isActive() && pointer.wasTouch && (currentlyOver?.length ?? 0) === 0 && sources.joystick?.enabled()) {
+      pressJoystick(stick, pointer.x, pointer.y)
+    }
+    onPointer(pointer)
   }
   // A mouse button coming up does not end mouse steering — the cursor is still there, and still
   // the input. A finger coming up does, because there is nothing left to point with.
   const onUp = (pointer: Phaser.Input.Pointer) => {
-    if (pointer.wasTouch) pointerFraction = null
+    if (pointer.wasTouch) {
+      pointerFraction = null
+      releaseJoystick(stick)
+    }
   }
   // Leaving the canvas ends it for either kind: there is no position to steer to any more.
   const onLeave = () => {
     pointerFraction = null
+    releaseJoystick(stick)
   }
 
-  scene.input.on(Phaser.Input.Events.POINTER_DOWN, onPointer)
+  scene.input.on(Phaser.Input.Events.POINTER_DOWN, onDown)
   scene.input.on(Phaser.Input.Events.POINTER_MOVE, onPointer)
   scene.input.on(Phaser.Input.Events.POINTER_UP, onUp)
   // A pointer released outside the canvas never fires POINTER_UP; without this the snail would
@@ -437,7 +491,7 @@ export function bindSteering(scene: Phaser.Scene, action: string, sources: Steer
   scene.input.on(Phaser.Input.Events.POINTER_UP_OUTSIDE, onLeave)
   scene.input.on(Phaser.Input.Events.GAME_OUT, onLeave)
   cleanups.push(() => {
-    scene.input.off(Phaser.Input.Events.POINTER_DOWN, onPointer)
+    scene.input.off(Phaser.Input.Events.POINTER_DOWN, onDown)
     scene.input.off(Phaser.Input.Events.POINTER_MOVE, onPointer)
     scene.input.off(Phaser.Input.Events.POINTER_UP, onUp)
     scene.input.off(Phaser.Input.Events.POINTER_UP_OUTSIDE, onLeave)
@@ -449,6 +503,7 @@ export function bindSteering(scene: Phaser.Scene, action: string, sources: Steer
     heldRight.clear()
     pointerFraction = null
     lastFraction = null
+    releaseJoystick(stick)
   }
 
   scene.game.events.on(Phaser.Core.Events.BLUR, clear)
@@ -467,6 +522,9 @@ export function bindSteering(scene: Phaser.Scene, action: string, sources: Steer
 
   return {
     read(dtMs: number) {
+      // The stick's base drifts back under the thumb once a frame — see `settleJoystick`.
+      settleJoystick(stick, dtMs, joystickRadius(scene.scale.width, scene.scale.height))
+
       // A frame with no input breaks the chain: the next press is a new gesture and must report no
       // movement, however far away it lands.
       const since = (fraction: number) => (lastFraction === null ? 0 : fraction - lastFraction)
@@ -480,7 +538,7 @@ export function bindSteering(scene: Phaser.Scene, action: string, sources: Steer
 
         lastFraction = pointerFraction
 
-        return { targetFraction: pointerFraction, active: true, deltaFraction }
+        return { targetFraction: pointerFraction, active: true, deltaFraction, touch: pointerTouch }
       }
 
       const axis = axisFrom(heldLeft.isHeld, heldRight.isHeld)
@@ -488,7 +546,7 @@ export function bindSteering(scene: Phaser.Scene, action: string, sources: Steer
       if (axis === 0) {
         lastFraction = null
 
-        return { targetFraction: keyboardPoint, active: false, deltaFraction: 0 }
+        return { targetFraction: keyboardPoint, active: false, deltaFraction: 0, touch: false }
       }
 
       const dtSec = Number.isFinite(dtMs) && dtMs > 0 ? dtMs / 1000 : 0
@@ -500,8 +558,9 @@ export function bindSteering(scene: Phaser.Scene, action: string, sources: Steer
 
       lastFraction = keyboardPoint
 
-      return { targetFraction: keyboardPoint, active: true, deltaFraction }
+      return { targetFraction: keyboardPoint, active: true, deltaFraction, touch: false }
     },
+    joystick: stick,
     clear,
   }
 }

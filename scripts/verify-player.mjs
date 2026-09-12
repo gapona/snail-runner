@@ -49,7 +49,9 @@ import {
   STEER_EDGE_MARGIN,
 } from '../src/run/constants.ts'
 import { FIXED_STEP_MS } from '../src/race/constants.ts'
-import { STEER_PRESETS, relativeTarget } from '../src/run/steerTuning.ts'
+import { STEER_PRESETS, getSteerTuning, relativeTarget } from '../src/run/steerTuning.ts'
+import { JOYSTICK, createJoystick, joystickRadius, moveJoystick, pressJoystick, releaseJoystick, settleJoystick } from '../src/platform/joystick.ts'
+import { readFileSync } from 'node:fs'
 import { createSteerProbe, steerReport, stepSteerProbe } from '../src/run/steerProbe.ts'
 import { billboardRectInto, createBillboardRect } from '../src/road/billboard.ts'
 import { groundPointInto } from '../src/run/groundProjection.ts'
@@ -1511,6 +1513,215 @@ check('the probe files a gesture, not a frame, and only counts visible overshoot
 
   assert.equal(report.requests, 1)
   assert.ok(report.arriveMsMean !== null, 'a gesture that arrived reported no arrival time')
+})
+
+check('the thumbstick is a thumb wide on a phone and not a plate on a tablet', () => {
+  // A stick narrower than a thumb is one the thumb covers entirely; a stick sized off a tablet's
+  // short side is a dinner plate. Both ends are bounds rather than tastes.
+  const rows = [[320, 568], [384, 744], [844, 390], [1280, 720], [1920, 945]].map(([w, h]) => [w, h, joystickRadius(w, h)])
+
+  for (const [w, h, r] of rows) {
+    assert.ok(r >= JOYSTICK.minRadius && r <= JOYSTICK.maxRadius, `${w}x${h}: radius ${r}`)
+  }
+  assert.equal(joystickRadius(320, 568), JOYSTICK.minRadius, 'the narrowest phone should be held at the floor')
+  assert.equal(joystickRadius(1920, 945), JOYSTICK.maxRadius, 'a desktop frame should be held at the ceiling')
+  console.log(`    radius: ${rows.map(([w, h, r]) => `${w}x${h} ${r.toFixed(0)}px`).join(', ')}`)
+})
+
+check('the stick appears under the thumb, follows it past the rim, and never clamps', () => {
+  const stick = createJoystick()
+  const r = 50
+
+  assert.equal(moveJoystick(stick, 10, 10, r), false, 'an inactive stick answered a move')
+  pressJoystick(stick, 200, 600)
+  assert.deepEqual([stick.baseX, stick.baseY, stick.knobX, stick.knobY, stick.armed], [200, 600, 200, 600, true])
+
+  // Inside the rim the base stays where the thumb landed.
+  moveJoystick(stick, 230, 600, r)
+  assert.deepEqual([stick.baseX, stick.baseY], [200, 600])
+
+  // Past it, the base is pulled along so the knob sits exactly on the rim, in the thumb's direction.
+  moveJoystick(stick, 330, 600, r)
+  assert.equal(stick.knobX, 330, 'the knob is not under the thumb')
+  assert.ok(Math.abs(Math.hypot(stick.knobX - stick.baseX, stick.knobY - stick.baseY) - r) < 1e-9, 'the knob left the rim')
+  assert.equal(stick.baseX, 280, 'the base did not follow the thumb past the rim')
+
+  releaseJoystick(stick)
+  assert.equal(stick.active, false)
+  assert.equal(moveJoystick(stick, 330, 500, r), false, 'a released stick jumped')
+})
+
+check('a press that flicked is remembered through its release and forgotten by the next press', () => {
+  // The tap on the release of a flick is the second jump of one gesture; the scene asks this flag
+  // at exactly that moment, so it has to survive the release and die with the next press.
+  const r = 46
+  const stick = createJoystick()
+
+  pressJoystick(stick, 200, 600)
+  assert.equal(moveJoystick(stick, 200, 600 - r, r), true)
+  releaseJoystick(stick)
+  assert.equal(stick.flicked, true, 'the release forgot the flick before the tap could ask')
+  pressJoystick(stick, 200, 600)
+  assert.equal(stick.flicked, false, 'a new press inherited the flick of the last one, and its tap would be swallowed')
+})
+
+check('a push up jumps once, and only once, until the stick comes back down', () => {
+  const stick = createJoystick()
+  const r = 50
+  const jumps = []
+
+  pressJoystick(stick, 200, 600)
+  // Straight up, in the small steps a pointer reports: exactly one jump, on the crossing.
+  for (let y = 600; y >= 520; y -= 4) jumps.push(moveJoystick(stick, 200, y, r))
+  assert.equal(jumps.filter(Boolean).length, 1, `${jumps.filter(Boolean).length} jumps for one push`)
+  const crossedAt = 600 - 4 * jumps.indexOf(true)
+  assert.ok(600 - crossedAt >= JOYSTICK.jumpShare * r, `it jumped ${600 - crossedAt}px up, before the threshold`)
+
+  // Held up there, nothing more; back down past the re-arm line and up again, a second jump.
+  assert.equal(moveJoystick(stick, 200, stick.baseY - r, r), false, 'a held push jumped again')
+  moveJoystick(stick, 200, stick.baseY - JOYSTICK.rearmShare * r * 0.5, r)
+  assert.equal(stick.armed, true, 'coming back down did not re-arm it')
+  assert.equal(moveJoystick(stick, 200, stick.baseY - r * 0.8, r), true, 'the second push did not jump')
+})
+
+check('a flick up jumps from wherever the thumb has been steering, not only from a fresh stick', () => {
+  // **⚠ Driven in the running game, the first version did not.** A 96px steer right left the knob
+  // on the rim, and a 30px push up from there was 26px up against 38px sideways — no jump. The base
+  // drifts back under the thumb now, so what counts is how far a push got ahead of it.
+  const r = 46
+  const frame = 1000 / 60
+  const steerThenFlick = (settle) => {
+    const stick = createJoystick()
+    let jumped = 0
+
+    pressJoystick(stick, 150, 620)
+    for (let i = 1; i <= 12; i++) {
+      moveJoystick(stick, 150 + 8 * i, 620, r)
+      if (settle) settleJoystick(stick, frame, r)
+    }
+    // Held still for 300ms, which is a player lining up.
+    for (let i = 0; i < 18; i++) if (settle) settleJoystick(stick, frame, r)
+    // A 30px flick up over 100ms, one pointer event a frame.
+    for (let i = 1; i <= 6; i++) {
+      if (moveJoystick(stick, 246, 620 - 5 * i, r)) jumped++
+      if (settle) settleJoystick(stick, frame, r)
+    }
+
+    return jumped
+  }
+
+  assert.equal(steerThenFlick(true), 1, 'a flick after a steer did not jump exactly once')
+  assert.equal(steerThenFlick(false), 0, 'the control jumped: without the drift a flick after a steer is sideways, which is the report')
+})
+
+check('a slow drift up is followed rather than read as a jump, at 60Hz and at 144Hz alike', () => {
+  const r = 46
+
+  for (const hz of [60, 144]) {
+    const stick = createJoystick()
+    const frame = 1000 / hz
+    let jumped = 0
+
+    pressJoystick(stick, 200, 620)
+    // 30px over a second: a thumb creeping, not flicking.
+    for (let i = 1; i <= hz; i++) {
+      if (moveJoystick(stick, 200, 620 - (30 * i) / hz, r)) jumped++
+      settleJoystick(stick, frame, r)
+    }
+    assert.equal(jumped, 0, `${hz}Hz: a slow drift jumped`)
+  }
+
+  // The drift itself is frame-rate invariant: where the base has got to after 200ms of a still
+  // thumb does not depend on how many frames that was.
+  // Frame counts that make exactly 200ms each, so the comparison is of the drift and not of a
+  // rounded duration.
+  const settled = (frames) => {
+    const stick = createJoystick()
+
+    pressJoystick(stick, 0, 0)
+    moveJoystick(stick, 40, 0, r)
+    for (let i = 0; i < frames; i++) settleJoystick(stick, 200 / frames, r)
+
+    return stick.baseX
+  }
+
+  assert.ok(Math.abs(settled(12) - settled(29)) < 1e-9, `the base drifts ${settled(12).toFixed(3)} at 60Hz and ${settled(29).toFixed(3)} at 144Hz`)
+})
+
+check('a thumb that stays up re-arms once the base catches it, so a second flick needs no reset', () => {
+  const r = 46
+  const frame = 1000 / 60
+  const stick = createJoystick()
+  let jumps = 0
+  let y = 620
+
+  pressJoystick(stick, 200, y)
+  for (let i = 0; i < 6; i++) {
+    y -= 5
+    if (moveJoystick(stick, 200, y, r)) jumps++
+    settleJoystick(stick, frame, r)
+  }
+  assert.equal(jumps, 1)
+  for (let i = 0; i < 40; i++) settleJoystick(stick, frame, r)
+  assert.equal(stick.armed, true, 'a thumb held up never re-armed')
+  for (let i = 0; i < 6; i++) {
+    y -= 5
+    if (moveJoystick(stick, 200, y, r)) jumps++
+    settleJoystick(stick, frame, r)
+  }
+  assert.equal(jumps, 2, 'the second flick did not jump')
+})
+
+check('steering sideways with a thumb that arcs is not a jump', () => {
+  // **The failure to be afraid of is a jump nobody asked for**, and the gesture that produces it is
+  // the ordinary one: a thumb swept across the screen draws an arc, rising in the middle. Up has to
+  // be the dominant direction as well as far enough, measured after the base has followed.
+  const r = 50
+
+  for (const rise of [0.3, 0.6, 1.2]) {
+    const stick = createJoystick()
+    let jumped = 0
+
+    pressJoystick(stick, 60, 650)
+    for (let i = 0; i <= 60; i++) {
+      const t = i / 60
+      const x = 60 + 260 * t
+      const y = 650 - r * rise * Math.sin(Math.PI * t)
+
+      if (moveJoystick(stick, x, y, r)) jumped++
+      settleJoystick(stick, 1000 / 60, r)
+    }
+    assert.equal(jumped, 0, `a sideways sweep rising ${rise}R jumped ${jumped} times`)
+  }
+
+  // And a push that goes further sideways than up, however far up it goes, is steering.
+  const stick = createJoystick()
+
+  pressJoystick(stick, 200, 600)
+  assert.equal(moveJoystick(stick, 200 + r * 0.7, 600 - r * 0.6, r), false, 'a diagonal leaning sideways jumped')
+  // The control: the same height straight up does jump, so the test above is not passing by the
+  // threshold never being reached.
+  const straight = createJoystick()
+
+  pressJoystick(straight, 200, 600)
+  assert.equal(moveJoystick(straight, 200, 600 - r * 0.6, r), true, 'the control did not jump')
+})
+
+check('a finger steers relative with the stick, and a mouse and the keys stay absolute', () => {
+  // **⚠ Relative steering existed for a round behind a DEV key, which is to say never on a phone.**
+  // It ships as the finger's scheme now; the mode is read only for a touch, so a desktop is exactly
+  // what it was. Read from the source for the scene half, because `RunScene` imports phaser.
+  assert.equal(getSteerTuning().mode, 'relative', 'a finger no longer steers relative by default')
+
+  const scene = readFileSync(new URL('../src/scenes/RunScene.ts', import.meta.url), 'utf8')
+
+  assert.ok(scene.includes("const mode: SteerMode = steer.touch ? tuning.mode : 'absolute'"), 'the mode is no longer the finger alone')
+  assert.ok(scene.includes("enabled: () => getSteerTuning().mode === 'relative'"), 'the stick is no longer tied to the relative scheme')
+  assert.ok(scene.includes("if (source === 'screenTap' && this.steering.joystick.flicked) return"), 'the release of a flick can jump a second time')
+
+  const input = readFileSync(new URL('../src/platform/input.ts', import.meta.url), 'utf8')
+
+  assert.ok(input.includes('pointer.wasTouch && (currentlyOver?.length ?? 0) === 0 && sources.joystick?.enabled()'), 'the stick can appear for a mouse, or under a widget')
 })
 
 console.log(`${passed} checks passed`)
