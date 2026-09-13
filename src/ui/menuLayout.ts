@@ -236,6 +236,73 @@ export function mascotFeetRow(height: number, horizon: number, rest: number, z: 
 }
 
 /**
+ * How wide the Play button is drawn: a share of the frame between a floor and a ceiling.
+ *
+ * In this file rather than on `MainMenu` because the landscape composition is solved from it — see
+ * `mascotBesideOffset` — and a width a `verify:` script has to restate is a width that drifts.
+ */
+export const PLAY_WIDTH = { fraction: 0.4, min: 264, max: 380, sideInset: 64 } as const
+
+export function playWidthFor(width: number, scale: number): number {
+  return Math.min(
+    Math.max(width * PLAY_WIDTH.fraction, PLAY_WIDTH.min * scale),
+    PLAY_WIDTH.max,
+    width - PLAY_WIDTH.sideInset * scale,
+  )
+}
+
+/**
+ * Where the mascot's centre lands when the Play stack is beside it rather than under it, as a
+ * fraction of the frame's width: halfway between the centred button's right edge and the frame's.
+ */
+export function mascotBesideCentre(width: number, playWidth: number): number {
+  return (0.5 + playWidth / (2 * width) + 1) / 2
+}
+
+/**
+ * The camera lean, in road half-widths, that puts a mascot standing at `offsetX` on
+ * `mascotBesideCentre` — negative, i.e. the camera moves left and the road slides right under it.
+ *
+ * **⚠ The stack is CENTRED on a landscape frame now, and the picture is what moves.** It used to be
+ * the other way round: the button went to a left column at 0.28 of the width and the mascot stood at
+ * a fixed 0.95 half-widths. Reported from a phone held sideways: centre the Play button. A centred
+ * button at 828x300 spans 248..579, and the mascot at 0.95 stood at 499..665 — so centring alone
+ * puts the button across the creature.
+ *
+ * **⚠ Moving the mascot out along the road was built first and is the wrong lever.** Solved to the
+ * same screen column it stood at 1.66 half-widths, which is the decor band (`DECOR.MIN_OFFSET` is
+ * 1.35), and a roadside tree was drawn straight over the creature on the first frame looked at. So
+ * the mascot stays on the asphalt's edge, where its outer side clears every prop, and the CAMERA
+ * leans — the one lateral lever that moves the road and its scenery together and leaves the relation
+ * between them alone.
+ *
+ * The arithmetic is the projection's, at the mascot's own distance: one half-width spans
+ * `runHalfWidth / z` of the frame, and a lean moves the whole road the opposite way by the same
+ * scale. Bends still slide the creature a few tens of pixels either way — the menu's road runs —
+ * which is what the margin either side of it is for.
+ */
+export function mascotBesideLean(spec: {
+  /** The frame's width and the centred Play stack's, in pixels. */
+  readonly width: number
+  readonly playWidth: number
+  /** How much of the frame's width one road half-width spans at the run's own distance. */
+  readonly runHalfWidth: number
+  /** How far up the road the mascot stands, as a multiple of the run's distance. */
+  readonly z: number
+  /** Where on the road the mascot stands, in half-widths. */
+  readonly offsetX: number
+}): number {
+  const centre = mascotBesideCentre(spec.width, spec.playWidth)
+
+  return spec.offsetX - ((centre - 0.5) * spec.z) / spec.runHalfWidth
+}
+
+/** How wide the front screen's mascot is on the road, in half-widths, standing `z` times out. */
+export function mascotHalfWidths(widthFraction: number, runHalfWidth: number, z: number): number {
+  return ((widthFraction / 2) * z) / runHalfWidth
+}
+
+/**
  * How wide the secondary control under Play may be drawn, as a share of Play itself.
  *
  * **The hierarchy's one arithmetic rule, and it is inherited from the control this replaced.** The

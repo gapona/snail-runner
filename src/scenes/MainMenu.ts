@@ -20,7 +20,17 @@ import { createNavBar, type NavBar } from '../ui/navBar'
 import { launchOverlay } from '../ui/overlay'
 import { isCosmeticSelected, selectCosmetic } from '../shop/cosmetics'
 import { playSfx } from '../audio/audio'
-import { buttonBand, mascotFeetRow, mascotLift, MENU_ENTRY as ENTRY, secondaryMaxWidth, titleBand, titleRow } from '../ui/menuLayout'
+import {
+  buttonBand,
+  mascotBesideLean,
+  mascotFeetRow,
+  mascotLift,
+  MENU_ENTRY as ENTRY,
+  playWidthFor,
+  secondaryMaxWidth,
+  titleBand,
+  titleRow,
+} from '../ui/menuLayout'
 import { resolveSuspended } from '../run/suspend'
 import { WorldView } from '../run/WorldView'
 import { biomeIndexForSegment } from '../road/biomes'
@@ -29,8 +39,15 @@ import { createQuestBoard, type QuestBoardView } from '../ui/questBoard'
 import { QUEST_CHIP, questPanelSize } from '../ui/questLayout'
 import { claimQuest, QUEST_SLOTS, resolveQuestBoard, type QuestBoard } from '../run/quests'
 import { createRng } from '../race/rng'
-import { createPlayerState } from '../run/playerMotion'
-import { PLAYER_REST_Y_FRACTION, PLAYER_WIDTH, PLAYER_Z, mascotReadableScale, SPEED_BASE } from '../run/constants'
+import { createPlayerState, playerScreenFraction } from '../run/playerMotion'
+import {
+  CAMERA_LEAN,
+  PLAYER_REST_Y_FRACTION,
+  PLAYER_WIDTH,
+  PLAYER_Z,
+  mascotReadableScale,
+  SPEED_BASE,
+} from '../run/constants'
 import { CAMERA_HEIGHT, HORIZON_Y } from '../road/constants'
 import { INK } from '../run/artPalette'
 
@@ -64,15 +81,6 @@ const TITLE_INK = { stroke: 0.19, shadowY: 0.13, tiltDegrees: -3 } as const
 const TITLE_BAND_FILL = 0.78
 const TITLE_MAX_WIDTH_FRACTION = 0.88
 
-/**
- * The primary action's own geometry, in unscaled pixels.
- *
- * **A share of the frame between a floor and a ceiling, not a fixed width.** A 264px button is
- * two thirds of a 320px phone and an eighth of a desktop — the same object reading as "the thing to
- * press" on one and as a chip on the other. The floor is what keeps it thumb-sized on the narrowest
- * supported frame; the ceiling is what stops a wide desktop turning it into a banner.
- */
-const PLAY_WIDTH = { fraction: 0.4, min: 264, max: 380 }
 /** The gap between the Play button and the secondary action under it, when there is one. */
 const STACK_GAP = 10
 
@@ -96,12 +104,12 @@ const SIDE_MARGIN = 16
 const MASCOT = {
   offsetX: 0.58,
   /**
-   * Where the mascot stands when the Play stack is beside it rather than under it.
-   *
-   * Measured, not chosen: on an 844x390 frame the mascot's box is 256px wide and the button 380, so
-   * the two need 636 of 844 plus margins — which they have, and only just. See `SIDE_COLUMN`.
+   * Where the mascot stands when the Play stack is beside it rather than under it: on the asphalt's
+   * own edge, where its outer side is still inside `DECOR.MIN_OFFSET` — so no roadside prop can be
+   * drawn over it. What puts it beside the centred button is the camera's lean, not this; see
+   * `mascotBesideLean`.
    */
-  sideOffsetX: 0.95,
+  besideOffsetX: 0.85,
   widthFraction: 0.2,
   /**
    * How far up the road the front screen's mascot stands, as a multiple of the run's own distance
@@ -258,6 +266,12 @@ export class MainMenu extends Phaser.Scene {
    * has not changed. See `mascotLift`.
    */
   private mascotZ: number = MASCOT.zScale
+  /**
+   * Where across the frame the camera follows, `0..1`, set by `placeStack`: after the mascot as a
+   * run does, or — beside a centred Play button — far enough the other way to slide the road under
+   * it. See `mascotBesideLean`.
+   */
+  private follow = 0.5 + MASCOT.offsetX * 0.5
   private shopBadge!: Phaser.GameObjects.Graphics
 
   private elapsedMs = 0
@@ -865,8 +879,9 @@ export class MainMenu extends Phaser.Scene {
     this.quests.update(time, delta)
 
     // The camera leans towards the mascot exactly as it does in a run, so the one object the
-    // picture is about is also the one the frame is composed around.
-    this.world.advance(delta, 0.5 + this.mascotState.offsetX * 0.5)
+    // picture is about is also the one the frame is composed around — except beside a centred Play
+    // button, where it leans the other way to slide the road under the creature (see `follow`).
+    this.world.advance(delta, this.follow)
     this.world.render(width, height)
 
     // After the world, never before: it reads this frame's segment projections out of the mesh pass.
@@ -996,13 +1011,9 @@ export class MainMenu extends Phaser.Scene {
    */
   private measureStack(width: number, scale: number): void {
     this.playButton.setFontSize(PLAY_FONT_SIZE * scale)
-    this.playButton.setMinWidth(
-      Math.min(
-        Math.max(width * PLAY_WIDTH.fraction, PLAY_WIDTH.min * scale),
-        PLAY_WIDTH.max,
-        width - SIDE_MARGIN * 4 * scale,
-      ),
-    )
+    // A share of the frame between a floor and a ceiling, not a fixed width: a 264px button is two
+    // thirds of a 320px phone and an eighth of a desktop. See `playWidthFor`.
+    this.playButton.setMinWidth(playWidthFor(width, scale))
     // **Bounded by the button above it, which is the whole of "lighter and narrower than Play".**
     // Weight is carried by the tier — a muted face against a solid one — and width has to be a rule
     // or a translated label would grow the secondary control past the primary one. See
@@ -1035,8 +1046,8 @@ export class MainMenu extends Phaser.Scene {
     // place that exists.** The feet can never rise above `HORIZON_Y` — that is what the projection
     // is — so at 844x390 they sit at 242px at best against a bar top of 314, leaving 72px for a
     // 65px button and two gaps. No value of `MASCOT.zScale` reaches it. What such a frame does have
-    // is width: 256px of mascot and 380px of button fit side by side in 844 with room to spare, so
-    // the mascot moves to the far side of the road and the button takes the column it leaves.
+    // is width: a centred button leaves a quarter of the frame either side of it, and the mascot —
+    // a fifth of the width — stands in the right-hand one, on the verge.
     // **⚠ And it may only happen on a frame that is actually wide, which is what a portrait phone
     // proved.** The vertical test alone is satisfied by any *short* frame, and a tall narrow one is
     // short too once the bar and the mascot have taken their share: at 455x648 the room came out at
@@ -1058,11 +1069,11 @@ export class MainMenu extends Phaser.Scene {
     // centre by half the bar was the first attempt and was still short — what the stack needs is a
     // hard floor, because the bar owns the bottom outright.
     const top = sideBySide
-      ? // **⚠ Under the quest board, not centred in the space.** Centring it was the first version
-        // and it put the button squarely across all three quest rows — the board is in the upper
-        // left and this frame moves the button into the same column, which is a collision the
-        // vertical measurements could not see because they were taken against the mascot and the
-        // bar. The two share the column by stacking, and the board is a chip until it is asked for.
+      ? // **⚠ Under the quest board and the wordmark, not centred in the space.** Centring it
+        // vertically was the first version and it put the button squarely across all three quest
+        // rows — the board and the wordmark are in the upper left and a 380px button reaches into
+        // that column from the middle too, which is a collision the vertical measurements could not
+        // see because they were taken against the mascot and the bar. They share it by stacking.
         Math.min(
           // On a compact frame the board is up in the coin row, so the stack hangs off the wordmark.
           (this.compactLandscape(width, height, scale) ? this.title.y + this.title.height / 2 : this.quests.bottom) +
@@ -1070,9 +1081,27 @@ export class MainMenu extends Phaser.Scene {
           this.stackFloor(width, height, scale) - stack,
         )
       : this.stackTop(width, height, scale)
-    const column = sideBySide ? width * SIDE_COLUMN : width / 2
+    // **⚠ Centred on every frame, the side-by-side one included — reported from a phone held
+    // sideways.** The stack used to take a left column at 0.28 of the width there, which put the one
+    // thing on the screen the player is meant to hit off to one side of it. What moves now is the
+    // picture: the mascot stays on the asphalt's edge and the camera leans until it stands in the
+    // space between the button's right edge and the frame's (`mascotBesideLean`). Centring alone
+    // would have put the button across the creature's left half.
+    const column = width / 2
 
-    this.mascotState.offsetX = sideBySide ? MASCOT.sideOffsetX : MASCOT.offsetX
+    this.mascotState.offsetX = sideBySide ? MASCOT.besideOffsetX : MASCOT.offsetX
+    // `WorldView` leans by `(follow - 0.5) * CAMERA_LEAN`, so a lean is asked for through the follow.
+    this.follow = sideBySide
+      ? 0.5 +
+        mascotBesideLean({
+          width,
+          playWidth: this.playButton.width,
+          runHalfWidth: playerScreenFraction(1) - 0.5,
+          z: this.mascotZ,
+          offsetX: MASCOT.besideOffsetX,
+        }) /
+          CAMERA_LEAN
+      : 0.5 + MASCOT.offsetX * 0.5
     // Hidden rather than merely drawn under: an object that does not render is not hit-tested, and
     // a tap on the open panel's blank space must not fall through and start a run.
     this.playButton.container.setVisible(!this.stackCovered)
@@ -1179,9 +1208,8 @@ export class MainMenu extends Phaser.Scene {
    * **⚠ On a short landscape frame, under the mascot is not a place that exists.** The feet can
    * never rise above `HORIZON_Y` — that is what the projection is — so at 844x390 they sit at 242px
    * at best against a bar top of 314, leaving 72px for a 65px button and two gaps. What such a
-   * frame does have is width: 256px of mascot and 380px of button fit side by side in 844 with room
-   * to spare, so the mascot moves to the far side of the road and the button takes the column it
-   * leaves.
+   * frame does have is width: the button stays centred and the mascot moves into the space right of
+   * it — see `mascotBesideOffset`.
    *
    * **⚠ And it may only happen on a frame that is actually wide, which is what a portrait phone
    * proved.** The vertical test alone is satisfied by any *short* frame, and a tall narrow one is
@@ -1244,14 +1272,6 @@ function rectOf(rect: Phaser.Geom.Rectangle): { x: number; y: number; width: num
 const QUEST_BOARD_DEPTH = 10
 /** The bar sits over the board, because it is chrome and the board is content. */
 const NAV_DEPTH = 20
-/**
- * Which column the Play stack takes when it stands beside the mascot rather than under it.
- *
- * Left of centre, because the mascot is right of it: `MASCOT.offsetX` has always put the creature
- * off the centreline so the button could have the middle, and on a side-by-side frame that same
- * decision simply gets acted on in the other axis.
- */
-const SIDE_COLUMN = 0.28
 /**
  * The frame proportion at which the Play stack may stand *beside* the mascot rather than under it.
  *

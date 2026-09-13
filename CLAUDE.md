@@ -15406,6 +15406,31 @@ Three `verify:obstacles` fixtures had the old apex baked in as `PLAYER_BODY_H + 
 band against `JUMP_APEX` now. The difficulty table barely moves (blocking share 0.12 -> 0.11, from the
 longer flight `provePassable` has to prove). All 26 suites green.
 
+### ⚠ The Play button went to a left column sideways, and centring it meant moving the picture
+
+Reported off the sideways frame: *centre the Play button.* On a side-by-side frame (landscape, the
+mascot's feet unable to clear the stack) the button took a column at **0.28 of the width** and the
+mascot stood at a fixed `0.95` half-widths on the right. The button is centred on every frame now
+(`placeStack`), and the question was where the snail goes: a centred button at 828x300 spans
+248..580, and the mascot at 0.95 stood at 499..665 — centring alone draws the button across it.
+
+- **Moving the mascot out along the road was built first and is the wrong lever.** Solved to the
+  same screen column it stood at **1.66 half-widths**, inside the decor band (`DECOR.MIN_OFFSET`
+  1.35), and a roadside tree was drawn straight over the creature on the first frame looked at.
+- **So the mascot stays on the asphalt's edge (`MASCOT.besideOffsetX` 0.85, spanning 0.44..1.26 —
+  clear of every prop) and the CAMERA leans the other way** until the creature's centre sits halfway
+  between the button's right edge and the frame's (`mascotBesideLean`, pure, in `menuLayout.ts`). The
+  lean is the one lateral lever that moves the road and its scenery together, so no prop nearer than
+  the mascot can reach it: a nearer prop at the same offset projects further out. The road slides
+  right under it — the near ground runs off to the right, the horizon does not move.
+- **`playWidthFor` moved into `menuLayout.ts`** so the check can reach the width it is solved from;
+  `SIDE_COLUMN` and `MASCOT.sideOffsetX` are deleted.
+- Measured live over a **whole lap of the menu circuit** at 828x300, 844x390, 740x360 and 900x380:
+  the bends slide the creature ±25–31px, and it never comes within **11px** of the button or the
+  frame's edge. Portrait and desktop are unchanged (lean 0.072, as before). `verify:menu` holds the
+  room either side against that drift, with the old fixed offset and the moved-out mascot as its two
+  controls.
+
 ## Known Issues Fixed
 
 Bugs and gotchas hit and fixed while building the platform/save/audio layers — recorded so they don't get
@@ -15428,6 +15453,10 @@ App bugs:
   so sideways at 828x300 the whole road crossed in 195px — under a quarter of the screen. A crossing
   swipe is at least 36% of the width now (298px); portrait is unchanged. → "And then sideways in a
   webview it was far too sensitive"
+- **The Play button stood in a left column on a sideways frame.** It is centred now; the mascot
+  stays on the road's edge and the camera leans the other way to slide the road under it — moving
+  the snail out along the road put it in the decor band, under a tree. → "The Play button went to a
+  left column sideways"
 
 - **A finger steered `absolute` though relative drag measured 5x better on a phone** — the better
   mode was behind a DEV key, i.e. a keyboard. Ships as drag-anywhere with a flick up to jump; the

@@ -9,14 +9,19 @@
 // overflowed the one nobody did, and a button row that shrank the primary action along with the
 // decoration. Neither is visible in a screenshot of the viewport it happens to be taken at.
 import assert from 'node:assert/strict'
-import { HORIZON_Y } from '../src/road/constants.ts'
+import { DECOR, HORIZON_Y } from '../src/road/constants.ts'
 import { SUN, sunCenterX, sunSize } from '../src/road/constants.ts'
 import { PLAYER_REST_Y_FRACTION } from '../src/run/constants.ts'
+import { playerScreenFraction } from '../src/run/playerMotion.ts'
 import {
   buttonBand,
   intersects,
+  mascotBesideCentre,
+  mascotBesideLean,
   mascotFeetRow,
+  mascotHalfWidths,
   mascotLift,
+  playWidthFor,
   MENU_ENTRY,
   MENU_ZONES,
   obstacleBand,
@@ -311,6 +316,90 @@ check('⚠ ONE lift cannot serve every frame, which is what the derivation repla
   console.log(
     `    a constant ${CONSTANT} leaves ${touching} of ${VIEWPORTS.length} frames inside the clearance and ` +
       `lifts ${overshot} that did not need it at all`,
+  )
+})
+
+console.log('on a landscape frame the Play button is centred and the mascot stands beside it')
+
+/**
+ * The side-by-side mascot's own constants, restated from `MainMenu`'s `MASCOT` for `LIFT`'s reason.
+ * `z` is the lift's floor, which is what a side-by-side frame stands it at.
+ */
+const BESIDE = { offsetX: 0.85, widthFraction: 0.2, z: LIFT.minZ }
+
+/**
+ * How far the menu road's bends slide the mascot across the frame, either way, as a share of its
+ * width. A regression threshold rather than a derivation: measured live over a whole lap of the menu
+ * circuit on 2026-09-13 — ±29px at 828x300 and 844x390, ±25 at 740x360, ±31 at 900x380.
+ */
+const BEND_DRIFT = 0.036
+
+/** The landscape frames the side-by-side branch is accepted at: phones sideways, webviews included. */
+const LANDSCAPE = [
+  [740, 360],
+  [828, 300],
+  [844, 390],
+  [900, 380],
+  [1280, 600],
+]
+
+const RUN_HALF_WIDTH = playerScreenFraction(1) - 0.5
+
+check('⚠ the centred Play button leaves the mascot room beside it on every landscape frame', () => {
+  let tightest = Infinity
+
+  for (const [width, height] of LANDSCAPE) {
+    const play = playWidthFor(width, 1)
+    const playRight = width / 2 + play / 2
+    const centre = mascotBesideCentre(width, play) * width
+    const half = (BESIDE.widthFraction / 2) * width
+    const drift = BEND_DRIFT * width
+    const toPlay = centre - half - playRight
+    const toEdge = width - (centre + half)
+
+    // Room enough on both sides for the bends to slide the creature without touching either.
+    assert.ok(toPlay - drift >= 8, `${width}x${height}: the mascot can slide onto the Play button (${toPlay.toFixed(0)}px)`)
+    assert.ok(toEdge - drift >= 8, `${width}x${height}: the mascot can slide off the frame (${toEdge.toFixed(0)}px)`)
+    tightest = Math.min(tightest, toPlay - drift, toEdge - drift)
+
+    // The lean puts it there, and it is the other way from the run's own.
+    const lean = mascotBesideLean({ width, playWidth: play, runHalfWidth: RUN_HALF_WIDTH, z: BESIDE.z, offsetX: BESIDE.offsetX })
+    const delivered = 0.5 + (RUN_HALF_WIDTH / BESIDE.z) * (BESIDE.offsetX - lean)
+
+    assert.ok(Math.abs(delivered * width - centre) < 0.5, `${width}x${height}: the lean does not deliver the centre`)
+    assert.ok(lean < 0, `${width}x${height}: the camera leans towards the mascot, which moves it the wrong way`)
+  }
+
+  // Control: centring the button and leaving the mascot where it stood (0.95, the run's own lean)
+  // draws the button across it — which is why the picture has to move at all.
+  const [width] = LANDSCAPE[1]
+  const play = playWidthFor(width, 1)
+  const oldCentre = 0.5 + (RUN_HALF_WIDTH / BESIDE.z) * (0.95 - 0.95 * 0.5 * 0.25)
+
+  assert.ok(
+    (oldCentre - BESIDE.widthFraction / 2) * width < width / 2 + play / 2,
+    'the old fixed offset clears a centred button, so this check measures nothing',
+  )
+  console.log(`    every landscape frame keeps ${tightest.toFixed(0)}px clear of both the button and the edge at a bend's worst`)
+})
+
+check('⚠ beside the button the mascot stays on the road, clear of the roadside props', () => {
+  const half = mascotHalfWidths(BESIDE.widthFraction, RUN_HALF_WIDTH, BESIDE.z)
+
+  assert.ok(
+    BESIDE.offsetX + half < DECOR.MIN_OFFSET,
+    `the mascot reaches ${(BESIDE.offsetX + half).toFixed(2)} half-widths, into the decor band at ${DECOR.MIN_OFFSET}`,
+  )
+
+  // Control: reaching the same screen column by moving the mascot out along the road — the first
+  // version — stands it in the decor band, where a roadside tree was drawn over it on sight.
+  const play = playWidthFor(828, 1)
+  const reach = ((mascotBesideCentre(828, play) - 0.5) * BESIDE.z) / (RUN_HALF_WIDTH * (1 - 0.5 * 0.25))
+
+  assert.ok(reach + half > DECOR.MIN_OFFSET, 'moving the mascot out clears the props too')
+  console.log(
+    `    the mascot spans ${(BESIDE.offsetX - half).toFixed(2)}..${(BESIDE.offsetX + half).toFixed(2)} half-widths against ` +
+      `props from ${DECOR.MIN_OFFSET}; moved out instead it would stand at ${reach.toFixed(2)}`,
   )
 })
 
