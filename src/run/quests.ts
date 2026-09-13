@@ -92,6 +92,10 @@ export const PER_LAP = {
    * both this and `fruit` were taken from could be pushed out of the check's own tolerance by a
    * re-rolled layout with nothing about the game having changed. Both are means over twelve laps
    * now, over the forty laps `verify:formations` already sweeps for the same reason.
+   *
+   * Re-measured when the gap between two obstacles in a row grew to a snail and a half
+   * (`ROW_GAP_SLACK`): rows lose their third obstacle, so `placeRamps` finds a clear slot slightly
+   * more often and the forty-lap mean went 5.3 → 5.5. Still 5.
    */
   ramp: 5,
 } as const

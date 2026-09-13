@@ -106,12 +106,25 @@ check('every target is a share of what a lap actually offers', () => {
   // The three that can be counted from a placer have to agree with the table they were taken from.
   // `nearMiss` cannot: what limits it is how often the snail can be *steered* onto a close line,
   // which is a property of the player and was measured in the running game instead.
-  for (const [kind, count] of Object.entries(measured)) {
-    const drift = Math.abs(count - PER_LAP[kind]) / PER_LAP[kind]
+  //
+  // ⚠ Against the MEAN itself, never against `measured`'s rounded integers. Rounding a mean of 5.8
+  // before comparing it to a table of 5 spends 0.5/5 = 10% of a 20% tolerance on the rounding alone,
+  // and `fever` is worse: `floor(fruit / 8)` is a step function, so its drift could only ever be 0%
+  // or 33% and a fruit mean moving from 24.0 to 23.9 would have failed it. Found when widening the
+  // gap between two obstacles moved the fruit mean 24.4 -> 22.9, i.e. 2.86 Fevers against a table of
+  // 3 -- 5% out, reported as 33%.
+  const means = {
+    fruit: fruitTotal / SEEDS,
+    ramp: rampTotal / SEEDS,
+    fever: fruitTotal / SEEDS / FEVER_FRUIT_TARGET,
+  }
+
+  for (const [kind, mean] of Object.entries(means)) {
+    const drift = Math.abs(mean - PER_LAP[kind]) / PER_LAP[kind]
 
     assert.ok(
       drift < 0.2,
-      `a lap now offers ${count} ${kind} against a table saying ${PER_LAP[kind]} -- ${(drift * 100).toFixed(0)}% out`,
+      `a lap now offers ${mean.toFixed(2)} ${kind} against a table saying ${PER_LAP[kind]} -- ${(drift * 100).toFixed(0)}% out`,
     )
   }
 

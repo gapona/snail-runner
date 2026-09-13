@@ -550,10 +550,31 @@ function drawRow(options: PlacementOptions, z: number, nextId: () => number): Ob
  * those two is exactly that seam — a gap that looks like a way through and is not — so the smallest
  * legal gap is the one the mascot actually fits in, which is its own full width.
  *
- * It is `PLAYER_HALF_WIDTHS * 2` rather than a number, so it follows the mascot: the round that
+ * It is stated in snail widths rather than as a number, so it follows the mascot: the round that
  * grew the snail 261 -> 340 -> 310 would otherwise have quietly turned honest gaps into seams.
+ *
+ * ## ⚠ "Wide enough to drive through" was exactly one snail, i.e. a gap with a single point in it
+ *
+ * Reported from the phone: two small blocks side by side are very hard to get between. They were
+ * built to be — a hit is edge meeting edge, so a gap exactly the snail's width is passable at one
+ * `offsetX` and nowhere else, and the placer was allowed to lay that. Measured over forty laps, a
+ * tenth of all the gaps between two obstacles left **under 0.13 of a snail** of slack and the
+ * tightest left none. What is honest on paper is a seam in the hand: with relative drag a snail's
+ * width is about 36px of thumb on a portrait phone, so the old floor asked for a thumb placed to
+ * the pixel.
+ *
+ * `ROW_GAP_SLACK` is the daylight left over once the snail is in the gap, in snail widths, and it
+ * is **0.5** — the gap is a snail and a half, so the snail can be a quarter of a body off centre
+ * either way (~9px of thumb on a portrait phone) and still pass. Chosen by the player after
+ * playing: **1** shipped first (two snails, half a body either way) and was asked to come down.
+ * Measured at 0.5, the road barely moves: obstacles per lap 160 → 156, the share of rows only a
+ * jump answers unchanged at 26%, and the three-obstacle row almost gone (1.6% of rows → 0.1%) —
+ * the placer drops a third that does not fit rather than squeezing it in, exactly as it already
+ * did for a slot that overlapped.
  */
-const ROW_CLEARANCE = PLAYER_HALF_WIDTHS * 2
+export const ROW_GAP_SLACK = 0.5
+
+const ROW_CLEARANCE = PLAYER_HALF_WIDTHS * 2 * (1 + ROW_GAP_SLACK)
 
 /** How many offsets one obstacle may be offered before the row simply carries one fewer. */
 const SLOT_ATTEMPTS = 8

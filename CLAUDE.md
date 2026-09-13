@@ -973,9 +973,16 @@ the question. Measured on the shipped placer over five laps:
   enough to drive through.** `drawWall` builds a wall edge to edge on purpose, and its own note says
   a wall with a hair-width seam is one the player finds once by accident and never again. Anything
   *between* those two is that seam — a gap that looks like a way through and is not — so the
-  smallest legal gap is the one the mascot actually fits in. `ROW_CLEARANCE` is
-  `PLAYER_HALF_WIDTHS * 2`, so it follows the mascot rather than having to be remembered when the
-  mascot moves.
+  smallest legal gap is the one the mascot actually fits in. `ROW_CLEARANCE` is stated in snail
+  widths, so it follows the mascot rather than having to be remembered when the mascot moves.
+- **⚠ "Fits in" was exactly one snail, i.e. a gap passable at a single point, and a phone found it.**
+  Reported: two small blocks side by side are very hard to get between. A hit is edge meeting edge,
+  so a gap of one snail's width has one legal `offsetX`; over forty laps a tenth of all gaps left
+  under 0.13 of a snail of slack and the tightest left none. `ROW_GAP_SLACK` is **0.5** — the gap
+  is a snail and a half, chosen by the player after **1** (two snails) shipped first and was asked
+  to come down. Obstacles per lap 160 → 156, jump-only share unchanged, the three-obstacle row
+  1.6% → 0.1% of rows. It also exposed that `verify:quests` compared *rounded* means — `fever` is
+  a floor of fruit/8, so its drift could only be 0% or 33% — it compares the raw mean now.
 - **An obstacle that cannot find a slot is dropped, not squeezed in.** Eight offsets are offered and
   the row simply carries one fewer — the generate-and-check shape the row already had, one level
   down. Measured: 267 obstacles a saturated lap becomes 244, and the mean row *span* gets
