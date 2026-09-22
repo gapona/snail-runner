@@ -1880,6 +1880,74 @@ check('⚠ every button the result panel does not always build is cleared before
 })
 
 
+check('world units become metres in exactly one place, and bestScore is already metres', () => {
+  // **⚠ A 1,200 m record was drawn as `12 m`.** `RunOver` banks `metresFrom(distance)`, so
+  // `bestScore` is metres — and `Records` divided it by its own copy of 100, converting twice.
+  // Each site's arithmetic was correct read on its own, which is why nothing caught it: what was
+  // missing is that a number in a save field carries no unit. One function owns the conversion now.
+  const lf = (path) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n')
+  const readers = ['src/run/Hud.ts', 'src/scenes/RunOver.ts', 'src/scenes/Records.ts']
+
+  // Only `run/constants.ts` may spell the conversion out; every screen asks it for the answer.
+  assert.ok(/export const UNITS_PER_METRE = 100/.test(lf('src/run/constants.ts')), 'run/constants.ts owns UNITS_PER_METRE')
+
+  for (const path of readers) {
+    const src = lf(path)
+
+    assert.ok(!/UNITS_PER_METRE = /.test(src), `${path} declares its own metre constant`)
+    assert.ok(!/distance \/ 100\b/.test(src), `${path} divides a distance by a literal 100`)
+  }
+
+  // The one that was wrong, stated as what it must not do rather than as what it must.
+  const records = lf('src/scenes/Records.ts')
+
+  assert.ok(/formatCount\(state\.bestScore\)/.test(records), 'Records renders bestScore as the metres it already is')
+  assert.ok(!/bestScore \/ /.test(records), 'Records converts bestScore again')
+  // The control: the line as it shipped, which this has to keep rejecting.
+  const shipped = records.replace('formatCount(state.bestScore)', 'formatCount(Math.floor(state.bestScore / 100))')
+
+  assert.ok(/bestScore \/ /.test(shipped), 'the check no longer rejects the shipped-before Records line')
+  console.log(`    metres: run/constants.ts -> ${readers.map((r) => r.split('/').pop()).join(', ')}`)
+})
+
+
+check('every list a scene fills in create() is emptied there first', () => {
+  // Phaser reuses a scene instance across every launch, so a `private x: T[] = []` field survives the
+  // shutdown that destroyed what it held. Records shipped without the reset: the second open wrote
+  // into five destroyed Text objects, which drew an empty panel on Safari and froze Chrome.
+  // Lists filled somewhere other than create (RunScene's per-frame buffers) are cleared by `.length = 0`.
+  const scenes = ['Records', 'Shop', 'SteerTuner', 'RunOver', 'Garage']
+  const checked = []
+
+  // The scenes are checked out CRLF on Windows; every slice below is written against `\n`.
+  const lf = (text) => text.replace(/\r\n/g, '\n')
+  const unreset = (src) => {
+    const start = src.indexOf('  create(')
+    const create = src.slice(start, src.indexOf('\n  }\n', start))
+    const fields = [...src.matchAll(/^  private (\w+): [^=\n]*\[\] = \[\]/gm)].map((m) => m[1])
+
+    return fields
+      .filter((field) => src.includes(`this.${field}.push(`))
+      .map((field) => ({
+        field,
+        reset: [`this.${field} = `, `this.${field}.length = 0`].some((form) => create.includes(form)),
+      }))
+  }
+
+  for (const name of scenes) {
+    const src = lf(readFileSync(`src/scenes/${name}.ts`, 'utf8'))
+
+    for (const { field, reset } of unreset(src)) {
+      assert.ok(reset, `${name}.${field} is pushed to and never emptied in create — a second launch appends to destroyed objects`)
+      checked.push(`${name}.${field}`)
+    }
+  }
+  // The control: Records as it shipped, with the reset taken back out.
+  const shipped = lf(readFileSync('src/scenes/Records.ts', 'utf8')).replace(/^    this\.rows = \[\]\n/m, '')
+  assert.ok(unreset(shipped).some((f) => f.field === 'rows' && !f.reset), 'the check no longer rejects the shipped-before Records')
+  console.log(`    reset in create: ${checked.join(', ')}`)
+})
+
 // --- src/ui/roundedRect.ts ------------------------------------------------------------------
 //
 // The gauge and the milestone rule are on screen for a whole run and are replayed by the renderer

@@ -31,6 +31,7 @@ import {
   earnBonus,
   tally,
   eatFruit,
+  bankedBest,
   createRunState,
   earnCoin,
   isRunOver,
@@ -140,7 +141,9 @@ import {
   PLAYER_Z,
   steerTarget,
   SPEED_BASE,
+  metresFrom,
 } from '../run/constants'
+import { sendScore } from '../platform/yt'
 import { DRAW_DISTANCE, SEGMENT_LENGTH } from '../road/constants'
 import { PICKUP_DETUNE_CENTS, streakDetuneCents, STREAK_STEPS } from '../audio/sfx'
 import { wrapZ } from '../road/project'
@@ -1600,8 +1603,22 @@ export class RunScene extends Phaser.Scene implements LeavableRun {
     this.bankQuestProgress()
     mutate((state) => {
       state.coins = earnCoins(state.coins, coins)
+      // **⚠ The distance is banked here too, and it used to be the one thing suspending dropped.**
+      // Coins and quests were paid out and the record was not, so a player who put a run down at
+      // 3,000 m and then pressed `New run` had a run that never happened — the furthest they had
+      // ever got, thrown away by the gesture that exists to *keep* a run. It is `bankedBest` rather
+      // than a second `Math.max` here because the rule has two halves a copy can get wrong on its
+      // own: a maximum, and metres.
+      state.bestScore = bankedBest(state.bestScore, this.run.distance)
       state.suspendedRun = isResumable(snapshot) ? snapshot : null
     })
+    // **Reported to the platform here for the reason it is banked here.** `RunOver` was the only
+    // caller, so a player who put a run down and never picked it up had a record on this screen and
+    // a zero on the leaderboard — the game and the platform disagreeing about the same run. Sent
+    // unconditionally rather than only on a new best, which is `RunOver`'s rule too: the leaderboard
+    // keeps the maximum itself, and a score sent only from one screen is a score mostly never sent.
+    // Suspending is a deliberate, rare gesture, so this cannot pressure the SDK's rate limit.
+    void sendScore(metresFrom(this.run.distance))
     // Flushed rather than left to the debounce: the next thing that happens to this tab may be the
     // platform killing it, and a suspended run that did not reach the disk is a run thrown away by
     // the one gesture that exists to keep it. `bindAutosave` covers the pause; this covers the tap.

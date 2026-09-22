@@ -15,6 +15,8 @@ import { t } from '../i18n/strings'
 import { getState, mutate } from '../save/store'
 import { canAfford, earnCoins, spendCoins } from '../shop/coins'
 import { CONTINUE_COINS } from '../shop/adCatalog'
+import { metresFrom } from '../run/constants'
+import { bankedBest } from '../run/runState'
 import { bindLayout } from '../ui/layout'
 import { formatCount } from '../ui/format'
 import { KIT, kitButton, kitDivider, kitTitle, plate, type KitButton, type KitDivider, type Plate } from '../ui/kit'
@@ -107,9 +109,6 @@ export interface RunOverData {
    */
   bonus?: number
 }
-
-/** One world unit is a centimetre; the HUD and this screen both count in metres. */
-const UNITS_PER_METRE = 100
 
 /**
  * The panel's own measurements. Gaps rather than row heights, because every block on this screen is
@@ -257,7 +256,7 @@ export class RunOver extends Phaser.Scene {
   }
 
   create(data: RunOverData) {
-    this.metres = Math.floor(data.distance / UNITS_PER_METRE)
+    this.metres = metresFrom(data.distance)
     this.coins = data.coins
     this.bonus = Math.max(0, Math.round(data.bonus ?? 0))
     this.doubled = false
@@ -294,7 +293,10 @@ export class RunOver extends Phaser.Scene {
     // run produces, and an ad or a scene change between earning and saving them is a run the player
     // played for nothing.
     mutate((state) => {
-      state.bestScore = Math.max(state.bestScore, this.metres)
+      // The maximum and the unit both live in `bankedBest` — see it for the two ways this has been
+      // got wrong. It takes world units, which is why `data.distance` is passed rather than
+      // `this.metres`: converting here would be converting twice.
+      state.bestScore = bankedBest(state.bestScore, data.distance)
       state.coins = earnCoins(state.coins, this.coins)
     })
     // Rounded to an integer by `sendScore` itself — the SDK rejects a float, and a distance in

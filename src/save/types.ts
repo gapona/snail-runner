@@ -21,6 +21,14 @@ export interface SaveSettings {
 
 export interface SaveStateV11 {
   v: 11
+  /**
+   * The furthest a run has ever got, in **metres** — `metresFrom`'s output, not its input.
+   *
+   * **⚠ The unit is the whole of the field, and leaving it unwritten cost a record two decimal
+   * places.** `RunOver` banks `metresFrom(distance)`; `Records` then divided it by a hundred again
+   * and drew a 1,200 m best as `12 m`. A number in a save field carries no unit with it, so the
+   * only thing that can stop the next reader converting it twice is this line.
+   */
   bestScore: number
   /**
    * Furthest wave ever cleared in a single run — the run's own progress record, separate from

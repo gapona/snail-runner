@@ -30,6 +30,7 @@ import {
   SPEED_ACCEL,
   SPEED_BASE,
   SPEED_CAP,
+  metresFrom,
 } from './constants'
 import { addFruit as bankFruit, createFeverState, feverSpeedFactor, stepFever, type FeverState } from './fever'
 import { createTally, type QuestKind } from './quests'
@@ -373,4 +374,22 @@ export function stepRun(state: RunState, dtMs: number, options: RunStepOptions):
     fever,
     stepRemainderMs: remainder,
   }
+}
+
+/**
+ * The furthest a run has ever got, given what this one reached.
+ *
+ * **⚠ Two screens bank this and they must not disagree about either half of it.** The record is a
+ * *maximum* — a weak run may never lower it — and it is in **metres**, while a run measures itself
+ * in world units. Both halves have already been got wrong once: `Records` converted a number that
+ * was already converted and drew a 1,200 m best as `12 m`, and suspending a run banked its coins
+ * and its quests while quietly dropping its distance, so a run put down and then abandoned had
+ * never happened.
+ *
+ * So the rule is one function rather than one copy per caller: `RunOver` when a run ends, and
+ * `RunScene.suspend` when it is put down. The argument is world units — `metresFrom` is applied
+ * here, so a caller cannot convert twice by doing it itself.
+ */
+export function bankedBest(previousMetres: number, distanceUnits: number): number {
+  return Math.max(previousMetres, metresFrom(distanceUnits))
 }

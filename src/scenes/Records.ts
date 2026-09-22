@@ -45,6 +45,12 @@ export class Records extends Phaser.Scene {
   }
 
   create(): void {
+    // **⚠ Phaser reuses a scene instance across every `launch`**, so a list filled here survives the
+    // shutdown that destroyed its contents. Without this the second open pushed five new rows after
+    // five destroyed ones: `refresh` wrote into dead Text objects (an empty panel on Safari, a throw
+    // out of `create` — i.e. a frozen game with the opener paused — on Chrome), and the live rows were
+    // never laid out. `Shop` and `SteerTuner` reset their lists for exactly this reason.
+    this.rows = []
     this.backdrop = this.add.rectangle(0, 0, 0, 0, 0x000000, 0.55).setOrigin(0, 0).setDepth(BACKDROP_DEPTH)
     // The panel is drawn rather than composed from a kit widget: `kitPlate` does not exist, and
     // what this needs is one rounded box with the coin rim every other panel got in the restyle.
@@ -88,8 +94,16 @@ export class Records extends Phaser.Scene {
     const themes = themeIds()
     const board = resolveQuestBoard(state.quests, 1)
     const lines: [string, string][] = [
-      ['Furthest run', `${formatCount(Math.floor(state.bestScore / 100))} m`],
-      ['Coins', `🪙 ${formatCount(state.coins)}`],
+      // **⚠ `bestScore` is already metres**, and dividing it again drew a 1,200 m record as `12 m`.
+      // See `metresFrom` for why the conversion is one function rather than a `100` per screen.
+      ['Furthest run', `${formatCount(state.bestScore)} m`],
+      // **⚠ It was `Coins`, and directly under a per-run record that reads as coins from that run.**
+      // It is the purse — `SaveState.coins`, the shop balance — and the row was reported as showing a
+      // total where a run's own figure was expected. The number was right and the label was the whole
+      // defect: on a screen headed *Records*, a bare noun is read as a record of it. `saved` is the
+      // one word that says the opposite, and it costs nothing — a per-run coin record would be a new
+      // save field that every existing player would start at zero.
+      ['Coins saved', `🪙 ${formatCount(state.coins)}`],
       ['Skins', `${skins.filter((id) => ownsSnailSkin(state.purchases, id)).length} / ${skins.length}`],
       ['Themes', `${themes.filter((id) => ownsTheme(state.purchases, id)).length} / ${themes.length}`],
       // Not a record but the one thing on this screen that is *live*: what the session is currently

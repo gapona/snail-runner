@@ -423,6 +423,12 @@ export function bindSteering(scene: Phaser.Scene, action: string, sources: Steer
       const onDown = () => {
         if (!scene.scene.isActive()) return
         held.press(sourceId)
+        // **⚠ A hovering mouse held the pointer's claim for ever, so the keys never steered.** A
+        // mouse is "engaged" by hovering, so over the canvas `pointerFraction` was never null and
+        // the keyboard branch in `read` was unreachable — reported as the arrows and A/D doing
+        // nothing on a desktop. A key press takes the input back from a mouse; the next mouse move
+        // takes it back again. A finger that is down keeps it: it is actually pressing.
+        if (!pointerTouch) pointerFraction = null
       }
       // Never gated on the scene being active: a key released while paused must still release,
       // or the snail steers into the verge for the rest of the run. Same rule as `bindHeldAction`.

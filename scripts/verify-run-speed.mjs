@@ -13,8 +13,10 @@
 //    and `wrapZ` on a negative `z` has to land at the *end* of the track rather than at zero --
 //    a knockback at `z = 30` would otherwise teleport the camera to the start line.
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   addShield,
+  bankedBest,
   canTakeHeal,
   eatFruit,
   heal,
@@ -389,6 +391,42 @@ check('every mutator is pure', () => {
   heal(original)
   revive(original)
   assert.deepEqual({ ...original }, snapshot)
+})
+
+check('the record is a maximum, in metres, and both screens bank it the same way', () => {
+  // **⚠ Both halves of this have been got wrong once each.** `Records` converted a number that
+  // was already metres and drew a 1,200 m best as `12 m`; and `suspend` banked a run's coins and
+  // its quests while dropping its distance, so a run put down and then abandoned had never
+  // happened. One function owns the rule now, and this holds it plus the two callers.
+  assert.equal(bankedBest(0, 123456), 1234, 'world units in, whole metres out')
+  assert.equal(bankedBest(2400, 123456), 2400, 'a weaker run may not lower the record')
+  assert.equal(bankedBest(1000, 999), 1000, 'a run shorter than a metre may not lower it either')
+  assert.equal(bankedBest(0, 99), 0, 'metres are whole')
+
+  // The control: the conversion applied twice, which is the line that shipped.
+  assert.notEqual(Math.max(0, Math.floor(bankedBest(0, 123456) / 100)), 1234, 'converting twice is still wrong')
+
+  // Structural: a second `Math.max` on bestScore is a second copy of a rule with two halves.
+  const lf = (path) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n')
+
+  for (const path of ['src/scenes/RunOver.ts', 'src/scenes/RunScene.ts']) {
+    const src = lf(path)
+
+    assert.ok(/state\.bestScore = bankedBest\(/.test(src), `${path} banks the record through bankedBest`)
+    assert.ok(!/Math\.max\([^)]*bestScore/.test(src), `${path} keeps its own maximum`)
+    // **Wherever a run's distance is banked it is also reported.** `RunOver` was the only caller of
+    // `sendScore`, so a run put down and never picked up left the game and the leaderboard
+    // disagreeing about the same number.
+    assert.ok(/sendScore\(/.test(src), `${path} banks the record without reporting it`)
+  }
+  // Putting a run down does both — the gesture exists to keep a run, not to lose its distance.
+  const suspend = lf('src/scenes/RunScene.ts')
+  const from = suspend.indexOf('private suspend()')
+  const body = suspend.slice(from, suspend.indexOf('\n  }\n', from))
+
+  assert.ok(body.includes('state.bestScore = bankedBest('), 'suspend banks the distance')
+  assert.ok(body.includes('sendScore(metresFrom('), 'suspend reports the distance')
+  console.log('    record: bankedBest + sendScore <- RunOver.create, RunScene.suspend')
 })
 
 console.log(`${passed} checks passed`)

@@ -983,3 +983,24 @@ export const DEBRIS_LIFE_MS = 520
  * near ones; see `worldDepth.ts` for the measurement.
  */
 export const ATMOSPHERE_DEPTH = 1000
+
+/**
+ * One world unit is a centimetre, so a metre is a hundred of them.
+ *
+ * **⚠ The conversion has to happen exactly once, and having three copies of it is how it came to
+ * happen twice.** The HUD and the result screen each divided `RunState.distance` by their own
+ * `100`, which is right. `Records` then divided **`bestScore`** — a number the result screen has
+ * *already* converted — by a third copy, so a 1,200 m record was drawn as `12 m`. Nothing could
+ * catch it: each site's arithmetic is correct read on its own, and a number in a save field
+ * carries no unit with it.
+ *
+ * So this is the one place world units become metres, and `SaveState.bestScore` is its **output**
+ * rather than its input — which is stated where that field is declared, because the next reader of
+ * it will be looking there and not here.
+ */
+export const UNITS_PER_METRE = 100
+
+/** World units to whole metres. The rounding is part of the unit: a metre is what the player reads. */
+export function metresFrom(units: number): number {
+  return Math.floor(units / UNITS_PER_METRE)
+}

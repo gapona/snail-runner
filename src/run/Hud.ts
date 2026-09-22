@@ -44,7 +44,7 @@ import { DirtyValues } from '../ui/dirtyValues'
 import { toCssColor } from '../ui/theme'
 import { formatCount } from '../ui/format'
 import { HUD_DEPTH } from './hudDepth'
-import { FEVER_EASE_MS, FEVER_MS, MAX_SHIELDS, PLAYER_REST_Y_FRACTION, RUN_LIVES } from './constants'
+import { FEVER_EASE_MS, FEVER_MS, MAX_SHIELDS, metresFrom, PLAYER_REST_Y_FRACTION, RUN_LIVES } from './constants'
 import { PICKUP_COLORS } from './artPalette'
 import { feverCharge } from './fever'
 import {
@@ -325,7 +325,7 @@ export class Hud {
   }
 
   update(run: RunState, width: number, now: number, progress: number, mascot?: MascotBox): void {
-    const metres = Math.floor(run.distance / 100)
+    const metres = metresFrom(run.distance)
 
     if (metres !== this.shownMetres) {
       this.shownMetres = metres
